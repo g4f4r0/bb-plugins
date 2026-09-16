@@ -30,6 +30,7 @@ const mock = vi.hoisted(() => ({
     timing: vi.fn(() => ({ queueMs: 0, packetGapMs: 0 })),
     controlBusy: false,
     controlHeld: false,
+    controlOwner: undefined as string | undefined,
   },
 }));
 vi.mock("../src/driver", () => ({
@@ -231,11 +232,17 @@ it("owns managed Fortress, blocks viewer input during a job, and stops it after 
       dialog: { type: "prompt", message: "Your name?", defaultPrompt: "Ada" },
     });
     expect(mock.evaluate).toHaveBeenCalledTimes(evaluationsBeforeDialogInspect);
+    mock.videoInput.controlBusy = true;
+    mock.videoInput.controlOwner = "viewer-reconnected";
+    setTimeout(() => { mock.videoInput.controlBusy = false; }, 30);
     const dialog = await h.experimental_call("input", {
       id: "ab-managed-host",
+      clientId: "viewer-reconnected",
       input: { kind: "dialog", accept: true, promptText: "Grace" },
     });
     expect((await wait(dialog)).status).toBe("succeeded");
+    expect(mock.videoInput.resetInput).toHaveBeenCalledWith("viewer-reconnected");
+    mock.videoInput.controlOwner = undefined;
     expect(mock.send).toHaveBeenCalledWith("Page.handleJavaScriptDialog", {
       accept: true,
       promptText: "Grace",

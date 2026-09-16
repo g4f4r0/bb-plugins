@@ -194,6 +194,20 @@ function view(t: Task): Job {
     durationMs: (t.view.endedAt ?? Date.now()) - t.view.startedAt,
   };
 }
+async function releaseViewerInput(s: LocalSession, clientId?: string) {
+  if (!clientId) return;
+  const deadline = Date.now() + 750;
+  while (
+    Date.now() < deadline &&
+    ((s.direct?.busy && s.direct.owner === clientId) ||
+      (s.videoInput?.controlBusy && s.videoInput.controlOwner === clientId))
+  )
+    await sleep(25);
+  await Promise.all([
+    s.direct?.reset(clientId),
+    s.videoInput?.resetInput(clientId),
+  ]);
+}
 function startJob(
   kind: string,
   ctx: ExperimentalHostRpcContext,
@@ -884,10 +898,11 @@ export default experimental_defineHostEntry({
       }
       return { ...live, url:s.frameInfo.url, loading:s.frameInfo.loading, streamTier:s.recording ? 0 : tier };
     },
-    input: async ({ id, input }, ctx) => {
+    input: async ({ id, clientId, input }, ctx) => {
       const s = session(id);
       if (s.status !== "ready" || !s.cdp || s.expiresAt <= Date.now())
         throw new Error("Browser is not ready");
+      await releaseViewerInput(s, clientId);
       const j = startJob(
         "viewer",
         ctx,

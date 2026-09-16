@@ -30,6 +30,9 @@ export class SelkiesStream {
   get controlHeld() {
     return this.inputButtons.size > 0 || this.inputKeys.size > 0;
   }
+  get controlOwner() {
+    return this.inputOwner;
+  }
   private sendInput(message: string) {
     if (this.closed || this.socket?.readyState !== WebSocket.OPEN)
       throw new Error("Live browser input is unavailable.");

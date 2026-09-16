@@ -836,7 +836,7 @@ it('shares the viewer control identity with toolbar maintenance actions',async()
   });
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({status:'succeeded'});
-  expect(f.calls.find(c=>c.method==='input')?.input).toMatchObject({id:r.session.id,input:{kind:'maintenance',action:'hard-reload'}});
+  expect(f.calls.find(c=>c.method==='input')?.input).toMatchObject({id:r.session.id,clientId,input:{kind:'maintenance',action:'hard-reload'}});
   await control.close();
  }finally{await f.harness.lifecycle.dispose();}
 });

@@ -249,7 +249,7 @@ export const hostContract = defineRpcContract({
       seq: z.number(),
     }),
   },
-  input: { input: z.object({ id, input: viewerInput }), output: job },
+  input: { input: z.object({ id, clientId: id.optional(), input: viewerInput }), output: job },
   keepalive: { input: z.object({ id }), output: hostSession },
   inspect: { input: z.object({ id }), output: hostSession },
   submit: {
