@@ -173,6 +173,10 @@ async function restoreDevToolsSession(s: LocalSession) {
   s.devtoolsLayout = undefined;
   if (!s.cdp || !s.targetId) return;
   await restorePageWindow(s.cdp, s.targetId, layout?.pageWindowId).catch(() => {});
+  // Prime a fresh responsive frame while the video surface is still closing.
+  // Static pages may not produce compositor damage after the JPEG viewer takes
+  // over, which otherwise leaves the correctly sized transition skeleton up.
+  await s.cdp.startLiveCast().catch(() => {});
 }
 function session(id: string) {
   const s = sessions.get(id);
@@ -199,13 +203,15 @@ async function releaseViewerInput(s: LocalSession, clientId?: string) {
   const deadline = Date.now() + 750;
   while (
     Date.now() < deadline &&
-    ((s.direct?.busy && s.direct.owner === clientId) ||
-      (s.videoInput?.controlBusy && s.videoInput.controlOwner === clientId))
+    (s.direct?.busy || s.videoInput?.controlBusy)
   )
     await sleep(25);
+  // The server already verified that clientId owns the human-control lease.
+  // Clear every host-side input owner, including a stale DevTools trigger ID,
+  // before starting this viewer's toolbar or dialog job.
   await Promise.all([
-    s.direct?.reset(clientId),
-    s.videoInput?.resetInput(clientId),
+    s.direct?.reset(),
+    s.videoInput?.resetInput(),
   ]);
 }
 function startJob(
