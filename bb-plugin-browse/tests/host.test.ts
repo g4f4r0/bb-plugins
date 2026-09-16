@@ -19,7 +19,7 @@ vi.mock("../src/driver", () => ({
   },
 }));
 vi.mock("../src/managed", () => ({
-  launchManaged: async () => ({ endpoint: "ws://private", process: { once: () => {} }, close: async () => mock.events.push("chrome-close") }),
+  launchManaged: async () => ({ endpoint: "ws://private", process: { exitCode: 0, signalCode: null, once: () => {} }, close: async () => mock.events.push("chrome-close") }),
 }));
 vi.mock("../src/runtime", () => ({
   ensureRuntime: async () => "/binary",

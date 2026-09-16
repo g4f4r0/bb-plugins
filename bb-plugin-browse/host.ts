@@ -51,6 +51,7 @@ import {
   restorePageWindow,
   type DevToolsLayoutState,
 } from "./src/devtools-layout";
+import { assertBrowserMemory } from "./src/memory-budget";
 
 type LocalSession = {
   credential?: {
@@ -141,7 +142,7 @@ async function runDirect({id,clientId,events}:z.infer<typeof directBatch>){
       if(s.credential)throw Error('Browser is waiting for private credential input.');
       if(s.busy)throw Error('Browser is busy with an agent action.');
       let result: { selection?: string; cursor?: string };
-      if (s.videoInput) {
+      if (s.videoInput && !s.videoInput.isClosed) {
         result = await s.videoInput.runInput(clientId, events);
       } else {
         s.direct??=new DirectInput(s.cdp);
@@ -664,8 +665,16 @@ async function closeSession(s: LocalSession) {
   }
   s.status = "released";
   await s.cdp?.stopLiveCast().catch(() => {});
-  if (s.managed)
+  if (s.managed) {
     await s.cdp?.send("Browser.close", {}, false, 1500).catch(() => {});
+    // Give Chrome a brief graceful-exit window to flush persistent profile
+    // data before the managed-process fallback sends a termination signal.
+    if (s.managed.process.exitCode === null && !s.managed.process.signalCode)
+      await Promise.race([
+        new Promise<void>((resolve) => s.managed!.process.once("exit", () => resolve())),
+        sleep(1500),
+      ]);
+  }
   s.cdp?.close();
   s.cdp = undefined;
   await s.driver?.close().catch(() => {});
@@ -759,6 +768,11 @@ export default experimental_defineHostEntry({
       const deadline=Date.now()+10000;
       while(s.status==="connecting"&&Date.now()<deadline)await sleep(50);
       if(s.status!=="ready"||!s.managed?.displayEnv)throw Error("This session has no isolated video display.");
+      if (s.video) {
+        const previous = s.video;
+        const restartDeadline = Date.now() + 1500;
+        while (s.video === previous && Date.now() < restartDeadline) await sleep(25);
+      }
       if(s.video)throw Error("The video prototype supports one viewer at a time.");
       const env=s.managed.displayEnv;
       const stream=(async()=>{if(!s.recording)await s.cdp?.stopLiveCast();return SelkiesStream.start(s.root,env);})();
@@ -1030,6 +1044,13 @@ export default experimental_defineHostEntry({
             signal.throwIfAborted();
             const initialUrl = input.mode === "managed" ? safeUrl(input.url) : input.url;
             if (input.mode === "managed") {
+              if (process.platform === "linux")
+                await fs
+                  .readFile("/proc/meminfo", "utf8")
+                  .then(assertBrowserMemory)
+                  .catch((error: NodeJS.ErrnoException) => {
+                    if (error?.code !== "ENOENT" && error?.code !== "EACCES") throw error;
+                  });
               s.managed = await launchManaged(
                 root,
                 input.profileId ?? input.id,

@@ -53,7 +53,7 @@ vi.mock("../src/managed", () => ({
   launchManaged: async () => ({
     endpoint: "ws://owned",
     profile: "/owned/profile",
-    process: new EventEmitter(),
+    process: Object.assign(new EventEmitter(), { exitCode: 0, signalCode: null }),
     displayEnv: { DISPLAY: ":99" },
     close: mock.close,
   }),
@@ -162,9 +162,26 @@ it("owns managed Fortress, blocks viewer input during a job, and stops it after 
       clientId: "viewer",
       binary: false,
     });
-    await h.experimental_call("videoStop", {
+    let finishVideoStop!: () => void;
+    mock.videoInput.stop.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { finishVideoStop = resolve; }),
+    );
+    const stoppingVideo = h.experimental_call("videoStop", {
       id: "ab-managed-host",
       clientId: "viewer",
+    });
+    const restartingVideo = h.experimental_call("videoStart", {
+      id: "ab-managed-host",
+      clientId: "viewer-restart",
+      binary: false,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    finishVideoStop();
+    await stoppingVideo;
+    await expect(restartingVideo).resolves.toMatchObject({ ok: true });
+    await h.experimental_call("videoStop", {
+      id: "ab-managed-host",
+      clientId: "viewer-restart",
     });
     const devtools = await h.experimental_call("input", {
       id: "ab-managed-host",
@@ -271,6 +288,36 @@ it("owns managed Fortress, blocks viewer input during a job, and stops it after 
         expect.objectContaining({ kind: "pointer", type: "up" }),
       ]),
     );
+    mock.videoInput.isClosed = true;
+    mock.send.mockClear();
+    await h.experimental_call("direct", {
+      id: "ab-managed-host",
+      clientId: "viewer",
+      events: [{
+        kind: "pointer",
+        type: "down",
+        x: 30,
+        y: 40,
+        button: "left",
+        buttons: 1,
+        clickCount: 1,
+        modifiers: 0,
+      }, {
+        kind: "pointer",
+        type: "up",
+        x: 30,
+        y: 40,
+        button: "left",
+        buttons: 0,
+        clickCount: 1,
+        modifiers: 0,
+      }],
+    });
+    expect(mock.send).toHaveBeenCalledWith(
+      "Input.dispatchMouseEvent",
+      expect.objectContaining({ type: "mousePressed", x: 30, y: 40 }),
+    );
+    mock.videoInput.isClosed = false;
     const running = await h.experimental_call("submit", {
       id: "ab-managed-host",
       operation: {
