@@ -233,10 +233,10 @@ it("owns managed Fortress, blocks viewer input during a job, and stops it after 
     });
     expect(mock.evaluate).toHaveBeenCalledTimes(evaluationsBeforeDialogInspect);
     mock.videoInput.controlHeld = true;
+    mock.videoInput.controlBusy = true;
     mock.videoInput.controlOwner = "devtools:ab-managed-host";
     mock.videoInput.resetInput.mockImplementationOnce(async () => {
       mock.videoInput.controlHeld = false;
-      mock.videoInput.controlOwner = undefined;
     });
     const dialog = await h.experimental_call("input", {
       id: "ab-managed-host",
@@ -245,6 +245,8 @@ it("owns managed Fortress, blocks viewer input during a job, and stops it after 
     });
     expect((await wait(dialog)).status).toBe("succeeded");
     expect(mock.videoInput.resetInput).toHaveBeenCalledWith();
+    mock.videoInput.controlBusy = false;
+    mock.videoInput.controlOwner = undefined;
     expect(mock.send).toHaveBeenCalledWith("Page.handleJavaScriptDialog", {
       accept: true,
       promptText: "Grace",

@@ -217,14 +217,20 @@ function view(t: Task): Job {
     durationMs: (t.view.endedAt ?? Date.now()) - t.view.startedAt,
   };
 }
-async function releaseViewerInput(s: LocalSession, clientId?: string) {
+async function releaseViewerInput(
+  s: LocalSession,
+  clientId?: string,
+  waitForBusy = true,
+) {
   if (!clientId) return;
-  const deadline = Date.now() + 750;
-  while (
-    Date.now() < deadline &&
-    (s.direct?.busy || s.videoInput?.controlBusy)
-  )
-    await sleep(25);
+  if (waitForBusy) {
+    const deadline = Date.now() + 750;
+    while (
+      Date.now() < deadline &&
+      (s.direct?.busy || s.videoInput?.controlBusy)
+    )
+      await sleep(25);
+  }
   // The server already verified that clientId owns the human-control lease.
   // Clear every host-side input owner, including a stale DevTools trigger ID,
   // before starting this viewer's toolbar or dialog job.
@@ -239,10 +245,11 @@ function startJob(
   fn: (signal: AbortSignal, j: Job) => Promise<void>,
   s?: LocalSession,
   timeoutMs = 120000,
+  allowViewerControl = false,
 ): Job {
   if (s?.credential)
     throw new Error("Browser is waiting for private credential input.");
-  if (s?.direct?.busy || s?.direct?.held || s?.videoInput?.controlBusy || s?.videoInput?.controlHeld)
+  if (!allowViewerControl && (s?.direct?.busy || s?.direct?.held || s?.videoInput?.controlBusy || s?.videoInput?.controlHeld))
     throw new Error("Browser is being controlled by a viewer.");
   if (s?.busy)
     throw new Error(
@@ -927,7 +934,8 @@ export default experimental_defineHostEntry({
       const s = session(id);
       if (s.status !== "ready" || !s.cdp || s.expiresAt <= Date.now())
         throw new Error("Browser is not ready");
-      await releaseViewerInput(s, clientId);
+      const viewerDialog = !!clientId && input.kind === "dialog";
+      await releaseViewerInput(s, clientId, !viewerDialog);
       const j = startJob(
         "viewer",
         ctx,
@@ -1028,6 +1036,7 @@ export default experimental_defineHostEntry({
         },
         s,
         30000,
+        viewerDialog,
       );
       await Promise.race([task(j.id).promise, sleep(400)]);
       return view(task(j.id));
