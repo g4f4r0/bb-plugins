@@ -249,6 +249,8 @@ it("owns managed Fortress, blocks viewer input during a job, and stops it after 
       accept: true,
       promptText: "Grace",
     });
+    mock.send.mockClear();
+    mock.startLiveCast.mockClear();
     for (const listener of mock.cdpListeners)
       listener("Target.targetDestroyed", { targetId: "devtools" });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -257,6 +259,10 @@ it("owns managed Fortress, blocks viewer input during a job, and stops it after 
       expect.objectContaining({ windowId: 1, bounds: expect.objectContaining({ width: 1280 }) }),
       false,
       2000,
+    );
+    expect(mock.send).toHaveBeenCalledWith(
+      "Emulation.setDeviceMetricsOverride",
+      expect.objectContaining({ width: 390, height: 844, mobile: true }),
     );
     expect(mock.startLiveCast).toHaveBeenCalled();
     mock.videoInput.isClosed = true;

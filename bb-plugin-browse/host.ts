@@ -167,12 +167,31 @@ function publicSession(s: LocalSession) {
   };
 }
 
+async function applyViewport(
+  cdp: Cdp,
+  viewport: { width: number; height: number; mobile: boolean },
+) {
+  await cdp.send("Emulation.setDeviceMetricsOverride", {
+    width: viewport.width,
+    height: viewport.height,
+    deviceScaleFactor: 1,
+    mobile: viewport.mobile,
+    screenWidth: viewport.width,
+    screenHeight: viewport.height,
+    screenOrientation: {
+      type: viewport.width > viewport.height ? "landscapePrimary" : "portraitPrimary",
+      angle: viewport.width > viewport.height ? 90 : 0,
+    },
+  });
+}
+
 async function restoreDevToolsSession(s: LocalSession) {
   const layout = s.devtoolsLayout;
   s.devtoolsOpen = false;
   s.devtoolsLayout = undefined;
   if (!s.cdp || !s.targetId) return;
   await restorePageWindow(s.cdp, s.targetId, layout?.pageWindowId).catch(() => {});
+  if (s.viewport) await applyViewport(s.cdp, s.viewport).catch(() => {});
   // Prime a fresh responsive frame while the video surface is still closing.
   // Static pages may not produce compositor damage after the JPEG viewer takes
   // over, which otherwise leaves the correctly sized transition skeleton up.
@@ -951,18 +970,7 @@ export default experimental_defineHostEntry({
             case "viewport":
               if (s.mode !== "managed")
                 throw new Error("Responsive mode is available only in an isolated Browse session.");
-              await s.cdp!.send("Emulation.setDeviceMetricsOverride", {
-                width: input.width,
-                height: input.height,
-                deviceScaleFactor: 1,
-                mobile: input.mobile,
-                screenWidth: input.width,
-                screenHeight: input.height,
-                screenOrientation: {
-                  type: input.width > input.height ? "landscapePrimary" : "portraitPrimary",
-                  angle: input.width > input.height ? 90 : 0,
-                },
-              });
+              await applyViewport(s.cdp!, input);
               s.viewport = input;
               await s.cdp!.refreshLiveCast();
               break;
