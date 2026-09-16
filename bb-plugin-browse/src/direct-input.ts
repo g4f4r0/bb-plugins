@@ -21,7 +21,10 @@ export class DirectInput {
   private keys=new Map<string,Record<string,unknown>>();
   private point={x:0,y:0};
   private timer?:ReturnType<typeof setTimeout>;
-  constructor(private cdp:Pick<Cdp,'send'|'evaluate'>){}
+  constructor(
+    private cdp:Pick<Cdp,'send'|'evaluate'>,
+    private dialogOpen:()=>boolean=()=>false,
+  ){}
   get held(){return this.buttons.size>0||this.keys.size>0;}
   async reset(clientId?:string){
     if(clientId&&this.owner&&this.owner!==clientId)return;
@@ -54,8 +57,8 @@ export class DirectInput {
         }
       }
       const last=events.at(-1);
-      if(last?.kind==='pointer')cursor=await this.cdp.evaluate(`(()=>{let e=document.elementFromPoint(${last.x},${last.y});while(e?.shadowRoot){const n=e.shadowRoot.elementFromPoint(${last.x},${last.y});if(!n||n===e)break;e=n;}return e?getComputedStyle(e).cursor:'default'})()`).catch(()=>undefined);
-      return {selection:selection?await this.cdp.evaluate(selectionExpression):undefined,cursor};
+      if(!this.dialogOpen()&&last?.kind==='pointer')cursor=await this.cdp.evaluate(`(()=>{let e=document.elementFromPoint(${last.x},${last.y});while(e?.shadowRoot){const n=e.shadowRoot.elementFromPoint(${last.x},${last.y});if(!n||n===e)break;e=n;}return e?getComputedStyle(e).cursor:'default'})()`,250).catch(()=>undefined);
+      return {selection:selection&&!this.dialogOpen()?await this.cdp.evaluate(selectionExpression,250).catch(()=>undefined):undefined,cursor};
     }catch(e){await this.reset(clientId);throw e;}
     finally{this.busy=false;clearTimeout(this.timer);if(this.held){this.timer=setTimeout(()=>void this.reset(clientId),5000);this.timer.unref();}else this.owner=undefined;}
   }

@@ -145,7 +145,7 @@ async function runDirect({id,clientId,events}:z.infer<typeof directBatch>){
       if (s.videoInput && !s.videoInput.isClosed) {
         result = await s.videoInput.runInput(clientId, events);
       } else {
-        s.direct??=new DirectInput(s.cdp);
+        s.direct??=new DirectInput(s.cdp,()=>!!s.dialog);
         result=await s.direct.run(clientId,events);
       }
       if(events.some(e=>e.kind!=='reset'&&(e.kind!=='pointer'||e.type!=='move'||e.buttons)))touchSession(s);

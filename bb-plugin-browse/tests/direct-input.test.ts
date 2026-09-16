@@ -14,6 +14,17 @@ it('returns selection on pointer release and excludes password selections',async
  await input.run('a',[pointer('down',1)]);expect(await input.run('a',[pointer('up')])).toEqual({selection:'Selected text',cursor:'text'});
  expect(selectionExpression).toContain("e.type==='password'");
 });
+it('does not block on cursor or selection inspection after a click opens a dialog',async()=>{
+ let dialog=false;
+ const cdp={
+  send:vi.fn().mockImplementation(async()=>{dialog=true;}),
+  evaluate:vi.fn(()=>new Promise(()=>{})),
+ };
+ const input=new DirectInput(cdp,()=>dialog);
+ await expect(input.run('a',[pointer('down',1),pointer('up')])).resolves.toEqual({selection:undefined,cursor:undefined});
+ expect(cdp.evaluate).not.toHaveBeenCalled();
+ expect(input.busy).toBe(false);
+});
 it('dispatches editing keys directly and releases held keys after a failure',async()=>{
  const cdp={send:vi.fn().mockResolvedValue({}),evaluate:vi.fn().mockResolvedValue('')};const input=new DirectInput(cdp);
  await input.run('a',[{kind:'keyboard',type:'down',key:'a',code:'KeyA',modifiers:4,repeat:false}]);
