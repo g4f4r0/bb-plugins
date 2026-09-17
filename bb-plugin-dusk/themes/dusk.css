@@ -293,3 +293,101 @@ pre,
   color: var(--foreground);
   text-decoration: none;
 }
+
+/* Plugin toasts use raw sonner; restyle them to match the BB toasts above. */
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] {
+  gap: 8px;
+  min-height: 46px;
+  padding: 8px 8px 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgb(0 0 0 / 0.3));
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 20px;
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-content] {
+  flex: 1;
+  min-width: 0;
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-title] {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  line-height: 20px;
+  color: inherit;
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-description] {
+  display: none;
+}
+/* Swap sonner's filled glyphs for BB's outline icons; other tones stay icon-free. */
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-icon] {
+  display: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:is([data-type="success"], [data-type="warning"], [data-type="error"]) [data-icon] {
+  display: flex;
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-icon] > * {
+  display: none;
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-icon]::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  mask: var(--dusk-toast-icon) center / contain no-repeat;
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"][data-type="success"] [data-icon] {
+  --dusk-toast-icon: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22%3E%3Cpath d=%22M22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22C17.5228 22 22 17.5228 22 12Z%22 stroke=%22%23000%22 stroke-width=%221.5%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/%3E%3Cpath d=%22M8 12.5L10.5 15L16 9%22 stroke=%22%23000%22 stroke-width=%221.5%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/%3E%3C/svg%3E");
+  color: var(--success);
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"][data-type="warning"] [data-icon] {
+  --dusk-toast-icon: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22%3E%3Cpath d=%22M13.9248 21H10.0752C5.44476 21 3.12955 21 2.27636 19.4939C1.42317 17.9879 2.60736 15.9914 4.97574 11.9985L6.90057 8.75333C9.17559 4.91778 10.3131 3 12 3C13.6869 3 14.8244 4.91777 17.0994 8.75332L19.0243 11.9985C21.3926 15.9914 22.5768 17.9879 21.7236 19.4939C20.8704 21 18.5552 21 13.9248 21Z%22 stroke=%22%23000%22 stroke-width=%221.5%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/%3E%3Cpath d=%22M12 9V13%22 stroke=%22%23000%22 stroke-width=%221.5%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/%3E%3Cpath d=%22M12.125 16.75H12M12.25 16.75C12.25 16.8881 12.1381 17 12 17C11.8619 17 11.75 16.8881 11.75 16.75C11.75 16.6119 11.8619 16.5 12 16.5C12.1381 16.5 12.25 16.6119 12.25 16.75Z%22 stroke=%22%23000%22 stroke-width=%221.5%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/%3E%3C/svg%3E");
+  color: var(--warning);
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"][data-type="error"] [data-icon] {
+  --dusk-toast-icon: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22%3E%3Ccircle cx=%2212%22 cy=%2212%22 r=%2210%22 stroke=%22%23000%22 stroke-width=%221.5%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/%3E%3Cpath d=%22M12 8V12%22 stroke=%22%23000%22 stroke-width=%221.5%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/%3E%3Cpath d=%22M12.125 15.75H12M12.25 15.75C12.25 15.8881 12.1381 16 12 16C11.8619 16 11.75 15.8881 11.75 15.75C11.75 15.6119 11.8619 15.5 12 15.5C12.1381 15.5 12.25 15.6119 12.25 15.75Z%22 stroke=%22%23000%22 stroke-width=%221.5%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/%3E%3C/svg%3E");
+  color: var(--dusk-stop);
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] :is([data-button], [data-close-button]) {
+  flex-shrink: 0;
+  height: 28px;
+  margin: 0;
+  border-radius: calc(var(--radius) - 4px);
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-button] {
+  max-width: min(25vw, 120px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-button]:hover {
+  background: var(--state-hover);
+  color: var(--foreground);
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-close-button] {
+  position: static;
+  order: 99;
+  width: 28px;
+  transform: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-close-button]:hover {
+  background: var(--state-hover);
+  color: var(--foreground);
+}
