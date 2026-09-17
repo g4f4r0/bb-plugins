@@ -451,10 +451,11 @@ div[class~="@container/page"]:has(#root-compose-prompt) [data-promptbox-shell] f
 .dusk-background-header-action, .dusk-background-header-cutout {
   position: absolute;
   left: 0;
-  top: 10px;
+  top: 0;
   width: 28px;
   height: 28px;
-  transform: translate3d(var(--dusk-header-x, 12px), 0, 0);
+  transform: translate3d(var(--dusk-header-x, 12px), var(--dusk-header-y, 10px), 0);
+  will-change: transform;
   transition: none;
   app-region: no-drag;
   -webkit-app-region: no-drag;
@@ -470,7 +471,7 @@ div[class~="@container/page"]:has(#root-compose-prompt) [data-promptbox-shell] f
   }
 }
 @media (max-width: 767px) and (pointer: coarse) {
-  .dusk-background-header-action, .dusk-background-header-cutout { top: 6px; width: 36px; height: 36px; }
+  .dusk-background-header-action, .dusk-background-header-cutout { --dusk-header-y: 6px; width: 36px; height: 36px; }
   .dusk-background-edit { width: 36px; height: 36px; }
 }
 /* Keep one homepage trigger pinned through native panel header handoffs. */
@@ -479,6 +480,8 @@ body:has(.dusk-home) button:is([aria-label^="Show right panel"], [aria-label^="H
 }
 button.dusk-panel-toggle {
   position: fixed;
+  top: 0;
+  will-change: transform;
   right: calc(16px + env(safe-area-inset-right));
   z-index: 45;
   app-region: no-drag;

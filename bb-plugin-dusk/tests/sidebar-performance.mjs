@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { mkdir, writeFile } from 'node:fs/promises';
 const base = process.env.BB_TEST_URL || 'http://127.0.0.1:38886';
@@ -25,18 +26,46 @@ try {
  });
  const page=await context.newPage(); const errors=[];page.on('pageerror',e=>{errors.push(e.message);console.error(e.message)});
  const cdp=await context.newCDPSession(page);
- await cdp.send('Tracing.start',{categories:'devtools.timeline,v8.execute,disabled-by-default-devtools.timeline',transferMode:'ReturnAsStream'});
+ const collected=[];cdp.on('Tracing.dataCollected',e=>collected.push(...e.value));
+ await cdp.send('Tracing.start',{categories:'devtools.timeline,v8.execute,disabled-by-default-devtools.timeline',transferMode:'ReportEvents'});
  await page.goto(base);await page.locator('.dusk-status-list').waitFor();await page.waitForTimeout(1500);
  const rows=await page.locator('.dusk-status-row').count();
  console.log(JSON.stringify({count,rows,buttons:await page.locator('[data-sidebar="trigger"]').count()}));
  await page.evaluate(()=>{window.framesSample=[];window.perfRunning=true;let last=performance.now();function tick(now){window.framesSample.push(now-last);last=now;if(window.perfRunning)requestAnimationFrame(tick)}requestAnimationFrame(tick)});
  for(let i=0;i<8;i++) { await page.locator('[data-sidebar="trigger"]:visible').first().click(); await page.waitForTimeout(300); }
  const frames=await page.evaluate(()=>{window.perfRunning=false;return window.framesSample});
- const completed=new Promise(resolve=>cdp.once('Tracing.tracingComplete',resolve));await cdp.send('Tracing.end');const {stream}=await completed;
- let trace='';for(;;){const chunk=await cdp.send('IO.read',{handle:stream});trace+=chunk.data;if(chunk.eof)break;}await cdp.send('IO.close',{handle:stream});
+ const completed=new Promise(resolve=>cdp.once('Tracing.tracingComplete',resolve));await cdp.send('Tracing.end');await completed;
+ const trace=JSON.stringify({traceEvents:collected});
  const label=process.env.DUSK_LABEL||'baseline';await writeFile(new URL(`${label}-${count}.trace.json`,output),trace);
  const events=JSON.parse(trace).traceEvents;const totals={};for(const e of events)if(e.ph==='X' && ['Layout','UpdateLayoutTree','Paint','FunctionCall','RunTask'].includes(e.name)){const v=totals[e.name]||={count:0,ms:0,max:0};v.count++;v.ms+=(e.dur||0)/1000;v.max=Math.max(v.max,(e.dur||0)/1000);}
  frames.sort((a,b)=>a-b);const result={count,rows,frames:frames.length,p95:frames[Math.floor(frames.length*.95)],max:frames.at(-1),over25:frames.filter(x=>x>25).length,totals,errors};
  await writeFile(new URL(`${label}-${count}.json`,output),JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));
  await page.screenshot({path:new URL(`${label}-${count}.png`,output).pathname});
+ if (label !== 'baseline' && count > 0) {
+  assert(rows < 60, `Mounted ${rows} rows`);
+  const first = page.locator('[data-sidebar-thread-id="thr_duskperf0"]');
+  await first.focus(); await page.keyboard.press('End');
+  await page.waitForFunction(id => document.activeElement?.getAttribute('data-sidebar-thread-id') === id, `thr_duskperf${count-1}`);
+  const last = page.locator(`[data-sidebar-thread-id="thr_duskperf${count-1}"]`);
+  assert(await last.isVisible());
+  const lastBounds=await last.boundingBox();assert(lastBounds.y >= 0 && lastBounds.y < 960, JSON.stringify(lastBounds));
+  await page.keyboard.press('Home');
+  await page.waitForFunction(()=>document.activeElement?.classList.contains('dusk-status-heading'));
+  for(let i=0;i<6;i++)await page.locator('.dusk-status-heading').first().click();
+  assert((await page.locator('.dusk-status-row').count())>0);
+  // An active pointer/menu must survive virtual scrolling.
+  await first.hover(); await first.locator('..').getByRole('button',{name:'Thread actions',exact:true}).click();
+  assert(await page.getByRole('menu').isVisible()); await page.keyboard.press('Escape');
+ }
+ await page.emulateMedia({reducedMotion:'reduce'});
+ await page.waitForTimeout(100);
+ const wallpaper=page.locator('.dusk-wallpaper');
+ const still=await wallpaper.evaluate(c=>c.toDataURL());await page.waitForTimeout(120);
+ assert.equal(await wallpaper.evaluate(c=>c.toDataURL()),still);
+ await page.evaluate(()=>document.documentElement.classList.toggle('dark'));
+ for(const width of [1100,800,360,1440]) {await page.setViewportSize({width,height:960});await page.waitForTimeout(150);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  assert.equal(await wallpaper.evaluate(c=>c.getContext('2d').getImageData(0,0,1,1).data[3]),255);
+ }
+ assert.deepEqual(errors,[]);console.log('PASS: bounded rows, keyboard range, section toggles, menu, reduced motion, theme and 360px resize');
 } finally {await browser.close();}

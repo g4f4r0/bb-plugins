@@ -15,6 +15,18 @@ export function animateAmbient(canvas: HTMLCanvasElement, base: readonly number[
   const pixels = ctx.createImageData(w, h);
   const fieldW = 80, fieldH = 60;
   const field = new Float32Array((fieldW + 1) * (fieldH + 1));
+  // Pack colors once; the hot loop writes one pixel rather than four channels.
+  // The typed views share native byte order, including on big-endian machines.
+  const colors = new Uint8ClampedArray(1025 * 4);
+  for (let i = 0; i <= 1024; i++) {
+    for (let c = 0; c < 3; c++) colors[i * 4 + c] = ground[c] + (primary[c] - ground[c]) * (i === 1024 ? 0.29 : i / 1023 * 0.035);
+    colors[i * 4 + 3] = 255;
+  }
+  const palette = new Uint32Array(colors.buffer);
+  const output = new Uint32Array(pixels.data.buffer);
+  const columns = new Uint16Array(w), weights = new Float32Array(w);
+  for (let x = 0; x < w; x++) { const fx = x / w * fieldW; columns[x] = Math.floor(fx); weights[x] = fx - columns[x]; }
+  const row = new Float32Array(fieldW + 1);
   let frame = 0, last = 0, time = ambientTime, visible = true, disposed = false, fading = !!from;
   const fadeStart = performance.now();
   const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
@@ -31,15 +43,13 @@ export function animateAmbient(canvas: HTMLCanvasElement, base: readonly number[
     }
     for (let y = 0; y < h; y++) {
       const fy = y / h * fieldH, iy = Math.floor(fy), ty = fy - iy;
+      const a = iy * (fieldW + 1), b = a + fieldW + 1;
+      for (let x = 0; x <= fieldW; x++) row[x] = field[a + x] * (1 - ty) + field[b + x] * ty;
+      const matrixRow = (y & 3) * 4, offset = y * w;
       for (let x = 0; x < w; x++) {
-        const fx = x / w * fieldW, ix = Math.floor(fx), tx = fx - ix;
-        const a = iy * (fieldW + 1) + ix, b = a + fieldW + 1;
-        const density = (field[a] * (1 - tx) + field[a + 1] * tx) * (1 - ty)
-          + (field[b] * (1 - tx) + field[b + 1] * tx) * ty;
-        const lit = density > (matrix[(y % 4) * 4 + x % 4] + 0.5) / 16;
-        const i = (y * w + x) * 4;
-        for (let c = 0; c < 3; c++) pixels.data[i + c] = ground[c] + (primary[c] - ground[c]) * (lit ? 0.29 : density * 0.035);
-        pixels.data[i + 3] = 255;
+        const ix = columns[x], tx = weights[x];
+        const density = row[ix] * (1 - tx) + row[ix + 1] * tx;
+        output[offset + x] = palette[density > (matrix[matrixRow + (x & 3)] + 0.5) / 16 ? 1024 : Math.round(density * 1023)];
       }
     }
     ctx.putImageData(pixels, 0, 0);
@@ -57,7 +67,9 @@ export function animateAmbient(canvas: HTMLCanvasElement, base: readonly number[
   }
   function reconcile() {
     cancelAnimationFrame(frame); frame = 0; last = 0;
-    if (!disposed && !document.hidden && visible && !reducedMotion.matches) frame = requestAnimationFrame(tick);
+    if (disposed) return;
+    if (reducedMotion.matches && fading) { fading = false; paint(); }
+    if (!document.hidden && visible && !reducedMotion.matches) frame = requestAnimationFrame(tick);
   }
   const intersection = new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; reconcile(); });
   intersection.observe(canvas);

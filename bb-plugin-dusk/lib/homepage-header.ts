@@ -25,6 +25,9 @@ export function mountHomepageHeader(host: HTMLElement, control: HTMLElement, cut
     return inset?.hasAttribute("data-vaul-animate") || inset?.getAttribute("data-sidebar-shelf") === "open";
   }
 
+  const style = (element: HTMLElement, name: string, value: string) => {
+    if (element.style.getPropertyValue(name) !== value) element.style.setProperty(name, value);
+  };
   function position() {
     if (disposed) return;
     const trigger = document.querySelector<HTMLElement>(leftSelector);
@@ -36,16 +39,16 @@ export function mountHomepageHeader(host: HTMLElement, control: HTMLElement, cut
       : (rect ? Math.max(12, rect.right + 4 - bounds.left) : 12);
     const y = rect ? Math.max(0, rect.top - bounds.top) : 10;
     for (const element of [control, cutout]) {
-      element.style.top = `${y}px`;
-      element.style.setProperty("--dusk-header-x", `${x}px`);
+      style(element, "--dusk-header-y", `${y}px`);
+      style(element, "--dusk-header-x", `${x}px`);
     }
     const strip = host.querySelector('[data-testid="root-compose-main-window-drag-strip"]');
     if (strip && cutout.parentElement !== strip) strip.append(cutout);
     if (!strip) cutout.remove();
-    panel.style.top = `${rect?.top ?? 10}px`;
+    style(panel, "transform", `translateY(${rect?.top ?? 10}px)`);
     if (rect) {
-      panel.style.width = `${rect.width}px`;
-      panel.style.height = `${rect.height}px`;
+      style(panel, "width", `${rect.width}px`);
+      style(panel, "height", `${rect.height}px`);
     }
   }
 
@@ -55,10 +58,12 @@ export function mountHomepageHeader(host: HTMLElement, control: HTMLElement, cut
     const show = document.querySelector<HTMLButtonElement>(showSelector);
     const native = show ?? document.querySelector<HTMLButtonElement>(hideSelector);
     const left = document.querySelector<HTMLElement>(leftSelector);
+    position();
     panel.hidden = !native;
     if (native) {
       // Use the left trigger's complete responsive sizing and hover treatment.
-      panel.className = `${left?.className ?? native.className} dusk-panel-toggle`;
+      const className = `${left?.className ?? native.className} dusk-panel-toggle`;
+      if (panel.className !== className) panel.className = className;
       const icon = native.querySelector('[data-icon="PanelRight"]');
       if (icon && icon !== artwork) { panel.replaceChildren(icon.cloneNode(true)); artwork = icon; }
       setAttribute("aria-label", native.getAttribute("aria-label") ?? "Toggle right panel");
@@ -66,14 +71,18 @@ export function mountHomepageHeader(host: HTMLElement, control: HTMLElement, cut
       setAttribute("aria-expanded", String(!show));
       panel.disabled = native.disabled;
     }
-    position();
   }
   const schedule = () => { if (!disposed && !scheduled) scheduled = requestAnimationFrame(sync); };
-  const observer = new MutationObserver(sync);
+  const relevant = `${leftSelector}, ${showSelector}, ${hideSelector}, [data-testid="root-compose-main-window-drag-strip"]`;
+  const observer = new MutationObserver(records => {
+    if (records.some(record => record.type === "attributes"
+      ? record.target instanceof Element && record.target.matches(relevant)
+      : [...Array.from(record.addedNodes), ...Array.from(record.removedNodes)].some(node => node instanceof Element && (node.matches(relevant) || node.querySelector(relevant))))) schedule();
+  });
   observer.observe(document.querySelector('[data-testid="app-layout-root"]') ?? document.body, {
     childList: true, subtree: true, attributes: true, attributeFilter: ["aria-expanded", "aria-label", "disabled"],
   });
-  const resize = new ResizeObserver(position); resize.observe(host);
+  const resize = new ResizeObserver(schedule); resize.observe(host);
   window.addEventListener("resize", schedule);
 
   function followMotion() {
@@ -93,7 +102,7 @@ export function mountHomepageHeader(host: HTMLElement, control: HTMLElement, cut
     } else {
       const properties = transitions.get(target); properties?.delete(event.propertyName);
       if (!properties?.size) transitions.delete(target);
-      position();
+      schedule();
     }
   }
   document.addEventListener("transitionrun", transition);
