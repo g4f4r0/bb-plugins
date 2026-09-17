@@ -46,5 +46,9 @@ try {
  assert.equal(config.image,null);assert.equal(await wallpaper.evaluate(c=>getComputedStyle(c).visibility),'visible');
  await page.reload();await edit.waitFor();assert.equal(await wallpaper.count(),1);
  assert.deepEqual(errors,[]);await context.close();
- console.log('PASS: ambient motion, palette/reduced motion, photo upload/removal, GPU surface, theme/resize, editor identity, refresh and 360px bounds');
+ const offline=await browser.newContext();
+ await offline.route('**/api/v1/plugins/dusk/rpc/get',route=>route.abort('internetdisconnected'));
+ const offlinePage=await offline.newPage();await offlinePage.goto(base);await offlinePage.locator('.dusk-wallpaper[data-ready]').waitFor();
+ assert.equal(await offlinePage.locator('.dusk-wallpaper').count(),1);await offline.close();
+ console.log('PASS: ambient motion, palette/reduced motion, photo upload/removal, GPU surface, theme/resize, editor identity, refresh, offline fallback and 360px bounds');
 } finally { await browser.close(); }

@@ -33,6 +33,11 @@ try {
  await page.goto(base);
  if(process.env.DUSK_MOBILE)await page.locator('[data-sidebar="trigger"]:visible').first().click();
  await page.locator('.dusk-status-list').waitFor();await page.waitForTimeout(1500);
+ if(process.env.DUSK_NO_HAS)console.log(await page.evaluate(()=>{
+  let removed=0;const prune=sheet=>{for(let i=sheet.cssRules.length-1;i>=0;i--){const rule=sheet.cssRules[i];if(rule.selectorText?.includes(':has(')){sheet.deleteRule(i);removed++}else if(rule.cssRules)prune(rule)}};
+  for(const sheet of [...document.styleSheets,...document.adoptedStyleSheets]){try{if([...sheet.cssRules].some(r=>r.cssText.includes('.dusk-status-row')))prune(sheet)}catch{}}
+  return {removedHasRules:removed};
+ }));
  const rows=await page.locator('.dusk-status-row').count();
  console.log(JSON.stringify({count,rows,buttons:await page.locator('[data-sidebar="trigger"]').count()}));
  await page.evaluate(()=>{window.framesSample=[];window.perfRunning=true;let last=performance.now();function tick(now){window.framesSample.push(now-last);last=now;if(window.perfRunning)requestAnimationFrame(tick)}requestAnimationFrame(tick)});
