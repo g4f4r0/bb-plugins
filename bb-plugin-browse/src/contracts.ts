@@ -3,15 +3,15 @@ import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { credentialRequest, credentialValues } from "./credentials";
 export const VERSION = "Fortress 151";
-export const SESSION_TTL_MS = 15 * 60 * 1000;
+const SESSION_TTL_MS = 15 * 60 * 1000;
 export const NATIVE_LEASE_TTL_MS = 30 * 60 * 1000;
 export const CREDENTIAL_TIMEOUT_MS = 300000;
 export const id = z.string().min(1).max(200);
-export const point = z.object({
+const point = z.object({
   x: z.number().finite().min(0).max(50000),
   y: z.number().finite().min(0).max(50000),
 });
-export const atomicOperation = z.discriminatedUnion("kind", [
+const atomicOperation = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("element"),
     action: z.enum(["click", "hover", "fill"]),
@@ -94,7 +94,7 @@ export const job = z.object({
   artifacts: z.array(artifact),
 });
 export type Job = z.infer<typeof job>;
-export const hostSession = z.object({
+const hostSession = z.object({
   id: z.string(),
   status: z.enum(["connecting", "ready", "error", "released"]),
   error: z.string().optional(),
@@ -154,7 +154,7 @@ export const health = z.object({
   xkbcomp: z.boolean(),
   xkbData: z.boolean(),
 });
-export const viewerInput = z.discriminatedUnion("kind", [
+const viewerInput = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("click"),
     x: z.number().min(0).max(50000),
@@ -271,7 +271,7 @@ export const hostContract = defineRpcContract({
     output: z.object({ base64: z.string(), mime: z.string() }),
   },
 });
-export const startInput = z.object({
+const startInput = z.object({
   video: z.boolean().optional(),
   newTab: z.boolean().default(false),
   threadId: id,

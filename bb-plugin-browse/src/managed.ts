@@ -101,7 +101,7 @@ export const LINUX_DEP_PACKAGES = [
   "x11-xkb-utils",
   "xkb-data",
 ] as const;
-export function displayFiles(root: string, env = managedEnv(root)) {
+function displayFiles(root: string, env = managedEnv(root)) {
   if (process.platform !== "linux")
     return {
       display: "host" as const,

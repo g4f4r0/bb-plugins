@@ -508,7 +508,6 @@ function SessionBrowser({
   params: unknown;
 }) {
   const rpc = useRpc<typeof rpcContract>();
-  const nav = useBbNavigate();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loadedViewerId, setLoadedViewerId] = useState("");
   const [sessionsLoaded, setSessionsLoaded] = useState(false);

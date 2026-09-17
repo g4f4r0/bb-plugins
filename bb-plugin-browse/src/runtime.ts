@@ -60,7 +60,7 @@ export async function ensureRuntime(root: string, signal: AbortSignal) {
   }
 }
 
-export async function fortressSdk(root: string, signal: AbortSignal) {
+async function fortressSdk(root: string, signal: AbortSignal) {
   const dir = await ensureRuntime(root, signal);
   return import(
     pathToFileURL(join(dir, "node_modules/tilion-fortress/index.js")).href

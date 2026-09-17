@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { once } from "node:events";
 import WebSocket, { WebSocketServer } from "ws";
 import { Bridge } from "../src/bridge";
-import { validateCommand, safeUrl, redact } from "../src/policy";
+import { validateCommand, redact } from "../src/policy";
 import { runProcess } from "../src/process";
 describe("private CDP adapter", () => {
   it("multiplexes overlapping request IDs and blocks closing the user browser", async () => {

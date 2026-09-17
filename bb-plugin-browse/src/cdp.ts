@@ -1,7 +1,7 @@
 import WebSocket from "ws";
 import { streamProfiles } from "./adaptive-stream";
 
-export type LiveFrame = {
+type LiveFrame = {
   data: string;
   width: number;
   height: number;

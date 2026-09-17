@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Cdp } from "./cdp";
 
-export const credentialField = z
+const credentialField = z
   .object({
     selector: z.string().min(1).max(1000),
     label: z.string().min(1).max(100),
@@ -20,7 +20,7 @@ export const credentialValues = z
   .array(z.string().min(1).max(4096))
   .min(1)
   .max(6);
-export type CredentialRequest = z.infer<typeof credentialRequest>;
+type CredentialRequest = z.infer<typeof credentialRequest>;
 
 // These functions run in an isolated CDP world. Neither their captured node
 // references nor the RPC arguments pass through the automation CLI or job log.

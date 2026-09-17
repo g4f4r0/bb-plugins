@@ -4,7 +4,7 @@ import WebSocket, { WebSocketServer } from "ws";
 import { z } from "zod";
 import { directEvent } from "./direct-input";
 import { redact } from "./policy";
-export const controlMessage = z.object({
+const controlMessage = z.object({
   seq: z.number().int().safe(),
   events: z.array(directEvent).min(1).max(64),
 });

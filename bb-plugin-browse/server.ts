@@ -160,7 +160,7 @@ export default async function plugin(bb: BbPluginApi) {
       threadId: s.threadId,
     };
   }
-  async function enrich(hostId: string, j: Job): Promise<Job> {
+  async function enrich(j: Job): Promise<Job> {
     if (!j.artifacts.length) return j;
     const s = j.sessionId ? sessions.get(j.sessionId) : undefined;
     if (!s) return j;
@@ -981,7 +981,6 @@ export default async function plugin(bb: BbPluginApi) {
       await showLive(s.threadId, s.id);
       changed();
       return enrich(
-        s.hostId,
         await host.call("submit", input, { hostId: s.hostId }),
       );
     },
@@ -1017,7 +1016,7 @@ export default async function plugin(bb: BbPluginApi) {
         )
           await refresh(s);
       }
-      return enrich(hostId, j);
+      return enrich(j);
     },
     cancel: async ({ hostId, id }) => {
       const local = credentialJobs.get(id);
