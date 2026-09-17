@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import type { McpServerRecord, McpSourceRecord, ToolPolicyMode, ToolPolicyRecord, ToolRisk } from "./types.js";
+import type { McpServerRecord, McpSourceRecord } from "./types.js";
 
 export class McpsStore {
   constructor(
@@ -123,39 +123,6 @@ export class McpsStore {
   setMcpEnabled(pluginId: string, serverId: string, enabled: boolean): McpServerRecord | undefined {
     this.db.prepare(`UPDATE mcp_servers SET enabled = ? WHERE pluginId = ? AND serverId = ?`).run(enabled ? 1 : 0, pluginId, serverId);
     return this.getServer(pluginId, serverId);
-  }
-
-  listToolPolicies(pluginId: string, serverId: string): ToolPolicyRecord[] {
-    return this.db.prepare(`SELECT * FROM tool_policies WHERE pluginId = ? AND serverId = ?`).all(pluginId, serverId) as ToolPolicyRecord[];
-  }
-
-  getToolPolicy(pluginId: string, serverId: string, toolName: string): ToolPolicyRecord | undefined {
-    return this.db.prepare(
-      `SELECT * FROM tool_policies WHERE pluginId = ? AND serverId = ? AND toolName = ?`,
-    ).get(pluginId, serverId, toolName) as ToolPolicyRecord | undefined;
-  }
-
-  upsertToolPolicy(record: ToolPolicyRecord): void {
-    this.db.prepare(
-      `INSERT INTO tool_policies (pluginId, serverId, toolName, enabled, risk, mode)
-       VALUES (@pluginId, @serverId, @toolName, @enabled, @risk, @mode)
-       ON CONFLICT(pluginId, serverId, toolName) DO UPDATE SET
-         enabled=excluded.enabled, risk=excluded.risk, mode=excluded.mode`,
-    ).run(record as unknown as Record<string, unknown>);
-  }
-
-  setToolPolicy(pluginId: string, serverId: string, toolName: string, patch: { enabled?: boolean; risk?: ToolRisk; mode?: ToolPolicyMode }): ToolPolicyRecord {
-    const previous = this.getToolPolicy(pluginId, serverId, toolName) ?? {
-      pluginId, serverId, toolName, enabled: 1, risk: "write" as const, mode: "inherit" as const,
-    };
-    const next: ToolPolicyRecord = {
-      ...previous,
-      enabled: patch.enabled === undefined ? previous.enabled : (patch.enabled ? 1 : 0),
-      risk: patch.risk ?? previous.risk,
-      mode: patch.mode ?? previous.mode,
-    };
-    this.upsertToolPolicy(next);
-    return next;
   }
 
   transaction<T>(fn: () => T): T {

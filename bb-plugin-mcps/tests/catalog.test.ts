@@ -96,8 +96,8 @@ describe("formatMcpResult", () => {
   });
 
   it("uses the policy error string", () => {
-    expect(formatMcpResult({ isError: true, error: "MCP tool is disabled" })).toEqual({
-      text: "MCP tool is disabled",
+    expect(formatMcpResult({ isError: true, error: "MCP server is not connected" })).toEqual({
+      text: "MCP server is not connected",
       isError: true,
     });
   });

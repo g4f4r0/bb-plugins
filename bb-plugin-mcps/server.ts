@@ -493,9 +493,6 @@ export default async function plugin(bb: BbPluginApi) {
 
   async function invokeTool(opaqueId: string, args: JsonRecord, signal?: AbortSignal) {
     const tool = gateway.peekTool(opaqueId) ?? await gateway.getTool(opaqueId);
-    if (store.getToolPolicy(tool.pluginId, tool.serverId, tool.name)?.enabled === 0) {
-      return { isError: true, error: "MCP tool is disabled" };
-    }
     const invalid = validateCallArgs(tool.inputSchema, args);
     if (invalid) {
       return { isError: true, error: `Invalid arguments for ${tool.name}: ${invalid}` };

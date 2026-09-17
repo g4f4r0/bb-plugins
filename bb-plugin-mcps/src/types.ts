@@ -3,7 +3,6 @@ export type JsonRecord = Record<string, unknown>;
 export type McpServerType = "stdio" | "streamable-http" | "sse";
 export type McpSourceKind = "manual" | "registry";
 export type ToolRisk = "read" | "write" | "destructive";
-export type ToolPolicyMode = "inherit" | "allow" | "deny" | "confirm";
 
 export interface McpSourceRecord {
   id: string;
@@ -28,15 +27,6 @@ export interface McpServerRecord {
   lastError: string | null;
   approved: number;
   enabled: number;
-}
-
-export interface ToolPolicyRecord {
-  pluginId: string;
-  serverId: string;
-  toolName: string;
-  enabled: number;
-  risk: ToolRisk;
-  mode: ToolPolicyMode;
 }
 
 export interface CatalogTool {
