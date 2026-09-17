@@ -56,3 +56,15 @@ describe("mcps plugin surface", () => {
     await harness.lifecycle.dispose();
   });
 });
+
+it('preserves both concurrent installs with the same name', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'bb-mcps-')); temps.push(dataDir);
+  const {bb, harness} = createFakePluginHost({pluginId: 'mcps', sdk: {system: {config: async () => ({dataDir, primaryHostId: 'host_1'})}}});
+  await plugin(bb);
+  try {
+    const results = await Promise.all(Array.from({length: 2}, () => harness.behavior.callRpc('addManual', {name: 'same', type: 'stdio', command: 'echo', args: []})));
+    expect(results[0]).not.toEqual(results[1]);
+    const snapshot = await harness.behavior.callRpc('snapshot', null) as {servers: unknown[]};
+    expect(snapshot.servers).toHaveLength(2);
+  } finally { await harness.lifecycle.dispose(); }
+});

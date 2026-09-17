@@ -22,15 +22,15 @@ export function tokenize(query: string): string[] {
 }
 
 export function scoreMatch(query: string, fields: string[]): number {
-  const tokens = tokenize(query);
-  if (tokens.length === 0) return 0;
-  const haystack = fields.join("\n").toLowerCase();
+  return scoreTokens(tokenize(query), fields[0]?.toLowerCase() ?? "", fields.join("\n").toLowerCase());
+}
+
+/** Score already normalized search data without retokenizing every tool. */
+export function scoreTokens(tokens: string[], name: string, haystack: string): number {
   let score = 0;
   for (const token of tokens) {
     if (!haystack.includes(token)) return 0;
-    if (fields[0]?.toLowerCase() === token) score += 8;
-    else if (fields[0]?.toLowerCase().includes(token)) score += 5;
-    else score += 1;
+    score += name === token ? 8 : name.includes(token) ? 5 : 1;
   }
   return score;
 }

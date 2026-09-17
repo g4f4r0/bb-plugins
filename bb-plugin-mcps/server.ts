@@ -1,3 +1,4 @@
+import { LruMap } from "./src/lru.js";
 import * as crypto from "node:crypto";
 import * as path from "node:path";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
@@ -78,8 +79,9 @@ export const rpcContract = defineRpcContract({
       query: z.string().trim().min(1).max(200),
       limit: z.number().int().min(1).max(30).optional(),
       remoteOnly: z.boolean().optional(),
+      cursor: z.string().max(2000).optional(),
     }).strict(),
-    output: z.object({ servers: z.array(registryHitSchema) }).strict(),
+    output: z.object({ servers: z.array(registryHitSchema), nextCursor: z.string().nullable() }).strict(),
   },
   addFromRegistry: {
     input: z.object({
@@ -325,6 +327,8 @@ export default async function plugin(bb: BbPluginApi) {
     return { pluginRoot: path.join(root, "root"), pluginData: path.join(root, "data") };
   }
 
+  const reservedSourceIds = new Set<string>();
+
   async function addServer(input: {
     name: string;
     description?: string;
@@ -340,36 +344,40 @@ export default async function plugin(bb: BbPluginApi) {
     const dd = await getDataDir();
     const base = slug(input.name).slice(0, 40);
     let id = base;
-    if (store.getPlugin(id) || store.getSourceByName(input.name)) id = `${base}_${crypto.randomBytes(3).toString("hex")}`;
+    while (store.getPlugin(id) || reservedSourceIds.has(id)) id = `${base}_${crypto.randomBytes(3).toString("hex")}`;
     const dirs = sourceDirs(id, dd);
-    await ensureDir(dirs.pluginRoot);
-    await ensureDir(dirs.pluginData);
-    const now = Date.now();
-    store.transaction(() => {
-      store.upsertSource({
-        id,
-        name: input.name,
-        description: input.description ?? null,
-        sourceKind: input.sourceKind,
-        sourceRef: input.sourceRef ?? null,
-        registryName: input.registryName ?? null,
-        registryVersion: input.registryVersion ?? null,
-        pluginRoot: dirs.pluginRoot,
-        pluginData: dirs.pluginData,
-        createdAt: now,
-        updatedAt: now,
+    // Reserve the ID synchronously before the first filesystem await.
+    reservedSourceIds.add(id);
+    try {
+      await ensureDir(dirs.pluginRoot);
+      await ensureDir(dirs.pluginData);
+      const now = Date.now();
+      store.transaction(() => {
+        store.upsertSource({
+          id,
+          name: input.name,
+          description: input.description ?? null,
+          sourceKind: input.sourceKind,
+          sourceRef: input.sourceRef ?? null,
+          registryName: input.registryName ?? null,
+          registryVersion: input.registryVersion ?? null,
+          pluginRoot: dirs.pluginRoot,
+          pluginData: dirs.pluginData,
+          createdAt: now,
+          updatedAt: now,
+        });
+        store.upsertMcpServer({
+          pluginId: id,
+          serverId: "mcp",
+          type: input.type,
+          configJson: JSON.stringify(validation.config),
+          status: "idle",
+          lastError: null,
+          approved: 1,
+          enabled: 1,
+        });
       });
-      store.upsertMcpServer({
-        pluginId: id,
-        serverId: "mcp",
-        type: input.type,
-        configJson: JSON.stringify(validation.config),
-        status: "idle",
-        lastError: null,
-        approved: 1,
-        enabled: 1,
-      });
-    });
+    } finally { reservedSourceIds.delete(id); }
     await publishChanged({ kind: "add", id });
     return { id, serverId: "mcp", name: input.name };
   }
@@ -407,15 +415,21 @@ export default async function plugin(bb: BbPluginApi) {
     return { servers };
   }
 
-  async function searchRegistry(query: string, limit = 12, remoteOnly = false) {
+  const registryCache = new LruMap<string, { at: number; page: Awaited<ReturnType<typeof fetchRegistryServers>> }>(64);
+  async function registryPage(query: string, limit = 12, remoteOnly = false, cursor?: string) {
     const current = await settings.get();
-    const { servers } = await fetchRegistryServers({
-      baseUrl: current.registryUrl || OFFICIAL_REGISTRY,
-      search: query,
-      limit: remoteOnly ? Math.min(limit * 2, 50) : limit,
+    const baseUrl = current.registryUrl || OFFICIAL_REGISTRY;
+    const key = JSON.stringify([baseUrl, query, limit, remoteOnly, cursor]);
+    const cached = registryCache.get(key);
+    const page = cached && Date.now() - cached.at < 60_000 ? cached.page : await fetchRegistryServers({
+      baseUrl, search: query, limit: remoteOnly ? Math.min(limit * 2, 50) : limit, cursor,
     });
-    const hits = servers.map(registryHit);
-    return remoteOnly ? hits.filter((hit) => hit.remote) : hits;
+    if (page !== cached?.page) registryCache.set(key, { at: Date.now(), page });
+    const hits = page.servers.map(registryHit);
+    return { servers: remoteOnly ? hits.filter(hit => hit.remote) : hits, nextCursor: page.nextCursor };
+  }
+  async function searchRegistry(query: string, limit = 12, remoteOnly = false) {
+    return (await registryPage(query, limit, remoteOnly)).servers;
   }
 
   async function addFromRegistry(name: string, extraHeaders?: Record<string, string>, displayName?: string) {
@@ -517,7 +531,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   bb.rpc.register(rpcContract, {
     snapshot: () => buildSnapshot(),
-    async registrySearch({ query, limit, remoteOnly }) { return { servers: await searchRegistry(query, limit ?? 12, remoteOnly === true) }; },
+    async registrySearch({ query, limit, remoteOnly, cursor }) { return registryPage(query, limit ?? 12, remoteOnly === true, cursor); },
     addFromRegistry: ({ name, headers, headerLines }) => addFromRegistry(name, headersFromInput(headers, headerLines)),
     async addManual({ name, type, command, args, cwd, url, headers, headerLines }) {
       const config: Record<string, unknown> = { type };
@@ -538,7 +552,7 @@ export default async function plugin(bb: BbPluginApi) {
       const source = store.resolveSource(id);
       if (!source) return { deleted: false };
       for (const server of store.listMcpServers(source.id)) {
-        await gateway.closeServer(source.id, server.serverId).catch(() => {});
+        await gateway.resetServer(source.id, server.serverId).catch(() => {});
         await deleteOAuthCredentials(source.id, server.serverId).catch((error) => {
           bb.log.warn(`[mcps] ${errorText(error)}`);
         });
@@ -891,7 +905,7 @@ export default async function plugin(bb: BbPluginApi) {
             const source = store.resolveSource(rest[0]);
             if (!source) return { exitCode: 1, stderr: `not found: ${rest[0]}\n` };
             for (const server of store.listMcpServers(source.id)) {
-              await gateway.closeServer(source.id, server.serverId).catch(() => {});
+              await gateway.resetServer(source.id, server.serverId).catch(() => {});
               await deleteOAuthCredentials(source.id, server.serverId).catch(() => {});
             }
             store.deleteSource(source.id);

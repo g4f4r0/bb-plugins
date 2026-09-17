@@ -1,4 +1,5 @@
-import { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { readRpc } from "./lib/read-rpc";
+import { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { definePluginApp, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
@@ -571,17 +572,31 @@ function AddFormDialog({
   );
 }
 
+function Pagination({ page, total, onPage, label }: { page: number; total: number; onPage: (page: number) => void; label: string }) {
+  if (total <= 50) return null;
+  return <div className="flex items-center justify-between gap-3">
+    <Button size="sm" variant="outline" aria-label={`Previous ${label}`} disabled={page === 0} onClick={() => onPage(page - 1)}>Previous</Button>
+    <span className="text-xs text-muted-foreground">{page * 50 + 1}–{Math.min((page + 1) * 50, total)} of {total}</span>
+    <Button size="sm" variant="outline" aria-label={`Next ${label}`} disabled={(page + 1) * 50 >= total} onClick={() => onPage(page + 1)}>Next</Button>
+  </div>;
+}
+
 function useServers() {
   const rpc = useRpc<typeof rpcContract>();
   const [servers, setServers] = useState<ServerRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const request = useRef<AbortController | null>(null);
   const refetch = useCallback(() => {
-    rpc.call("snapshot").then((result) => {
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
+    readRpc("snapshot", null, controller.signal).then((result) => {
+      if (controller.signal.aborted) return;
       setServers(result.servers);
       setError(null);
-    }, (cause) => setError(errorText(cause)));
-  }, [rpc]);
-  useEffect(() => { refetch(); }, [refetch]);
+    }, (cause) => { if (!controller.signal.aborted) setError(errorText(cause)); });
+  }, []);
+  useEffect(() => { refetch(); return () => request.current?.abort(); }, [refetch]);
   useRealtime("mcps-changed", refetch);
   return { rpc, servers, error, setError, refetch };
 }
@@ -623,6 +638,9 @@ function InstalledList({
     });
   }, [servers, query, types, statuses, auths]);
 
+  const [requestedPage, setPage] = useState(0);
+  useEffect(() => setPage(0), [query, types, statuses, auths]);
+  const page = Math.min(requestedPage, Math.max(0, Math.ceil((filtered?.length ?? 0) / 50) - 1));
   const filtersActive = types.length + statuses.length + auths.length > 0;
 
   return (
@@ -708,7 +726,7 @@ function InstalledList({
       ) : (
         <div className="overflow-hidden rounded-lg border border-border bg-card px-4 py-3.5">
           <ul className="divide-y divide-border">
-            {filtered?.map((server) => (
+            {filtered?.slice(page * 50, (page + 1) * 50).map((server) => (
               <li
                 key={server.id}
                 className={cn(
@@ -744,6 +762,7 @@ function InstalledList({
               </li>
             ))}
           </ul>
+          <Pagination page={page} total={filtered?.length ?? 0} onPage={setPage} label="servers" />
         </div>
       )}
     </div>
@@ -762,31 +781,39 @@ function BrowsePane({
   const [hits, setHits] = useState<RegistryHit[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [cursors, setCursors] = useState<string[]>([]);
+  const cursor = cursors.at(-1);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [types, setTypes] = useState<TypeFilter[]>([]);
   const [readies, setReadies] = useState<ReadyFilter[]>([]);
 
   useEffect(() => {
+    const controller = new AbortController();
     const next = query.trim();
+    setHits(null);
     if (next.length < 2) {
       setHits(null);
       setSearchError(null);
       setSearching(false);
       return;
     }
+    setSearching(true);
     const timer = window.setTimeout(() => {
-      setSearching(true);
       setSearchError(null);
-      rpc.call("registrySearch", { query: next }).then((result) => {
+      readRpc("registrySearch", { query: next, ...(cursor ? {cursor} : {}) }, controller.signal).then((result) => {
+        if (controller.signal.aborted) return;
         setHits(result.servers);
+        setNextCursor(result.nextCursor);
         setSearching(false);
       }, (cause) => {
+        if (controller.signal.aborted) return;
         setSearchError(errorText(cause));
         setHits([]);
         setSearching(false);
       });
     }, 280);
-    return () => window.clearTimeout(timer);
-  }, [query, rpc]);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [query, rpc, cursor]);
 
   const filtered = useMemo(() => {
     if (hits === null) return null;
@@ -809,7 +836,7 @@ function BrowsePane({
           <Icon name="Search" className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => { setQuery(event.target.value); setCursors([]); setNextCursor(null); }}
             placeholder="Search the MCP Registry"
             aria-label="Search the MCP Registry"
             className="h-8 pl-8"
@@ -896,6 +923,10 @@ function BrowsePane({
           ))}
         </div>
       )}
+      {!searching && !searchError && (cursors.length > 0 || nextCursor) ? <div className="flex justify-between gap-3">
+        <Button size="sm" variant="outline" disabled={cursors.length === 0} onClick={() => setCursors(p => p.slice(0, -1))}>Previous matches</Button>
+        <Button size="sm" variant="outline" disabled={!nextCursor || nextCursor === cursor} onClick={() => { if (nextCursor) setCursors(p => [...p, nextCursor]); }}>Next matches</Button>
+      </div> : null}
     </div>
   );
 }
@@ -921,18 +952,24 @@ function DetailPage({
   const server = servers?.find((item) => item.id === id) ?? null;
   const [tools, setTools] = useState<CompactTool[] | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [toolPage, setToolPage] = useState(0);
 
   useEffect(() => {
+    const controller = new AbortController();
     setTools(null);
+    setToolPage(0);
     setCatalogError(null);
-    rpc.call("inspectServer", { id }).then((result) => {
+    readRpc("inspectServer", { id }, controller.signal).then((result) => {
+      if (controller.signal.aborted) return;
       setTools(result.tools);
       setCatalogError(result.error);
     }, (cause) => {
+      if (controller.signal.aborted) return;
       setTools([]);
       setCatalogError(errorText(cause));
     });
-  }, [id, rpc, server?.status, server?.authStatus]);
+    return () => controller.abort();
+  }, [id, rpc, server?.status, server?.authStatus, server?.enabled]);
 
   if (servers !== null && server === null) {
     return (
@@ -1043,7 +1080,7 @@ function DetailPage({
         ) : (
           <div className="overflow-hidden rounded-lg border border-border bg-card px-4 py-3.5">
             <ul className="divide-y divide-border">
-              {tools.map((tool) => (
+              {tools.slice(toolPage * 50, (toolPage + 1) * 50).map((tool) => (
                 <li key={tool.opaqueId} className="py-2.5 first:pt-0 last:pb-0">
                   <p className="truncate text-sm font-medium">{tool.name}</p>
                   <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
@@ -1055,6 +1092,7 @@ function DetailPage({
             </ul>
           </div>
         )}
+        <Pagination page={toolPage} total={tools?.length ?? 0} onPage={setToolPage} label="tools" />
         {catalogError && tools && tools.length > 0 ? (
           <p role="alert" className="text-sm text-destructive">{catalogError}</p>
         ) : null}
@@ -1160,6 +1198,7 @@ function McpsPage({ subPath }: { subPath: string }) {
       <PageShell>
         {error ? <p role="alert" className="mb-4 text-sm text-destructive">{error}</p> : null}
         <DetailPage
+          key={route.detailId}
           id={route.detailId}
           servers={servers}
           pending={pending}

@@ -1,3 +1,4 @@
+import { LruMap } from "./lru.js";
 /**
  * Canonical MCP gateway for BB, extracted from Agent Plugins.
  *
@@ -25,7 +26,7 @@ import type { McpsStore } from "./store.js";
 import { expandPlaceholders, validateMcpServer } from "./loader.js";
 import { isWithinRoot } from "./safe-fs.js";
 import { McpOAuthProvider } from "./oauth.js";
-import { compactToolFromCatalog, scoreMatch, SEARCH_LIMIT } from "./catalog.js";
+import { compactToolFromCatalog, scoreTokens, tokenize, SEARCH_LIMIT } from "./catalog.js";
 import { parameterNames, validateCallArgs } from "./call-card.js";
 import type {
   CatalogPrompt,
@@ -331,17 +332,20 @@ function responseRecord(result: unknown): JsonRecord {
 
 export class McpGateway implements McpRuntime {
   private readonly conns = new Map<string, Connected>();
+  private readonly reconnects = new Map<string, Promise<string | null>>();
   private readonly pending = new Map<string, Promise<Connected>>();
   private readonly connectControllers = new Map<string, AbortController>();
   private readonly oauthPending = new Map<string, PendingAuth>();
   private readonly providers = new Map<string, McpOAuthProvider>();
   private readonly failures = new Map<string, Failure>();
-  private readonly catalogCache = new Map<string, CatalogCache>();
+  private readonly catalogCache = new LruMap<string, CatalogCache>(128, (key) => this.dropIndex(key));
+  private readonly catalogControllers = new Map<string, AbortController>();
   private readonly catalogLoads = new Map<string, Promise<CatalogCache>>();
-  private readonly catalogGenerations = new Map<string, number>();
+  private readonly catalogGenerations = new Map<string, object>();
   private readonly dirtyCatalogs = new Set<string>();
   private readonly catalogIndex = new Map<string, CatalogRef>();
-  private readonly serverEpochs = new Map<string, number>();
+  private readonly serverIndex = new Map<string, Set<string>>();
+  private readonly serverEpochs = new Map<string, object>();
   private readonly hostExitUnsubscribe?: () => void;
   private readonly hostCatalogUnsubscribe?: () => void;
   private readonly hostConnectionUnsubscribe?: () => void;
@@ -365,6 +369,7 @@ export class McpGateway implements McpRuntime {
 
   async close(): Promise<void> {
     this.closed = true;
+    for (const controller of this.catalogControllers.values()) controller.abort();
     for (const controller of this.connectControllers.values()) controller.abort(new Error("MCP gateway closing"));
     await Promise.allSettled([...this.pending.entries()].map(async ([key, pending]) => {
       try { await withTimeout(pending, CLOSE_TIMEOUT_MS, `wait for MCP connection ${key}`); }
@@ -382,6 +387,15 @@ export class McpGateway implements McpRuntime {
         else await this.closePendingAuthValue(key, value);
       } catch (e) { this.log.warn(`close ${key}: ${errorText(e)}`); }
     }));
+    this.catalogCache.clear();
+    this.catalogIndex.clear();
+    this.serverIndex.clear();
+    this.catalogGenerations.clear();
+    this.dirtyCatalogs.clear();
+    this.catalogLoads.clear();
+    this.catalogControllers.clear();
+    this.providers.clear();
+    this.serverEpochs.clear();
     this.hostExitUnsubscribe?.();
     this.hostCatalogUnsubscribe?.();
     this.hostConnectionUnsubscribe?.();
@@ -389,7 +403,7 @@ export class McpGateway implements McpRuntime {
 
   async closeServer(pluginId: string, serverId: string): Promise<void> {
     const key = keyOf(pluginId, serverId);
-    this.serverEpochs.set(key, (this.serverEpochs.get(key) ?? 0) + 1);
+    this.serverEpochs.delete(key);
     this.connectControllers.get(key)?.abort(new Error(`MCP connection cancelled for ${serverId}`));
     const pendingConnect = this.pending.get(key);
     if (pendingConnect) {
@@ -519,6 +533,16 @@ export class McpGateway implements McpRuntime {
    * authorization URL so the caller can continue the browser flow.
    */
   async reconnectServer(pluginId: string, serverId: string): Promise<string | null> {
+    const key = keyOf(pluginId, serverId);
+    const existing = this.reconnects.get(key);
+    if (existing) return existing;
+    const work = this.reconnectOnce(pluginId, serverId);
+    this.reconnects.set(key, work);
+    try { return await work; }
+    finally { if (this.reconnects.get(key) === work) this.reconnects.delete(key); }
+  }
+
+  private async reconnectOnce(pluginId: string, serverId: string): Promise<string | null> {
     const record = this.serverRecord(pluginId, serverId);
     if (record.enabled !== 1) throw new Error(`MCP server ${serverId} is disabled`);
     await this.closeServer(pluginId, serverId);
@@ -668,7 +692,7 @@ export class McpGateway implements McpRuntime {
     for (const tool of connection.tools) {
       toolSearchText.set(
         tool.name,
-        [tool.name, tool.description ?? "", ...parameterNames(toolSchema(tool.inputSchema))].join("\n"),
+        [tool.name, tool.description ?? "", ...parameterNames(toolSchema(tool.inputSchema))].join("\n").toLowerCase(),
       );
     }
     const cached: CatalogCache = {
@@ -688,7 +712,9 @@ export class McpGateway implements McpRuntime {
   }
 
   private invalidateCatalog(key: string): void {
-    this.catalogGenerations.set(key, (this.catalogGenerations.get(key) ?? 0) + 1);
+    this.catalogGenerations.delete(key);
+    this.catalogControllers.get(key)?.abort();
+    this.catalogControllers.delete(key);
     this.catalogCache.delete(key);
     this.catalogLoads.delete(key);
     this.dirtyCatalogs.delete(key);
@@ -696,9 +722,8 @@ export class McpGateway implements McpRuntime {
   }
 
   private dropIndex(key: string): void {
-    for (const [opaqueId, ref] of this.catalogIndex) {
-      if (keyOf(ref.pluginId, ref.serverId) === key) this.catalogIndex.delete(opaqueId);
-    }
+    for (const opaqueId of this.serverIndex.get(key) ?? []) this.catalogIndex.delete(opaqueId);
+    this.serverIndex.delete(key);
   }
 
   private indexCatalog(key: string, catalog: CatalogCache): void {
@@ -706,45 +731,53 @@ export class McpGateway implements McpRuntime {
     const record = this.enabledApprovedServers().find((item) => keyOf(item.pluginId, item.serverId) === key)
       ?? this.store.listMcpServers().find((item) => keyOf(item.pluginId, item.serverId) === key);
     if (!record) return;
+    const ids = new Set<string>();
+    this.serverIndex.set(key, ids);
+    const index = (id: string, ref: CatalogRef) => { ids.add(id); this.catalogIndex.set(id, ref); };
     for (const tool of catalog.tools) {
-      this.catalogIndex.set(exposedId("tool", record.pluginId, record.serverId, tool.name), {
+      index(exposedId("tool", record.pluginId, record.serverId, tool.name), {
         kind: "tool", pluginId: record.pluginId, serverId: record.serverId, name: tool.name,
       });
     }
     for (const prompt of catalog.prompts) {
-      this.catalogIndex.set(exposedId("prompt", record.pluginId, record.serverId, prompt.name), {
+      index(exposedId("prompt", record.pluginId, record.serverId, prompt.name), {
         kind: "prompt", pluginId: record.pluginId, serverId: record.serverId, name: prompt.name,
       });
     }
     for (const resource of catalog.resources) {
-      this.catalogIndex.set(exposedId("resource", record.pluginId, record.serverId, resource.uri), {
+      index(exposedId("resource", record.pluginId, record.serverId, resource.uri), {
         kind: "resource", pluginId: record.pluginId, serverId: record.serverId, name: resource.uri,
       });
     }
     for (const template of catalog.resourceTemplates) {
-      this.catalogIndex.set(exposedId("resource-template", record.pluginId, record.serverId, template.uriTemplate), {
+      index(exposedId("resource-template", record.pluginId, record.serverId, template.uriTemplate), {
         kind: "resource-template", pluginId: record.pluginId, serverId: record.serverId, name: template.uriTemplate,
       });
     }
   }
 
-  private async ensureIndex(): Promise<void> {
-    await Promise.all(this.enabledApprovedServers().map(async (record) => {
-      try { await this.getCatalog(record); }
-      catch (error) { this.log.warn(`index skip ${record.serverId}: ${errorText(error)}`); }
-    }));
-  }
-
   private async resolveRef(kind: CatalogRef["kind"], opaqueId: string): Promise<CatalogRef> {
     const cached = this.catalogIndex.get(opaqueId);
     if (cached?.kind === kind) return cached;
-    await this.ensureIndex();
-    const ref = this.catalogIndex.get(opaqueId);
-    if (!ref || ref.kind !== kind) throw new Error(`${kind} not found: ${opaqueId}`);
-    return ref;
+    // Read each result directly: another server may evict its global index.
+    // Promise.any also lets a healthy match win without waiting for offline peers.
+    try {
+      return await Promise.any(this.enabledApprovedServers().map(async record => {
+        const catalog = await this.getCatalog(record);
+        const names = kind === "tool" ? catalog.tools.map(item => item.name)
+          : kind === "prompt" ? catalog.prompts.map(item => item.name)
+          : kind === "resource" ? catalog.resources.map(item => item.uri)
+          : catalog.resourceTemplates.map(item => item.uriTemplate);
+        const name = names.find(name => exposedId(kind, record.pluginId, record.serverId, name) === opaqueId);
+        if (name === undefined) throw new Error("No match");
+        return {kind, pluginId: record.pluginId, serverId: record.serverId, name};
+      }));
+    } catch { throw new Error(`${kind} not found: ${opaqueId}`); }
   }
 
   private async getCatalog(record: ReturnType<McpGateway["serverRecord"]>): Promise<CatalogCache> {
+    if (this.closed) throw new Error("MCP gateway closed");
+    if (!record.enabled || !record.approved) throw new Error("MCP server is not enabled");
     const key = keyOf(record.pluginId, record.serverId);
     const cached = this.catalogCache.get(key);
     const age = cached ? Date.now() - cached.updatedAt : Number.POSITIVE_INFINITY;
@@ -754,15 +787,18 @@ export class McpGateway implements McpRuntime {
     }
     const existingLoad = this.catalogLoads.get(key);
     if (existingLoad) return existingLoad;
-    const generation = this.catalogGenerations.get(key) ?? 0;
+    const generation = {};
+    this.catalogGenerations.set(key, generation);
+    const controller = new AbortController();
+    this.catalogControllers.set(key, controller);
 
     const load = (async () => {
       try {
+        const hadConnection = this.conns.has(key);
         const connection = await this.ensureServer(record.pluginId, record.serverId);
         if (!connection) throw new Error(`MCP server unavailable: ${record.serverId}`);
         const needsRefresh = this.dirtyCatalogs.has(key) || !cached || cached.configJson !== record.configJson || age >= CATALOG_TTL_MS;
-        if (needsRefresh && cached) {
-          const controller = new AbortController();
+        if (needsRefresh && (cached || hadConnection)) {
           await withTimeout(
             this.refreshCatalog(connection, controller.signal),
             CONNECT_TIMEOUT_MS,
@@ -770,10 +806,13 @@ export class McpGateway implements McpRuntime {
             () => controller.abort(new Error(`MCP catalog refresh timed out for ${record.serverId}`)),
           );
         }
-        if ((this.catalogGenerations.get(key) ?? 0) !== generation) throw new Error(`MCP catalog invalidated for ${record.serverId}`);
+        controller.signal.throwIfAborted();
+        if (this.catalogGenerations.get(key) !== generation) throw new Error(`MCP catalog invalidated for ${record.serverId}`);
+        const connectedCache = this.catalogCache.get(key);
+        if (!cached && connectedCache && connectedCache.tools === connection.tools) return connectedCache;
         return this.cacheCatalog(key, record.configJson, connection);
       } catch (error) {
-        if ((this.catalogGenerations.get(key) ?? 0) === generation) {
+        if (!this.closed && !controller.signal.aborted && this.catalogGenerations.get(key) === generation) {
           const message = errorText(error);
           const empty: Connected = {
             kind: "local",
@@ -790,7 +829,10 @@ export class McpGateway implements McpRuntime {
     })();
     this.catalogLoads.set(key, load);
     try { return await load; }
-    finally { if (this.catalogLoads.get(key) === load) this.catalogLoads.delete(key); }
+    finally {
+      if (this.catalogLoads.get(key) === load) this.catalogLoads.delete(key);
+      if (this.catalogControllers.get(key) === controller) this.catalogControllers.delete(key);
+    }
   }
 
   async listTools(): Promise<CatalogTool[]> {
@@ -820,13 +862,12 @@ export class McpGateway implements McpRuntime {
       if (!cfg) return [];
       return catalog.tools.map((tool) => compactToolFromCatalog(this.catalogTool(record, cfg, pluginName, tool)));
     };
-    const cached = this.catalogCache.get(keyOf(record.pluginId, record.serverId));
     try {
+      if (!record.enabled || !record.approved) return { tools: [], error: null };
       const catalog = await this.getCatalog(record);
       return { tools: toTools(catalog), error: catalog.error };
     } catch (error) {
-      if (cached && !cached.error) return { tools: toTools(cached), error: null };
-      return { tools: cached ? toTools(cached) : [], error: errorText(error) };
+      return { tools: [], error: errorText(error) };
     }
   }
 
@@ -885,22 +926,26 @@ export class McpGateway implements McpRuntime {
     if (!q) return { tools: [], unavailable: [] };
     const servers = this.enabledApprovedServers();
     const waitMs = this.options.searchWaitMs ?? SEARCH_WAIT_MS;
+    const loaded = new Map<string, CatalogCache>();
     const loads = servers.map((record) => this.getCatalog(record).then(
-      () => null as string | null,
+      (catalog) => { loaded.set(keyOf(record.pluginId, record.serverId), catalog); return null as string | null; },
       () => this.store.getPlugin(record.pluginId)?.name ?? record.serverId,
     ));
     if (loads.length > 0) {
-      await Promise.race([
-        Promise.all(loads),
-        new Promise<void>((resolve) => setTimeout(resolve, waitMs)),
-      ]);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([Promise.all(loads), new Promise<void>(resolve => { timer = setTimeout(resolve, waitMs); })]);
+      } finally { if (timer) clearTimeout(timer); }
     }
     const unavailable: string[] = [];
-    const ranked: Array<{ score: number; catalog: CatalogTool }> = [];
+    const tokens = tokenize(q);
+    const normalizedQuery = q.toLowerCase();
+    const exactRef = this.catalogIndex.get(q);
+    const ranked: Array<{ score: number; tool: Tool; record: typeof servers[number]; cfg: ServerConfig; pluginName: string }> = [];
     for (const record of servers) {
       const name = this.store.getPlugin(record.pluginId)?.name ?? record.serverId;
       const cfg = parseServerConfig(record.configJson);
-      const cached = this.catalogCache.get(keyOf(record.pluginId, record.serverId));
+      const cached = loaded.get(keyOf(record.pluginId, record.serverId)) ?? this.catalogCache.get(keyOf(record.pluginId, record.serverId));
       if (!cfg || !cached) {
         unavailable.push(name);
         continue;
@@ -911,19 +956,18 @@ export class McpGateway implements McpRuntime {
       }
       const pluginName = this.store.getPlugin(record.pluginId)?.name ?? record.pluginId;
       for (const tool of cached.tools) {
-        const catalog = this.catalogTool(record, cfg, pluginName, tool);
-        const exact = tool.name.toLowerCase() === q.toLowerCase() || catalog.opaqueId === q;
+        const exact = tool.name.toLowerCase() === normalizedQuery || (exactRef?.kind === "tool" && exactRef.pluginId === record.pluginId && exactRef.serverId === record.serverId && exactRef.name === tool.name) || (!exactRef && q.includes("__") && exposedId("tool", record.pluginId, record.serverId, tool.name) === q);
         const searchText = cached.toolSearchText.get(tool.name) ?? tool.name;
-        let score = scoreMatch(q, [tool.name, pluginName, record.serverId, catalog.description, searchText]);
+        let score = scoreTokens(tokens, tool.name.toLowerCase(), `${pluginName.toLowerCase()}\n${record.serverId.toLowerCase()}\n${searchText}`);
         if (exact) score += 50;
         if (score <= 0) continue;
-        ranked.push({ score, catalog });
+        ranked.push({ score, tool, record, cfg, pluginName });
       }
     }
-    ranked.sort((a, b) => b.score - a.score || a.catalog.name.localeCompare(b.catalog.name));
+    ranked.sort((a, b) => b.score - a.score || a.tool.name.localeCompare(b.tool.name));
     const cap = Math.min(Math.max(1, limit), 12);
     return {
-      tools: ranked.slice(0, cap).map((hit) => compactToolFromCatalog(hit.catalog, { card: true })),
+      tools: ranked.slice(0, cap).map((hit) => compactToolFromCatalog(this.catalogTool(hit.record, hit.cfg, hit.pluginName, hit.tool), { card: true })),
       unavailable,
     };
   }
@@ -1145,7 +1189,8 @@ export class McpGateway implements McpRuntime {
 
   private async connectServer(pluginId: string, serverId: string, cfg: ServerConfig, signal: AbortSignal): Promise<Connected> {
     const key = keyOf(pluginId, serverId);
-    const epoch = this.serverEpochs.get(key) ?? 0;
+    const epoch = {};
+    this.serverEpochs.set(key, epoch);
     const plugin = this.store.getPlugin(pluginId);
     if (!plugin) throw new Error(`plugin not found: ${pluginId}`);
     let client: Client | undefined;
@@ -1219,7 +1264,7 @@ export class McpGateway implements McpRuntime {
       }
       if (provider) await provider.clearPending();
       if (this.closed) throw new Error("MCP gateway closed");
-      if ((this.serverEpochs.get(key) ?? 0) !== epoch) throw new Error(`MCP connection cancelled for ${serverId}`);
+      if (this.serverEpochs.get(key) !== epoch) throw new Error(`MCP connection cancelled for ${serverId}`);
       this.conns.set(key, connection);
       this.cacheCatalog(key, this.serverRecord(pluginId, serverId).configJson, connection);
       this.oauthPending.delete(key);
@@ -1230,11 +1275,11 @@ export class McpGateway implements McpRuntime {
       return connection;
     } catch (error) {
       const message = errorText(error);
-      const cancelled = this.closed || signal.aborted || (this.serverEpochs.get(key) ?? 0) !== epoch;
+      const cancelled = this.closed || signal.aborted || this.serverEpochs.get(key) !== epoch;
       if (cancelled) {
         if (connection) try { await this.closeConnected(key, connection); } catch {}
         else if (client) try { await withTimeout(client.close(), CLOSE_TIMEOUT_MS, `close cancelled ${serverId}`); } catch {}
-        this.conns.delete(key);
+        if (this.conns.get(key) === connection) this.conns.delete(key);
         throw new Error(this.closed ? "MCP gateway closed" : `MCP connection cancelled for ${serverId}`);
       }
       const authorizationUrl = provider ? await provider.authorizationUrlValue() : undefined;

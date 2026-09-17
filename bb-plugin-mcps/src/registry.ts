@@ -146,6 +146,8 @@ export async function fetchRegistryServers(options: {
   limit?: number;
   cursor?: string;
   fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 } = {}): Promise<{ servers: RegistryServerSummary[]; nextCursor: string | null }> {
   const base = (options.baseUrl ?? OFFICIAL_REGISTRY).replace(/\/+$/, "");
   const url = new URL(`${base}/v0.1/servers`);
@@ -154,7 +156,9 @@ export async function fetchRegistryServers(options: {
   if (options.search) url.searchParams.set("search", options.search);
   if (options.cursor) url.searchParams.set("cursor", options.cursor);
   const fetchImpl = options.fetchImpl ?? fetch;
-  const response = await fetchImpl(url, { headers: { accept: "application/json" } });
+  const timeout = AbortSignal.timeout(options.timeoutMs ?? 8000);
+  const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+  const response = await fetchImpl(url, { headers: { accept: "application/json" }, signal });
   if (!response.ok) throw new Error(`MCP registry HTTP ${response.status}`);
   const payload = await response.json() as unknown;
   const servers = parseRegistryList(payload);
