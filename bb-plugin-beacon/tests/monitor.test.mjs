@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import Database from "better-sqlite3";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { PLUGIN_CLI_OUTPUT_MAX_BYTES } from "@get-bb/plugin-sdk";
 import { freshPressureState, stepPressure, isPressureState } from "../lib/pressure.ts";
@@ -322,4 +323,31 @@ test("damaged diagnostic rows cannot prevent exporting the remaining logs", asyn
     assert.equal(result.stdout.split("\n").length, 2);
   }
   assert.equal(store.cursor(), payloads.length + 2, "invalid rows still count toward the alert cursor");
+});
+
+
+test("a locked monitor database incurs one busy wait and recovers on the next sample", async (t) => {
+  const s = await setupMonitor(t);
+  const db = s.bb.storage.database(); db.pragma("journal_mode = WAL");
+  const original = db.transaction.bind(db);
+  let attempts = 0;
+  t.mock.method(db, "transaction", (fn) => {
+    const tx = original(fn);
+    return Object.assign((...args) => tx(...args), {
+      immediate: (...args) => { attempts++; return tx.immediate(...args); },
+      deferred: tx.deferred, exclusive: tx.exclusive,
+    });
+  });
+  s.monitor.configure(true, false); s.monitor.status();
+  const writer = new Database(db.name);
+  t.after(() => { if (writer.inTransaction) writer.exec("ROLLBACK"); writer.close(); });
+  writer.exec("BEGIN IMMEDIATE");
+  await flush();
+  assert.equal(attempts, 1, "must not immediately retry a failed database write to log that failure");
+  assert.equal(s.harness.logEntries.filter((entry) => entry.level === "warn").length, 1);
+  assert.equal(s.monitor.logs(100).length, 0);
+  await s.tick(); assert.equal(attempts, 2, "one attempt per interval while locked");
+  writer.exec("ROLLBACK"); await s.tick();
+  assert.equal(s.monitor.logs(100).filter((entry) => entry.type === "summary").length, 1);
+  assert.equal(s.harness.realtimeSignals.length, 0);
 });

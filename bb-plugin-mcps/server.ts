@@ -597,6 +597,13 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
+  // Preserve older sessions' inputs while exposing descriptive IDs in new output.
+  const legacyId = z.string().min(1).optional().describe("Legacy alias; prefer the named ID field.");
+  const toolIdFields = { toolId: z.string().min(1).optional().describe("Tool ID from mcps_search."), opaqueId: legacyId };
+  const promptIdFields = { promptId: z.string().min(1).optional().describe("Prompt ID from mcps_prompts."), opaqueId: legacyId };
+  const resourceIdFields = { resourceId: z.string().min(1).optional().describe("Resource ID from mcps_resources."), opaqueId: legacyId };
+  const toolIds = <T extends { opaqueId: string }>(tools: T[]) => tools.map(({ opaqueId, ...tool }) => ({ toolId: opaqueId, ...tool }));
+
   const toolNames = ["mcps_servers", "mcps_search", "mcps_schema", "mcps_call", "mcps_prompts", "mcps_get_prompt", "mcps_resources", "mcps_read_resource"] as const;
   bb.agents.registerTool({
     name: "mcps_servers",
@@ -608,26 +615,27 @@ export default async function plugin(bb: BbPluginApi) {
   });
   bb.agents.registerTool({
     name: "mcps_search",
-    description: "Search enabled MCP tools. Returns a small ranked list with opaqueIds and a call card (shape, required fields, example). Do not dump catalogs.",
+    description: "Search enabled MCP tools. Returns a small ranked list with tool IDs (toolId) and a call card (shape, required fields, example). Do not dump catalogs.",
     instructions: "Search, then mcps_call with the card's example as a template. Use mcps_schema only when the card is missing a field you need.",
     presentation: { label: { pending: "Searching MCP tools", completed: "Searched MCP tools" } },
     parameters: z.object({ query: z.string().trim().min(1).max(200), limit: z.number().int().min(1).max(12).optional() }).strict(),
     async execute({ query, limit }) {
-      return agentReply(packSearchResult(await gateway.searchTools(query, limit ?? SEARCH_LIMIT)), "search");
+      const result = packSearchResult(await gateway.searchTools(query, limit ?? SEARCH_LIMIT));
+      return agentReply({ ...result, tools: toolIds(result.tools) }, "search");
     },
   });
   bb.agents.registerTool({
     name: "mcps_schema",
-    description: "Fetch the full input schema for one MCP tool by opaqueId. Prefer the call card from mcps_search; use this only when that card is not enough.",
-    instructions: "Call mcps_schema for a single opaqueId after search, and only if the call card omitted a field you need. Never list every schema.",
+    description: "Fetch the full input schema for one MCP tool by tool ID. Prefer the call card from mcps_search; use this only when that card is not enough.",
+    instructions: "Call mcps_schema for a single toolId after search, and only if the call card omitted a field you need. Never list every schema.",
     presentation: { label: { pending: "Loading MCP schema", completed: "Loaded MCP schema" } },
-    parameters: z.object({ opaqueId: z.string().min(1) }).strict(),
-    async execute({ opaqueId }) {
-      const tool = await gateway.getTool(opaqueId);
+    parameters: z.object(toolIdFields).strict().refine(v => Boolean(v.toolId ?? v.opaqueId), "toolId is required"),
+    async execute(input) {
+      const tool = await gateway.getTool(input.toolId ?? input.opaqueId!);
       const card = callCard(tool.inputSchema);
       const schemaJson = JSON.stringify(tool.inputSchema);
       const payload: JsonRecord = {
-        opaqueId: tool.opaqueId,
+        toolId: tool.opaqueId,
         name: tool.name,
         description: tool.description,
         risk: classifyTool(tool.annotations),
@@ -646,15 +654,15 @@ export default async function plugin(bb: BbPluginApi) {
   });
   bb.agents.registerTool({
     name: "mcps_call",
-    description: "Call one MCP tool by opaqueId. Does not re-list the catalog.",
-    instructions: "Use the opaqueId from mcps_search. Repeat the returned tool text in your reply; the chat card may only show a success envelope.",
+    description: "Call one MCP tool by tool ID. Does not re-list the catalog.",
+    instructions: "Use the toolId from mcps_search. Repeat the returned tool text in your reply; the chat card may only show a success envelope.",
     presentation: { label: { pending: "Calling MCP tool", completed: "Called MCP tool" } },
     parameters: z.object({
-      opaqueId: z.string().min(1),
+      ...toolIdFields,
       args: jsonRecordSchema.default({}),
-    }).strict(),
+    }).strict().refine(v => Boolean(v.toolId ?? v.opaqueId), "toolId is required"),
     async execute(input, ctx) {
-      return agentReply(await invokeTool(input.opaqueId, input.args as JsonRecord, ctx.signal), "call");
+      return agentReply(await invokeTool(input.toolId ?? input.opaqueId!, input.args as JsonRecord, ctx.signal), "call");
     },
   });
   bb.agents.registerTool({
@@ -666,7 +674,7 @@ export default async function plugin(bb: BbPluginApi) {
       const prompts = await gateway.listPrompts();
       const q = query?.trim() ?? "";
       const rows = prompts.map((item) => ({
-        opaqueId: item.opaqueId,
+        promptId: item.opaqueId,
         serverId: item.serverId,
         name: item.name,
         description: item.description ?? "",
@@ -678,12 +686,12 @@ export default async function plugin(bb: BbPluginApi) {
   });
   bb.agents.registerTool({
     name: "mcps_get_prompt",
-    description: "Get one MCP prompt by opaqueId.",
-    instructions: "Use opaqueId from mcps_prompts.",
+    description: "Get one MCP prompt by prompt ID.",
+    instructions: "Use promptId from mcps_prompts.",
     presentation: { label: { pending: "Getting MCP prompt", completed: "Got MCP prompt" } },
-    parameters: z.object({ opaqueId: z.string().min(1), args: jsonRecordSchema.default({}) }).strict(),
+    parameters: z.object({ ...promptIdFields, args: jsonRecordSchema.default({}) }).strict().refine(v => Boolean(v.promptId ?? v.opaqueId), "promptId is required"),
     async execute(input, ctx) {
-      return agentReply(await gateway.getPrompt(input.opaqueId, input.args as JsonRecord, ctx.signal), "prompt");
+      return agentReply(await gateway.getPrompt(input.promptId ?? input.opaqueId!, input.args as JsonRecord, ctx.signal), "prompt");
     },
   });
   bb.agents.registerTool({
@@ -695,8 +703,8 @@ export default async function plugin(bb: BbPluginApi) {
       const [resources, resourceTemplates] = await Promise.all([gateway.listResources(), gateway.listResourceTemplates()]);
       const q = query?.trim() ?? "";
       const rows = [
-        ...resources.map((item) => ({ opaqueId: item.opaqueId, serverId: item.serverId, uri: item.uri, name: item.name, score: q ? scoreMatch(q, [item.name, item.uri, item.serverId]) : 1 })),
-        ...resourceTemplates.map((item) => ({ opaqueId: item.opaqueId, serverId: item.serverId, uri: item.uriTemplate, name: item.name, score: q ? scoreMatch(q, [item.name, item.uriTemplate, item.serverId]) : 1 })),
+        ...resources.map((item) => ({ resourceId: item.opaqueId, serverId: item.serverId, uri: item.uri, name: item.name, score: q ? scoreMatch(q, [item.name, item.uri, item.serverId]) : 1 })),
+        ...resourceTemplates.map((item) => ({ resourceId: item.opaqueId, serverId: item.serverId, uri: item.uriTemplate, name: item.name, score: q ? scoreMatch(q, [item.name, item.uriTemplate, item.serverId]) : 1 })),
       ].filter((item) => item.score > 0);
       rows.sort((a, b) => b.score - a.score);
       return agentReply({ resources: rows.slice(0, SEARCH_LIMIT).map(({ score: _, ...item }) => item) }, "resources");
@@ -704,11 +712,11 @@ export default async function plugin(bb: BbPluginApi) {
   });
   bb.agents.registerTool({
     name: "mcps_read_resource",
-    description: "Read one MCP resource by opaqueId.",
-    instructions: "Use opaqueId from mcps_resources.",
+    description: "Read one MCP resource by resource ID.",
+    instructions: "Use resourceId from mcps_resources.",
     presentation: { label: { pending: "Reading MCP resource", completed: "Read MCP resource" } },
-    parameters: z.object({ opaqueId: z.string().min(1) }).strict(),
-    async execute({ opaqueId }, ctx) { return agentReply(await gateway.readResource(opaqueId, ctx.signal), "resource"); },
+    parameters: z.object(resourceIdFields).strict().refine(v => Boolean(v.resourceId ?? v.opaqueId), "resourceId is required"),
+    async execute(input, ctx) { return agentReply(await gateway.readResource(input.resourceId ?? input.opaqueId!, ctx.signal), "resource"); },
   });
   bb.agents.configure(() => ({
     tools: [...toolNames],
@@ -774,7 +782,7 @@ export default async function plugin(bb: BbPluginApi) {
     "  bb mcps enable <id> [--json]",
     "  bb mcps disable <id> [--json]",
     "  bb mcps remove <id> [--json]",
-    "  bb mcps call <opaqueId> [json-args] [--json]",
+    "  bb mcps call <toolId> [json-args] [--json]",
   ].join("\n");
 
   bb.cli.register({
@@ -791,7 +799,7 @@ export default async function plugin(bb: BbPluginApi) {
       { name: "enable", summary: "Enable a server", usage: "bb mcps enable <id> [--json]" },
       { name: "disable", summary: "Disable a server", usage: "bb mcps disable <id> [--json]" },
       { name: "remove", summary: "Remove a server", usage: "bb mcps remove <id> [--json]" },
-      { name: "call", summary: "Call one MCP tool by opaqueId", usage: "bb mcps call <opaqueId> [json-args] [--json]" },
+      { name: "call", summary: "Call one MCP tool by tool ID", usage: "bb mcps call <toolId> [json-args] [--json]" },
     ],
     async run(argv) {
       const asJson = argv.includes("--json");
@@ -926,7 +934,7 @@ export default async function plugin(bb: BbPluginApi) {
             const { tools, unavailable } = await gateway.searchTools(query);
             const lines = tools.map((tool) => `${tool.opaqueId}  ${tool.name}  ${tool.description}`);
             if (unavailable.length > 0) lines.push(`unavailable: ${unavailable.join("; ")}`);
-            return reply({ tools, unavailable }, lines.length === 0 ? "No matching tools." : lines.join("\n"));
+            return reply({ tools: toolIds(tools), unavailable }, lines.length === 0 ? "No matching tools." : lines.join("\n"));
           }
           case "call": {
             const opaqueId = rest[0];

@@ -53,3 +53,30 @@ Managed Fortress against the running BB server; counters wrap only Beacon RPC re
 The existing **opt-in background pressure monitor is enabled on this server** and remains enabled. It deliberately samples CPU/memory every 30 seconds even with all UI hidden. Visibility gating applies to dashboard polling and notification reconciliation; this deployment does not claim zero server work when that separate feature is enabled.
 
 Long-hidden tests use a simulated clock, not a ten-minute wall-clock browser wait. Visibility tests use synthetic document events; actual disclosure close/open was also exercised. Reduced motion was checked in the emitted stylesheet, not with OS preference emulation. The SDK frontend RPC API exposes no abort signal: an already-started request may finish after hiding, but no new polling is scheduled while hidden and stale component updates are discarded. A permanently unresolved RPC remains single-flight rather than spawning overlapping retries.
+
+
+## Background monitor follow-up
+
+The user confirmed background monitoring should remain active with the UI hidden.
+Its 30-second cadence and existing alert behavior are preserved.
+
+A production-code benchmark now exercises real Linux reads and real WAL SQLite
+on the checkout filesystem. Two 10,000-cycle runs cover 83.3 hours of accelerated
+intervals each. The final run averaged 0.851ms per complete sample (5.265ms p95),
+including the SQLite commit. Process CPU averaged 0.469ms per sample. Warmed heap
+checkpoints stayed near 11.5MB for the full isolated process, the log ring stopped
+at 4,096 rows, and no writes occurred after stopping the service and advancing a
+further ten simulated minutes. There were no recorded errors.
+
+The additional fix is in `lib/pressure-monitor.ts:106`: unavailable SQLite storage
+no longer receives an immediate second write attempting to log its own failure.
+An actual writer-lock test reduced attempts from two to one and blocking time
+from 204.34ms to 103.41ms. The existing host warning remains rate-limited, and
+sampling recovers on the next 30-second interval. Read failures still persist
+broken confirmation streaks when the database is available. No durability or
+sampling-frequency tradeoff was introduced.
+
+`npm ci --include=dev`, typecheck, and all 66 tests passed for the follow-up,
+including a regression test with a real SQLite writer lock. Full method and raw
+before/after measurements are in [benchmarks/README.md](benchmarks/README.md).
+Normal-path timing differences between runs are noise, not a claimed speedup.

@@ -1,0 +1,59 @@
+{
+  "samples": 10000,
+  "simulatedHours": 83.33333333333333,
+  "elapsedMs": 8556.581046,
+  "sampleMs": {
+    "mean": 0.851,
+    "median": 0.212,
+    "p95": 5.265,
+    "max": 37.807
+  },
+  "commitMs": {
+    "mean": 0.546,
+    "median": 0.032,
+    "p95": 4.578,
+    "max": 37.468
+  },
+  "cpuMs": 4687.254,
+  "cpuMsPerSample": 0.4687254,
+  "retainedHeap": {
+    "start": 16380760,
+    "end": 11517336,
+    "delta": -4863424,
+    "checkpoints": [
+      {
+        "samples": 2000,
+        "heapBytes": 11558544
+      },
+      {
+        "samples": 4000,
+        "heapBytes": 11546600
+      },
+      {
+        "samples": 6000,
+        "heapBytes": 11539552
+      },
+      {
+        "samples": 8000,
+        "heapBytes": 11558296
+      },
+      {
+        "samples": 10000,
+        "heapBytes": 11522800
+      }
+    ]
+  },
+  "storage": {
+    "journalMode": "wal",
+    "synchronous": 1,
+    "logRows": 4096,
+    "stateRows": 1,
+    "noticeRows": 1,
+    "rowChanges": 15004,
+    "mainBytes": 1470464,
+    "walBytes": 309032,
+    "processWriteBytes": 135036928
+  },
+  "writesAfterStop": 0,
+  "errors": 0
+}

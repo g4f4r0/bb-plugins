@@ -1,9 +1,10 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import plugin from "../server";
+import { McpGateway } from "../src/gateway";
 
 const temps: string[] = [];
 afterEach(async () => {
@@ -67,4 +68,47 @@ it('preserves both concurrent installs with the same name', async () => {
     const snapshot = await harness.behavior.callRpc('snapshot', null) as {servers: unknown[]};
     expect(snapshot.servers).toHaveLength(2);
   } finally { await harness.lifecycle.dispose(); }
+});
+
+
+it("exposes descriptive IDs and accepts legacy IDs from existing sessions", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "bb-mcps-")); temps.push(dataDir);
+  const { bb, harness } = createFakePluginHost({ pluginId: "mcps", sdk: { system: { config: async () => ({ dataDir, primaryHostId: "host_1" }) } } });
+  const tool = { opaqueId: "fixture-id", pluginId: "fixture", pluginName: "Fixture", serverId: "mcp", serverType: "stdio", name: "echo", description: "Echo", inputSchema: { type: "object" }, status: "ready" as const };
+  vi.spyOn(McpGateway.prototype, "searchTools").mockResolvedValue({ tools: [{ opaqueId: tool.opaqueId, serverId: "mcp", serverName: "Fixture", name: "echo", description: "Echo", risk: "read", enabled: true }], unavailable: [] });
+  vi.spyOn(McpGateway.prototype, "getTool").mockResolvedValue(tool);
+  const call = vi.spyOn(McpGateway.prototype, "call").mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+  vi.spyOn(McpGateway.prototype, "listPrompts").mockResolvedValue([tool]);
+  vi.spyOn(McpGateway.prototype, "listResources").mockResolvedValue([{ ...tool, uri: "fixture://data" }]);
+  vi.spyOn(McpGateway.prototype, "listResourceTemplates").mockResolvedValue([]);
+  const prompt = vi.spyOn(McpGateway.prototype, "getPrompt").mockResolvedValue({ messages: [] });
+  const resource = vi.spyOn(McpGateway.prototype, "readResource").mockResolvedValue({ contents: [] });
+  await plugin(bb);
+  try {
+    for (const [name, input, field] of [
+      ["mcps_search", { query: "echo" }, "toolId"],
+      ["mcps_prompts", {}, "promptId"],
+      ["mcps_resources", {}, "resourceId"],
+    ] as const) {
+      const result = JSON.stringify(await harness.behavior.callAgentTool(name, input));
+      expect(result).toContain(field);
+      expect(result).not.toContain("opaqueId");
+    }
+    for (const input of [{ toolId: tool.opaqueId }, { opaqueId: tool.opaqueId }]) {
+      const result = JSON.stringify(await harness.behavior.callAgentTool("mcps_schema", input));
+      expect(result).toContain("toolId");
+      expect(result).not.toContain("opaqueId");
+      await harness.behavior.callAgentTool("mcps_call", input);
+    }
+    expect(call).toHaveBeenCalledTimes(2);
+    expect(call.mock.calls.every(args => args[0] === tool.opaqueId)).toBe(true);
+    for (const input of [{ promptId: tool.opaqueId }, { opaqueId: tool.opaqueId }]) await harness.behavior.callAgentTool("mcps_get_prompt", input);
+    for (const input of [{ resourceId: tool.opaqueId }, { opaqueId: tool.opaqueId }]) await harness.behavior.callAgentTool("mcps_read_resource", input);
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(resource).toHaveBeenCalledTimes(2);
+    await expect(harness.behavior.callAgentTool("mcps_call", {})).rejects.toThrow("toolId is required");
+    const cli = await harness.behavior.runCli(["tools", "echo", "--json"]);
+    expect(cli.stdout).toContain("toolId");
+    expect(cli.stdout).not.toContain("opaqueId");
+  } finally { await harness.lifecycle.dispose(); vi.restoreAllMocks(); }
 });

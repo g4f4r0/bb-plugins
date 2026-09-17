@@ -103,7 +103,13 @@ export function createPressureMonitor(bb: BbPluginApi, read: (signal: AbortSigna
           }
           // Persist broken streaks even when the error log is throttled. Otherwise a
           // reload can restore an old candidate and falsely count the failed interval.
-          if (records.length || interrupted) {
+          // A locked/full/unavailable database cannot store its own failure in the
+          // same turn. Avoid a second synchronous busy wait; keep the host warning
+          // and retry storage at the next normal sample. Read failures still persist
+          // broken confirmation streaks immediately when storage is available.
+          const storageUnavailable = cause instanceof Error && "code" in cause &&
+            typeof cause.code === "string" && /^SQLITE_(BUSY|LOCKED|FULL|IOERR|READONLY|CANTOPEN|CORRUPT|NOTADB)(_|$)/.test(cause.code);
+          if (!storageUnavailable && (records.length || interrupted)) {
             try { getStore().write(records, state); } catch { /* No unbounded retries or queues on disk failure. */ }
           }
         } finally { runController = undefined; }

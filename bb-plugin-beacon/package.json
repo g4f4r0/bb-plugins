@@ -10,7 +10,8 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "benchmark:monitor": "node --expose-gc benchmarks/monitor.mjs"
   },
   "engines": {
     "bb": ">=0.43",
