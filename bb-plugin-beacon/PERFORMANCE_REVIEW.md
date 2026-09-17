@@ -80,3 +80,13 @@ sampling-frequency tradeoff was introduced.
 including a regression test with a real SQLite writer lock. Full method and raw
 before/after measurements are in [benchmarks/README.md](benchmarks/README.md).
 Normal-path timing differences between runs are noise, not a claimed speedup.
+
+
+Follow-up deployment: the reviewed Beacon changes were included in concurrent
+shared-checkout commit `4ba1890`; Beacon had no remaining diff afterward. The
+Beacon build and reload succeeded. Live configuration retained
+`backgroundMonitoring=true`, `pressureNotifications=true`, and a 5-second
+dashboard interval. Summary sequences 6040 and 6041 were recorded at
+1789673521685 and 1789673581701 (60.016 seconds apart), confirming the new monitor
+continued its normal background cadence. No monitor errors appeared. All custom
+repo plugins were still running from their permanent paths.
