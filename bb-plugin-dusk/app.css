@@ -767,3 +767,10 @@ button.dusk-panel-toggle[hidden] { display: none; }
   pointer-events: none; object-fit: cover; image-rendering: pixelated;
   contain: strict;
 }
+
+/* BB owns mobile recents. Preserve its DOM, focus and find-in-page behavior,
+   while skipping layout/paint of rows outside the scrolling viewport. */
+[data-root-compose-mobile-recents] li {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 48px;
+}
