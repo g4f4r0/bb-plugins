@@ -74,10 +74,6 @@ function ReloadButton({ onReload, reloading }: { onReload: () => void; reloading
   );
 }
 
-function LaptopGlyph() {
-  return <Icon name="Laptop" className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />;
-}
-
 function Meter({ usedPercent, label }: { usedPercent: number; label: string }) {
   const clamped = Math.max(0, Math.min(100, usedPercent));
   return (
@@ -281,20 +277,12 @@ export function ReservePopover({ snapshot, onReload, reloading, active = true }:
         <div className="px-3 pb-3"><CodexResetActions availableCount={login.resetCredits.availableCount} snapshotKey={snapshot.fetchedAt} onApplied={onReload} /></div>
       ) });
     }
-    // Every login previously repeated the same fleet. Display it once, with
-    // one virtualizable row per host so huge fleets cannot create a giant row.
-    if (snapshot.hosts.length) {
-      result.push({ key: 'machines', content: <Section divider label="Machines" /> });
-      for (const host of snapshot.hosts) result.push({ key: JSON.stringify(['host', host.id]), content: (
-        <div className="px-3 pb-2"><Row icon={<LaptopGlyph />} label={host.name} title={host.name} value={host.status === 'disconnected' ? 'Offline' : ''} /></div>
-      ) });
-    }
     return result;
   }, [snapshot, onReload]);
   return (
     <ProviderDirectory.Provider value={directory.providers}>
       {snapshot.totals.length === 0 ? <Section label="Logins"><p className="text-xs text-muted-foreground">No leftover windows to show.</p></Section> : null}
-      {snapshot.unavailableHosts > 0 ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">Usage unavailable on {snapshot.unavailableHosts} machine(s).</p> : null}
+      {snapshot.unavailableHosts > 0 ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">Some usage data is unavailable.</p> : null}
       <DisplayRows rows={rows} active={active} />
       <Section divider label={formatFetchedAt(snapshot.fetchedAt)} value={<ReloadButton onReload={onReload} reloading={reloading} />} />
     </ProviderDirectory.Provider>
