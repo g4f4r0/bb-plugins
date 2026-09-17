@@ -3,7 +3,7 @@ import {connectControlRelay} from "./src/control-relay";
 import { connectVideoRelay } from "./src/video-relay";
 import { AdaptiveStream } from "./src/adaptive-stream";
 import { directBatch } from "./src/direct-input";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import type {
   BbPluginApi,
@@ -1086,6 +1086,65 @@ export default async function plugin(bb: BbPluginApi) {
     credentials: (input) => startCredentialJob(input),
   };
   bb.rpc.register(rpcContract, handlers);
+  // Undocked DevTools: the viewer embeds the real frontend beside the page.
+  // Assets and the debugger pipe are session-scoped behind short-lived
+  // tokens; the raw CDP endpoint never reaches the client.
+  const devtoolsTokens = new Map<
+    string,
+    { sid: string; clientId: string; hostId: string; expires: number; claimed: boolean }
+  >();
+  const devtoolsViewers = new Map<string, Set<{ close: (code?: number, reason?: string) => void }>>();
+  const DEVTOOLS_TOKEN_TTL_MS = 30 * 60 * 1000;
+  const pruneDevtoolsTokens = () => {
+    for (const [token, grant] of devtoolsTokens)
+      if (grant.expires <= Date.now()) devtoolsTokens.delete(token);
+  };
+  const devtoolsGrant = (token: string) => {
+    const grant = devtoolsTokens.get(token);
+    if (!grant || grant.expires <= Date.now()) return undefined;
+    try {
+      get(grant.sid);
+    } catch {
+      devtoolsTokens.delete(token);
+      return undefined;
+    }
+    return grant;
+  };
+  const closeDevtoolsViewers = (sid: string) => {
+    const viewers = devtoolsViewers.get(sid);
+    if (!viewers) return;
+    devtoolsViewers.delete(sid);
+    for (const viewer of viewers) {
+      try {
+        viewer.close(1001, "DevTools control released");
+      } catch {
+        /* Already gone. */
+      }
+    }
+  };
+  const DEVTOOLS_SW = `const FILE_ENDPOINT="/api/v1/plugins/browse/http/devtools-file";
+self.addEventListener("install",(event)=>{event.waitUntil(self.skipWaiting());});
+self.addEventListener("activate",(event)=>{event.waitUntil(self.clients.claim());});
+self.addEventListener("fetch",(event)=>{
+  const url=new URL(event.request.url);
+  const match=/\\/api\\/v1\\/plugins\\/browse\\/http\\/devtools\\/([^/]+)\\/([^/]+)\\/(.*)$/.exec(url.pathname);
+  if(!match||event.request.method!=="GET")return;
+  const rev=match[1],token=match[2],subpath=match[3];
+  event.respondWith((async()=>{
+    const cache=await caches.open("browse-devtools-"+rev);
+    const key=url.origin+"/api/v1/plugins/browse/http/devtools/"+rev+"/shared/"+subpath;
+    const cached=await cache.match(key);
+    if(cached)return cached;
+    const upstream=await fetch(FILE_ENDPOINT+"?token="+encodeURIComponent(token)+"&rev="+encodeURIComponent(rev)+"&path="+encodeURIComponent(subpath));
+    if(!upstream.ok)return upstream;
+    await cache.put(key,upstream.clone());
+    return upstream;
+  })());
+});`;
+  const devtoolsAssetCache = new Map<
+    string,
+    { data: Buffer; contentType: string }
+  >();
   // BB origin authentication applies to every viewer route; no CDP endpoints reach the client.
   bb.http.route("GET", "/viewer", (c) => {
     c.header("Cache-Control", "no-store");
@@ -1117,6 +1176,185 @@ export default async function plugin(bb: BbPluginApi) {
     } catch (e) {
       return c.json({ error: redact(String(e)) }, 404);
     }
+  });
+  bb.http.route("GET", "/devtools-token", async (c) => {
+    c.header("Cache-Control", "no-store");
+    try {
+      const sid = id.parse(c.req.query("id")),
+        clientId = id.parse(c.req.query("clientId") ?? "");
+      const s = get(sid);
+      if (s.mode !== "managed")
+        throw new Error("Undocked DevTools needs a managed Browse session.");
+      const owner = humanControls.get(sid);
+      if (!owner || owner.clientId !== clientId)
+        throw new Error("Take control before opening DevTools.");
+      const opened = await host.call(
+        "devtoolsOpen",
+        { id: sid, clientId },
+        { hostId: s.hostId, timeoutMs: 15000 },
+      );
+      pruneDevtoolsTokens();
+      const token = randomBytes(16).toString("hex");
+      const grant = {
+        sid,
+        clientId,
+        hostId: s.hostId,
+        expires: Date.now() + DEVTOOLS_TOKEN_TTL_MS,
+        claimed: false,
+      };
+      devtoolsTokens.set(token, grant);
+      const abandon = setTimeout(() => {
+        if (!grant.claimed) {
+          devtoolsTokens.delete(token);
+          void host
+            .call("devtoolsClose", { id: sid, clientId }, { hostId: s.hostId, timeoutMs: 5000 })
+            .catch(() => {});
+        }
+      }, 120000);
+      abandon.unref?.();
+      return c.json({ token, rev: opened.rev });
+    } catch (e) {
+      return c.json({ error: redact(String(e)) }, 409);
+    }
+  });
+  bb.http.route("GET", "/devtools-sw.js", (c) => {
+    c.header("Cache-Control", "no-store");
+    const token = c.req.query("token") ?? "";
+    if (!devtoolsGrant(token))
+      return c.json({ error: "DevTools token expired. Reopen the DevTools pane." }, 409);
+    return new Response(DEVTOOLS_SW, {
+      headers: {
+        "Content-Type": "text/javascript; charset=utf-8",
+        "Cache-Control": "no-store",
+      },
+    });
+  });
+  bb.http.route("GET", "/devtools-file", async (c) => {
+    try {
+      const token = c.req.query("token") ?? "",
+        rev = c.req.query("rev") ?? "",
+        path = c.req.query("path") ?? "";
+      const grant = devtoolsGrant(token);
+      if (!grant || !rev || !path)
+        throw new Error("DevTools token expired. Reopen the DevTools pane.");
+      const s = get(grant.sid);
+      const key = `${s.hostId}:${rev}:${path}`;
+      let cached = devtoolsAssetCache.get(key);
+      if (!cached) {
+        const asset = await host.call(
+          "devtoolsAsset",
+          { id: grant.sid, path },
+          { hostId: s.hostId, timeoutMs: 15000 },
+        );
+        cached = {
+          data: Buffer.from(asset.data, "base64"),
+          contentType: asset.contentType,
+        };
+        devtoolsAssetCache.set(key, cached);
+        if (devtoolsAssetCache.size > 400)
+          devtoolsAssetCache.delete(devtoolsAssetCache.keys().next().value!);
+      }
+      return new Response(new Uint8Array(cached.data), {
+        headers: {
+          "Content-Type": cached.contentType,
+          "Cache-Control": "public, max-age=31536000, immutable",
+        },
+      });
+    } catch (e) {
+      return c.json({ error: redact(String(e)) }, 409);
+    }
+  });
+  bb.http.experimental_websocket("/devtools-ws", (ctx) => {
+    const token = ctx.url.searchParams.get("token") ?? "";
+    const grant = devtoolsGrant(token);
+    if (!grant) throw Error("DevTools token expired. Reopen the DevTools pane.");
+    const s = get(grant.sid);
+    let closed = false;
+    const leaseOk = () =>
+      humanControls.get(grant.sid)?.clientId === grant.clientId;
+    const viewers = devtoolsViewers.get(grant.sid) ?? new Set();
+    devtoolsViewers.set(grant.sid, viewers);
+    return {
+      onOpen(socket) {
+        viewers.add(socket);
+        void (async () => {
+          try {
+            if (!leaseOk())
+              throw Error("Take control before opening DevTools.");
+            await host.call(
+              "devtoolsOpen",
+              { id: grant.sid, clientId: grant.clientId },
+              { hostId: s.hostId, timeoutMs: 15000 },
+            );
+            if (closed) {
+              await host
+                .call(
+                  "devtoolsClose",
+                  { id: grant.sid, clientId: grant.clientId },
+                  { hostId: s.hostId, timeoutMs: 5000 },
+                )
+                .catch(() => {});
+              return;
+            }
+            grant.claimed = true;
+            while (!closed) {
+              if (!leaseOk()) throw Error("DevTools control released.");
+              const polled = await host.call(
+                "devtoolsPoll",
+                { id: grant.sid, clientId: grant.clientId },
+                { hostId: s.hostId, timeoutMs: 8000 },
+              );
+              if (closed) break;
+              for (const event of polled.events) socket.send(event);
+              await sleep(100);
+            }
+          } catch (e) {
+            if (!closed) {
+              try {
+                socket.send(JSON.stringify({ error: redact(String(e)) }));
+              } catch {
+                /* Already gone. */
+              }
+              socket.close(1011, "DevTools unavailable");
+            }
+          }
+        })();
+      },
+      onMessage(socket, raw) {
+        if (closed) return;
+        if (typeof raw !== "string" || raw.length > 65536) {
+          socket.close(1008, "Invalid DevTools message");
+          return;
+        }
+        if (!leaseOk()) {
+          socket.close(1008, "DevTools control released");
+          return;
+        }
+        void (async () => {
+          try {
+            const result = await host.call(
+              "devtoolsSend",
+              { id: grant.sid, clientId: grant.clientId, message: raw },
+              { hostId: s.hostId, timeoutMs: 25000 },
+            );
+            if (!closed) socket.send(result.response);
+          } catch (e) {
+            if (!closed) socket.close(1011, "DevTools unavailable");
+          }
+        })();
+      },
+      onClose(socket) {
+        closed = true;
+        viewers.delete(socket);
+        void host
+          .call(
+            "devtoolsClose",
+            { id: grant.sid, clientId: grant.clientId },
+            { hostId: s.hostId, timeoutMs: 5000 },
+          )
+          .catch(() => {});
+      },
+    };
   });
   const timingStat=z.object({count:z.number().int().min(1).max(128),p50:z.number().min(0).max(60000),p95:z.number().min(0).max(60000),max:z.number().min(0).max(60000)});
   const timingSummary=z.object({inputRtt:timingStat.optional(),hostInput:timingStat.optional(),inputQueue:timingStat.optional(),decode:timingStat.optional(),paintWait:timingStat.optional(),paintGap:timingStat.optional(),receiveGap:timingStat.optional(),hostQueue:timingStat.optional(),hostPacketGap:timingStat.optional(),videoAck:timingStat.optional()});
@@ -1210,7 +1448,7 @@ export default async function plugin(bb: BbPluginApi) {
           if(!closed)socket.send(JSON.stringify({seq:message.seq,...result,transport:relay?"direct":"rpc"}));
         }catch(e){if(!closed)socket.send(JSON.stringify({seq:message.seq,error:redact(String(e))}));}finally{pending--;}});
       },
-      onClose(){closed=true;clearTimeout(idleTimer);relay?.close();if(humanControls.get(sid)?.clientId===clientId)humanControls.delete(sid);void chain.finally(()=>host.call('direct',{id:sid,clientId,events:[{kind:'reset'}]},{hostId:s.hostId,timeoutMs:5000}).catch(()=>{}));},
+      onClose(){closed=true;clearTimeout(idleTimer);relay?.close();if(humanControls.get(sid)?.clientId===clientId){humanControls.delete(sid);closeDevtoolsViewers(sid);}void chain.finally(()=>host.call('direct',{id:sid,clientId,events:[{kind:'reset'}]},{hostId:s.hostId,timeoutMs:5000}).catch(()=>{}));},
     };
   });
   bb.http.experimental_websocket("/video", ctx => {

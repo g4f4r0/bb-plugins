@@ -1,10 +1,14 @@
 import { it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { createServer } from "node:http";
+import { AddressInfo } from "node:net";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { WebSocketServer } from "ws";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 const mock = vi.hoisted(() => ({
+  launchEndpoint: undefined as string | undefined,
   close: vi.fn(async () => {}),
   send: vi.fn(async (_method: string, _params: any) => ({})),
   evaluate: vi.fn(async () => "https://example.com"),
@@ -46,13 +50,14 @@ vi.mock("../src/runtime", () => ({
   ensureRuntime: async () => "/binary",
   installed: async () => true,
   runtimePath: () => "/binary",
+  devtoolsFrontendRev: "test-rev",
 }));
 vi.mock("../src/managed", () => ({
   managedEnv: () => ({}),
   diagnostics: async () => ({}),
   installManaged: async () => {},
   launchManaged: async () => ({
-    endpoint: "ws://owned",
+    endpoint: mock.launchEndpoint ?? "ws://owned",
     profile: "/owned/profile",
     process: Object.assign(new EventEmitter(), { exitCode: 0, signalCode: null }),
     displayEnv: { DISPLAY: ":99" },
@@ -115,20 +120,12 @@ it("owns managed Fortress, blocks viewer input during a job, and stops it after 
   mock.close.mockImplementation(async () => {
     mock.events.push("browser-close");
   });
-  let devtoolsOpen = false;
-  mock.videoInput.runInput.mockImplementation(async () => {
-    devtoolsOpen = true;
-    return {};
-  });
   mock.send.mockImplementation(async (method: any, params: any) => {
     if (params.type) mock.events.push(params.type);
     if (method === "Target.getTargets")
       return {
         targetInfos: [
           { targetId: "managed", type: "page", url: "https://example.com" },
-          ...(devtoolsOpen
-            ? [{ targetId: "devtools", type: "page", url: "devtools://devtools/bundled/inspector.html" }]
-            : []),
         ],
       };
     if (method === "Browser.getWindowForTarget")
@@ -187,43 +184,36 @@ it("owns managed Fortress, blocks viewer input during a job, and stops it after 
       id: "ab-managed-host",
       clientId: "viewer-restart",
     });
+    mock.send.mockClear();
     const devtools = await h.experimental_call("input", {
       id: "ab-managed-host",
       input: { kind: "maintenance", action: "open-devtools" },
     });
-    await new Promise((r) => setTimeout(r, 25));
-    await h.experimental_call("videoStart", {
-      id: "ab-managed-host",
-      clientId: "viewer-reconnected",
-      binary: false,
-    });
     expect((await wait(devtools)).status).toBe("succeeded");
-    expect(mock.send).toHaveBeenCalledWith(
+    // Undocked DevTools records the flag with no window arranging,
+    // no trigger keys, and no video requirement.
+    expect(mock.send).not.toHaveBeenCalledWith(
       "Browser.setWindowBounds",
-      expect.objectContaining({ windowId: 1, bounds: expect.objectContaining({ width: 720 }) }),
-      false,
-      2000,
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
     );
-    expect(mock.send).toHaveBeenCalledWith(
-      "Browser.setWindowBounds",
-      expect.objectContaining({ windowId: 2, bounds: expect.objectContaining({ left: 720, width: 560 }) }),
-      false,
-      2000,
+    expect(mock.videoInput.runInput).not.toHaveBeenCalledWith(
+      "devtools:ab-managed-host",
+      expect.anything(),
     );
     expect(mock.send).not.toHaveBeenCalledWith(
       "Emulation.clearDeviceMetricsOverride",
     );
     expect(await h.experimental_call("inspect", { id: "ab-managed-host" })).toMatchObject({
+      devtoolsOpen: true,
       viewport: { width: 390, height: 844, mobile: true },
     });
-    expect(mock.videoInput.runInput).toHaveBeenCalledWith(
-      "devtools:ab-managed-host",
-      expect.arrayContaining([
-        expect.objectContaining({ kind: "keyboard", type: "down", key: "Control" }),
-        expect.objectContaining({ kind: "keyboard", type: "down", key: "Shift" }),
-        expect.objectContaining({ kind: "keyboard", type: "down", key: "i" }),
-      ]),
-    );
+    await h.experimental_call("videoStart", {
+      id: "ab-managed-host",
+      clientId: "viewer-reconnected",
+      binary: false,
+    });
     for (const listener of mock.cdpListeners)
       listener("Page.javascriptDialogOpening", {
         type: "prompt",
@@ -259,23 +249,20 @@ it("owns managed Fortress, blocks viewer input during a job, and stops it after 
     for (const listener of mock.cdpListeners)
       listener("Target.targetDestroyed", { targetId: "devtools" });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(mock.send).toHaveBeenCalledWith(
+    // No DevTools window exists anymore, so destroying targets changes nothing.
+    expect(mock.send).not.toHaveBeenCalledWith(
       "Browser.setWindowBounds",
-      expect.objectContaining({ windowId: 1, bounds: expect.objectContaining({ width: 1280 }) }),
-      false,
-      2000,
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
     );
-    expect(mock.send).toHaveBeenCalledWith(
-      "Emulation.setDeviceMetricsOverride",
-      expect.objectContaining({ width: 390, height: 844, mobile: true }),
-    );
-    expect(mock.startLiveCast).toHaveBeenCalled();
+    expect(mock.startLiveCast).not.toHaveBeenCalled();
+    // Opening works with no live video at all.
     mock.videoInput.isClosed = true;
     const staleDevtools = await h.experimental_call("input", {
       id: "ab-managed-host",
       input: { kind: "maintenance", action: "open-devtools" },
     });
-    await new Promise((r) => setTimeout(r, 25));
     mock.videoInput.isClosed = false;
     expect((await wait(staleDevtools)).status).toBe("succeeded");
     mock.videoInput.runInput.mockClear();
@@ -543,6 +530,115 @@ it("closing an active job completes without the shutdown fallback delay", async 
     );
     expect(h.experimental_getRetainedWorkerLeaseCount()).toBe(0);
   } finally {
+    await h.experimental_dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("pipes undocked DevTools through the page target without a browser window", async () => {
+  const root = await mkdtemp(join(tmpdir(), "browse-devtools-tunnel-")),
+    h = experimental_createHostEntryHarness(entry, {
+      experimental_paths: { dataDir: root, tempDir: root },
+    });
+  const server = createServer();
+  const wss = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (req, socket, head) => {
+    if (!req.url?.startsWith("/devtools/page/")) {
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit("connection", ws);
+    });
+  });
+  wss.on("connection", (ws) => {
+    ws.on("message", (raw) => {
+      const message = JSON.parse(String(raw));
+      ws.send(JSON.stringify({ id: message.id, result: { ok: true } }));
+      ws.send(JSON.stringify({ method: "Page.loadEventFired", params: {} }));
+    });
+  });
+  await new Promise<void>((resolve) =>
+    server.listen(0, "127.0.0.1", resolve),
+  );
+  const port = (server.address() as AddressInfo).port;
+  mock.launchEndpoint = `ws://127.0.0.1:${port}/devtools/browser/ABCDEF`;
+  try {
+    let j = await h.experimental_call("connect", {
+      id: "ab-devtools-tunnel",
+      mode: "managed",
+      expiresAt: Date.now() + 60000,
+    });
+    while (j.status === "running") {
+      await new Promise((r) => setTimeout(r, 5));
+      j = await h.experimental_call("job", { id: j.id });
+    }
+    expect(j.status).toBe("succeeded");
+    // Unknown sessions and foreign clients are rejected.
+    await expect(
+      h.experimental_call("devtoolsSend", {
+        id: "ab-missing",
+        clientId: "viewer",
+        message: JSON.stringify({ id: 1, method: "Page.enable" }),
+      }),
+    ).rejects.toThrow();
+    const opened = await h.experimental_call("devtoolsOpen", {
+      id: "ab-devtools-tunnel",
+      clientId: "viewer",
+    });
+    expect(opened).toMatchObject({ ok: true });
+    expect(typeof opened.rev).toBe("string");
+    const send = await h.experimental_call("devtoolsSend", {
+      id: "ab-devtools-tunnel",
+      clientId: "viewer",
+      message: JSON.stringify({ id: 3, method: "Page.enable" }),
+    });
+    expect(JSON.parse(send.response)).toMatchObject({ id: 3 });
+    await expect(
+      h.experimental_call("devtoolsSend", {
+        id: "ab-devtools-tunnel",
+        clientId: "intruder",
+        message: JSON.stringify({ id: 4, method: "Page.enable" }),
+      }),
+    ).rejects.toThrow();
+    await new Promise((r) => setTimeout(r, 50));
+    const polled = await h.experimental_call("devtoolsPoll", {
+      id: "ab-devtools-tunnel",
+      clientId: "viewer",
+    });
+    expect(
+      polled.events.map((event: string) => JSON.parse(event).method),
+    ).toContain("Page.loadEventFired");
+    expect(
+      await h.experimental_call("devtoolsPoll", {
+        id: "ab-devtools-tunnel",
+        clientId: "intruder",
+      }),
+    ).toEqual({ events: [] });
+    expect(
+      await h.experimental_call("devtoolsClose", {
+        id: "ab-devtools-tunnel",
+        clientId: "viewer",
+      }),
+    ).toEqual({ ok: true });
+    await expect(
+      h.experimental_call("devtoolsSend", {
+        id: "ab-devtools-tunnel",
+        clientId: "viewer",
+        message: JSON.stringify({ id: 5, method: "Page.enable" }),
+      }),
+    ).rejects.toThrow();
+    expect(
+      await h.experimental_call("devtoolsClose", {
+        id: "ab-devtools-tunnel",
+        clientId: "viewer",
+      }),
+    ).toEqual({ ok: true });
+    await h.experimental_call("release", { id: "ab-devtools-tunnel" });
+  } finally {
+    mock.launchEndpoint = undefined;
+    wss.close();
+    server.close();
     await h.experimental_dispose();
     await rm(root, { recursive: true, force: true });
   }

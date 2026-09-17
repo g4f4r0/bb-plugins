@@ -5,7 +5,7 @@ import { viewerHtml } from "../src/viewer";
 function extract(name: string): string {
   const line = viewerHtml
     .split("\n")
-    .find((entry) => entry.startsWith(`function ${name}(){`));
+    .find((entry) => entry.startsWith(`function ${name}(`));
   if (!line) throw new Error(`missing ${name} in viewerHtml`);
   return line;
 }
@@ -17,8 +17,14 @@ function harness() {
      <main id="viewport"></main>
       <select id="device-preset"><option value="responsive">Responsive</option><option value="custom" hidden>Custom</option></select>
      <input id="responsive-width"><input id="responsive-height">
-     <button id="rotate-viewport"></button><span id="resolution"></span>`,
-    { runScripts: "outside-only", pretendToBeVisual: true },
+     <button id="rotate-viewport"></button><span id="resolution"></span>
+     <div id="devtools-divider" hidden></div>
+     <div id="devtools-wrap" hidden><div id="devtools-header"><span>DevTools</span></div><div id="devtools-status"></div><iframe id="devtools-frame"></iframe></div>`,
+    {
+      runScripts: "outside-only",
+      pretendToBeVisual: true,
+      url: "https://bb.test/api/v1/plugins/browse/http/viewer?id=test&bbTheme=light",
+    },
   );
   const { window } = dom;
   window.eval(`
@@ -33,6 +39,8 @@ function harness() {
       responsiveAvailable=true,responsivePending=null,
       responsiveCommitSent=false,expectedFrameWidth=0,expectedFrameHeight=0,
       vw=1280,vh=800,hasControl=false,takingControl=false;
+    let devtoolsPaneOpen=false,devtoolsToken='',devtoolsRev='',devtoolsThemeWritten=null,
+      devtoolsWidth=520,devtoolsTokenReady=false;
     const status={textContent:''};
     function fit(){}
     function setResponsiveTransport(){}
@@ -42,12 +50,21 @@ function harness() {
     ${extract("renderResponsive")}
     ${extract("cancelResponsive")}
     ${extract("onControlQueueCleared")}
+    ${extract("devtoolsWantTheme")}
+    ${extract("seedDevtoolsTheme")}
+    ${extract("renderDevtools")}
+    ${extract("devtoolsFrameUrl")}
     window.test={
       render:renderResponsive, note:noteResponsiveQueued,
       cleared:onControlQueueCleared,
+      wantTheme:devtoolsWantTheme, seedTheme:seedDevtoolsTheme,
+      renderPane:renderDevtools, frameUrl:devtoolsFrameUrl,
       toggle:()=>document.querySelector('#responsive-toggle'),
       controls:()=>document.querySelector('#responsive-controls'),
       widthInput:()=>document.querySelector('#responsive-width'),
+      pane:()=>document.querySelector('#devtools-wrap'),
+      divider:()=>document.querySelector('#devtools-divider'),
+      storedTheme:()=>window.localStorage.getItem('ui-theme'),
       status,
       pending:()=>responsivePending,
       set(state){
@@ -56,6 +73,9 @@ function harness() {
         if('responsiveCommitSent' in state)responsiveCommitSent=state.responsiveCommitSent;
         if('hasControl' in state)hasControl=state.hasControl;
         if('takingControl' in state)takingControl=state.takingControl;
+        if('devtoolsPaneOpen' in state)devtoolsPaneOpen=state.devtoolsPaneOpen;
+        if('devtoolsWidth' in state)devtoolsWidth=state.devtoolsWidth;
+        if('devtoolsThemeWritten' in state)devtoolsThemeWritten=state.devtoolsThemeWritten;
       },
     };
   `);
@@ -66,9 +86,16 @@ type TestApi = {
   render: () => void;
   note: () => void;
   cleared: () => void;
+  wantTheme: () => string;
+  seedTheme: (mode: string) => boolean;
+  renderPane: () => void;
+  frameUrl: (token: string, rev: string) => string;
   toggle: () => HTMLButtonElement;
   controls: () => HTMLElement;
   widthInput: () => HTMLInputElement;
+  pane: () => HTMLElement;
+  divider: () => HTMLElement;
+  storedTheme: () => string | null;
   status: { textContent: string };
   pending: () => unknown;
   set: (state: Record<string, unknown>) => void;
@@ -184,6 +211,66 @@ it("keeps a committed stage when control drops mid-flight", () => {
     test.set({ responsivePending: staged, responsiveCommitSent: true });
     test.cleared();
     expect(test.pending()).toBe(staged);
+  } finally {
+    dom.window.close();
+  }
+});
+
+it("reads the BB theme from the viewer url", () => {
+  const { dom, test } = harness();
+  try {
+    expect(test.wantTheme()).toBe("light");
+  } finally {
+    dom.window.close();
+  }
+});
+
+it("seeds the frontend theme without clobbering user overrides", () => {
+  const { dom, test } = harness();
+  try {
+    expect(test.seedTheme("dark")).toBe(true);
+    expect(test.storedTheme()).toBe('"dark"');
+    // Same mode again is a no-op.
+    expect(test.seedTheme("dark")).toBe(false);
+    // A user override inside DevTools survives reopen under the same mode.
+    dom.window.localStorage.setItem("ui-theme", '"default"');
+    expect(test.seedTheme("dark")).toBe(false);
+    expect(test.storedTheme()).toBe('"default"');
+    // An already-matching value needs no reload.
+    expect(test.seedTheme("light")).toBe(false);
+    // A BB theme change wins over a stale foreign value.
+    dom.window.localStorage.setItem("ui-theme", '"systemPreferred"');
+    test.set({ devtoolsThemeWritten: '"dark"' });
+    expect(test.seedTheme("light")).toBe(true);
+    expect(test.storedTheme()).toBe('"default"');
+  } finally {
+    dom.window.close();
+  }
+});
+
+it("shows and sizes the DevTools pane", () => {
+  const { dom, test } = harness();
+  try {
+    test.set({ devtoolsPaneOpen: false });
+    test.renderPane();
+    expect(test.pane().hidden).toBe(true);
+    expect(test.divider().hidden).toBe(true);
+    test.set({ devtoolsPaneOpen: true, devtoolsWidth: 480 });
+    test.renderPane();
+    expect(test.pane().hidden).toBe(false);
+    expect(test.divider().hidden).toBe(false);
+    expect(test.pane().style.width).toBe("480px");
+  } finally {
+    dom.window.close();
+  }
+});
+
+it("builds a same-origin frontend url with an encoded debugger target", () => {
+  const { dom, test } = harness();
+  try {
+    const url = test.frameUrl("abc123", "151.0.7910-deadbeef");
+    expect(url).toContain("./devtools/151.0.7910-deadbeef/abc123/inspector.html?ws=");
+    expect(url).toContain(encodeURIComponent("devtools-ws?token=abc123"));
   } finally {
     dom.window.close();
   }

@@ -47,10 +47,13 @@ import { observeExpression, deepQuerySource } from "./src/observe";
 import { Bridge } from "./src/bridge";
 import { validateCommand, redact } from "./src/policy";
 import {
-  openDevToolsLayout,
-  restorePageWindow,
-  type DevToolsLayoutState,
-} from "./src/devtools-layout";
+  assertAssetPath,
+  debugPortFromEndpoint,
+  fetchDevtoolsAsset,
+  openDevtoolsTunnel,
+  type DevtoolsTunnel,
+} from "./src/devtools-tunnel";
+import { devtoolsFrontendRev } from "./src/runtime";
 import { assertBrowserMemory } from "./src/memory-budget";
 import { prepareManagedRuntime } from "./src/runtime-cleanup";
 
@@ -67,7 +70,7 @@ type LocalSession = {
   videoMode?: boolean;
   videoInput?: SelkiesStream;
   devtoolsOpen?: boolean;
-  devtoolsLayout?: DevToolsLayoutState;
+  devtools?: { tunnel: DevtoolsTunnel; clientId: string };
   browserEvents?: () => void;
   dialog?: {
     type: "alert" | "confirm" | "prompt" | "beforeunload";
@@ -186,17 +189,14 @@ async function applyViewport(
   });
 }
 
-async function restoreDevToolsSession(s: LocalSession) {
-  const layout = s.devtoolsLayout;
-  s.devtoolsOpen = false;
-  s.devtoolsLayout = undefined;
-  if (!s.cdp || !s.targetId) return;
-  await restorePageWindow(s.cdp, s.targetId, layout?.pageWindowId).catch(() => {});
-  if (s.viewport) await applyViewport(s.cdp, s.viewport).catch(() => {});
-  // Prime a fresh responsive frame while the video surface is still closing.
-  // Static pages may not produce compositor damage after the JPEG viewer takes
-  // over, which otherwise leaves the correctly sized transition skeleton up.
-  await s.cdp.startLiveCast().catch(() => {});
+function closeDevtoolsTunnel(s: LocalSession) {
+  const devtools = s.devtools;
+  s.devtools = undefined;
+  try {
+    devtools?.tunnel.close();
+  } catch {
+    /* Already gone. */
+  }
 }
 function session(id: string) {
   const s = sessions.get(id);
@@ -699,6 +699,7 @@ async function closeSession(s: LocalSession) {
   s.videoInput=undefined;
   for(const stop of s.controlRelays??[])stop();
   s.controlRelays?.clear();
+  closeDevtoolsTunnel(s);
   await s.direct?.reset();
   if (s.credential) await finishCredential(s, s.credential);
   if (s.busy) {
@@ -914,6 +915,54 @@ export default experimental_defineHostEntry({
       }catch(e){s.controlRelays.delete(stop);throw e;}
     },
     direct: runDirect,
+    devtoolsOpen: async ({id,clientId})=>{
+      const s=session(id);
+      if (s.status !== "ready" || s.mode !== "managed" || !s.managed || !s.targetId)
+        throw new Error("Undocked DevTools needs a managed Browse session.");
+      const port = debugPortFromEndpoint(s.managed.endpoint);
+      if (!port) throw new Error("The browser debugger is unavailable.");
+      if (s.devtools?.clientId === clientId && !s.devtools.tunnel.closed)
+        return { ok: true, rev: devtoolsFrontendRev };
+      closeDevtoolsTunnel(s);
+      try {
+        s.devtools = {
+          tunnel: await openDevtoolsTunnel(port, s.targetId, clientId),
+          clientId,
+        };
+      } catch (e) {
+        closeDevtoolsTunnel(s);
+        throw new Error(`DevTools could not attach: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      return { ok: true, rev: devtoolsFrontendRev };
+    },
+    devtoolsSend: async ({id,clientId,message})=>{
+      const s=session(id);
+      const devtools = s.devtools;
+      if (!devtools || devtools.clientId !== clientId || devtools.tunnel.closed)
+        throw new Error("DevTools is not attached. Reopen the DevTools pane.");
+      return { response: await devtools.tunnel.send(message) };
+    },
+    devtoolsPoll: async ({id,clientId})=>{
+      const s=session(id);
+      const devtools = s.devtools;
+      if (!devtools || devtools.clientId !== clientId || devtools.tunnel.closed)
+        return { events: [] };
+      return { events: devtools.tunnel.poll() };
+    },
+    devtoolsClose: async ({id,clientId})=>{
+      const s=sessions.get(id);
+      if (s?.devtools?.clientId === clientId) closeDevtoolsTunnel(s);
+      return { ok: true };
+    },
+    devtoolsAsset: async ({id,path})=>{
+      const s=session(id);
+      if (s.mode !== "managed" || !s.managed)
+        throw new Error("DevTools needs a managed Browse session.");
+      const port = debugPortFromEndpoint(s.managed.endpoint);
+      if (!port) throw new Error("The browser debugger is unavailable.");
+      const asset = await fetchDevtoolsAsset(port, path);
+      return { data: asset.data.toString("base64"), contentType: asset.contentType };
+    },
     frame: async ({ id, after = 0, stream }) => {
       const s = session(id);
       if (s.status !== "ready" || !s.cdp || s.expiresAt <= Date.now())
@@ -1001,28 +1050,10 @@ export default experimental_defineHostEntry({
               if (input.action === "hard-reload") {
                 await s.cdp!.send("Page.reload", { ignoreCache: true });
               } else if (input.action === "open-devtools") {
-                if (s.mode !== "managed" || !s.videoMode)
-                  throw new Error("DevTools is available only in an isolated live Browse session.");
-                const videoDeadline = Date.now() + 5000;
-                while ((!s.videoInput || s.videoInput.isClosed) && Date.now() < videoDeadline)
-                  await sleep(25, undefined, { signal });
-                const videoInput = s.videoInput;
-                if (!videoInput || videoInput.isClosed)
-                  throw new Error("The live browser view could not reconnect for DevTools.");
-                const trigger = () => videoInput.runInput(`devtools:${s.id}`, [
-                  { kind: "keyboard", type: "down", key: "Control", code: "ControlLeft", modifiers: 2, repeat: false },
-                  { kind: "keyboard", type: "down", key: "Shift", code: "ShiftLeft", modifiers: 10, repeat: false },
-                  { kind: "keyboard", type: "down", key: "i", code: "KeyI", modifiers: 10, repeat: false },
-                  { kind: "keyboard", type: "up", key: "i", code: "KeyI", modifiers: 10, repeat: false },
-                  { kind: "keyboard", type: "up", key: "Shift", code: "ShiftLeft", modifiers: 2, repeat: false },
-                  { kind: "keyboard", type: "up", key: "Control", code: "ControlLeft", modifiers: 0, repeat: false },
-                ]).then(() => {});
-                s.devtoolsLayout = await openDevToolsLayout(
-                  s.cdp!,
-                  s.targetId!,
-                  trigger,
-                  signal,
-                );
+                // The DevTools pane is undocked: the viewer embeds the real
+                // frontend beside the page, so opening only records the flag.
+                if (s.mode !== "managed")
+                  throw new Error("DevTools needs a managed Browse session.");
                 s.devtoolsOpen = true;
               } else {
                 if (s.mode !== "managed") throw new Error("Clearing browser data is supported only in an isolated Browse profile.");
@@ -1150,11 +1181,6 @@ export default experimental_defineHostEntry({
                 };
               if (method === "Page.javascriptDialogClosed")
                 s.dialog = undefined;
-              if (
-                method === "Target.targetDestroyed" &&
-                params?.targetId === s.devtoolsLayout?.targetId
-              )
-                void restoreDevToolsSession(s);
             });
             await s.cdp.send("Page.enable", {});
             if (input.mode === "managed") {

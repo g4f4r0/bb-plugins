@@ -93,7 +93,7 @@ let videoAvailable=document.body.dataset.video==='1'||new URL(location.href).sea
 function stopVideo(){videoWorker?.terminate();videoWorker=null;if(videoUrl)URL.revokeObjectURL(videoUrl);videoUrl=null;videoOutstanding=0;}
 function restartStream(){const active=cast;cast=null;stopVideo();active?.close();if(!closed&&!document.hidden&&inViewport)setTimeout(openCast,150);}
 function fallbackVideo(){metrics.transport='jpeg';videoMode=false;restartStream();}
-function setResponsiveTransport(enabled){const next=videoAvailable&&(!enabled||devtoolsSurface);if(videoMode===next)return;videoMode=next;restartStream();}
+function setResponsiveTransport(enabled){const next=videoAvailable&&!enabled;if(videoMode===next)return;videoMode=next;restartStream();}
 function openVideo(){
   if(!('VideoDecoder' in window)){videoMode=false;openCast();return;}
   videoUrl=URL.createObjectURL(new Blob([${JSON.stringify(videoWorker)}],{type:'text/javascript'}));

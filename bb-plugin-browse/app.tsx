@@ -8,6 +8,7 @@ import {
   useBbNavigate,
   useRealtime,
   experimental_Icon as Icon,
+  experimental_useCodeTheme as useCodeTheme,
 } from "@get-bb/plugin-sdk/app";
 import type { rpcContract, health, Job, Session } from "./src/contracts";
 import type { z } from "zod";
@@ -509,6 +510,8 @@ function SessionBrowser({
 }) {
   const rpc = useRpc<typeof rpcContract>();
   const nav = useBbNavigate();
+  const { mode: bbThemeMode } = useCodeTheme();
+  const viewerFrame = useRef<HTMLIFrameElement>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loadedViewerId, setLoadedViewerId] = useState("");
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
@@ -548,6 +551,12 @@ function SessionBrowser({
   const [address, setAddress] = useState("");
   const [opening, setOpening] = useState(false);
   useEffect(() => { setOpening(false); }, [id]);
+  useEffect(() => {
+    viewerFrame.current?.contentWindow?.postMessage(
+      { type: "browse-devtools-theme", mode: bbThemeMode },
+      window.location.origin,
+    );
+  }, [bbThemeMode, id]);
   const launching = useRef(false);
   async function openAddress(raw = address) {
     if (launching.current) return;
@@ -691,11 +700,12 @@ function SessionBrowser({
       {loadedViewerId !== id && <div className="absolute inset-0 z-10"><LoadingBrowserFrame url={current?.url || address} /></div>}
       {error && <p role="alert" className="shrink-0 px-4 py-2 text-xs text-muted-foreground">{error}</p>}
       <iframe
+        ref={viewerFrame}
         title="Live browser"
         className="min-h-0 w-full flex-1 border-0 bg-sidebar"
         style={{ opacity: loadedViewerId === id ? 1 : 0 }}
         onLoad={() => setLoadedViewerId(id)}
-        src={`/api/v1/plugins/browse/http/viewer?id=${encodeURIComponent(id)}`}
+        src={`/api/v1/plugins/browse/http/viewer?id=${encodeURIComponent(id)}&bbTheme=${bbThemeMode}`}
       />
     </div>
   );
