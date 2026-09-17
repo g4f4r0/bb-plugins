@@ -35,7 +35,7 @@ function VirtualRows({ rows, active }: { rows: readonly DisplayRow[]; active: bo
     while (cache.size > 256) cache.delete(cache.keys().next().value!);
   }, [rows, virtualizer]);
   return (
-    <div ref={parent} data-reserve-virtual tabIndex={0} role="region" aria-label="Usage details" style={{ height: 'min(55dvh, 440px)', overflowY: 'auto', overflowX: 'hidden', overflowAnchor: 'none' }}>
+    <div ref={parent} data-reserve-virtual tabIndex={0} role="region" aria-label="Usage details" style={{ height: 'min(40dvh, 240px)', overflowY: 'auto', overflowX: 'hidden', overflowAnchor: 'none' }}>
       <div style={{ height: virtualizer.getTotalSize(), width: '100%', position: 'relative' }}>
         {virtualizer.getVirtualItems().map((item) => (
           <div key={item.key} ref={measure} data-index={item.index} data-reserve-row style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${item.start}px)` }}>

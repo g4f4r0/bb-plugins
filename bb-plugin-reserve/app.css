@@ -3,7 +3,9 @@ section:has([data-reserve-shell]) > div {
   overflow-x: hidden;
 }
 
-[data-reserve-shell] { width: min(320px, calc(100vw - 32px)); }
+[data-reserve-shell] { width: 100%; max-width: calc(100vw - 32px); }
+/* The host disclosure animates height; opt this plugin out of layout animation. */
+section:has([data-reserve-shell]) { transition: none !important; }
 [data-reserve-shell][data-reserve-active="false"] * { animation-play-state: paused !important; }
 @media (prefers-reduced-motion: reduce) {
   [data-reserve-shell] *, [data-reserve-shell] *::before, [data-reserve-shell] *::after {
