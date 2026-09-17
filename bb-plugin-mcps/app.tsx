@@ -776,7 +776,6 @@ function BrowsePane({
   pending: boolean;
   onAdd: (name: string) => void;
 }) {
-  const rpc = useRpc<typeof rpcContract>();
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<RegistryHit[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -813,7 +812,7 @@ function BrowsePane({
       });
     }, 280);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [query, rpc, cursor]);
+  }, [query, cursor]);
 
   const filtered = useMemo(() => {
     if (hits === null) return null;
@@ -948,7 +947,6 @@ function DetailPage({
   onRemove: (server: ServerRow) => void;
   onAuth: (id: string) => void;
 }) {
-  const rpc = useRpc<typeof rpcContract>();
   const server = servers?.find((item) => item.id === id) ?? null;
   const [tools, setTools] = useState<CompactTool[] | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -969,7 +967,7 @@ function DetailPage({
       setCatalogError(errorText(cause));
     });
     return () => controller.abort();
-  }, [id, rpc, server?.status, server?.authStatus, server?.enabled]);
+  }, [id, server?.status, server?.authStatus, server?.enabled]);
 
   if (servers !== null && server === null) {
     return (

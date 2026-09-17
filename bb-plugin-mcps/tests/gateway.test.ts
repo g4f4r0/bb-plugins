@@ -80,6 +80,10 @@ describe("lazy MCP gateway", () => {
       const result = await gateway.inspectServer("echo");
       expect(result.error).toContain("authorization expired");
       expect(result.tools).toEqual([]);
+      vi.mocked(Date.now).mockReturnValue(Date.now() + 5001);
+      const retry = await gateway.inspectServer("echo");
+      expect(retry.error).toContain("authorization expired");
+      expect(retry.tools).toEqual([]);
     } finally { vi.restoreAllMocks(); }
   });
 
@@ -196,6 +200,27 @@ describe("lazy MCP gateway", () => {
       const fetch = redirectGuardFetch(new URL("https://mcp.example/mcp"), undefined, 20);
       await expect(fetch("https://mcp.example/oauth/token")).rejects.toThrow("timed out");
     } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("drops a loaded search result when the server is disabled while another loads", async () => {
+    const store = memoryStore(); seed(store, "first"); seed(store, "slow");
+    const host = hostWithTools([echoTool], () => {});
+    const originalStart = host.start;
+    let release!: () => void;
+    host.start = async (config, signal) => {
+      if (config.key.startsWith("slow:")) await new Promise<void>(r => { release = r; });
+      return originalStart(config, signal);
+    };
+    const gateway = new McpGateway(store, { info() {}, warn() {}, error() {} }, { stdioHost: host });
+    gateways.push(gateway);
+    await gateway.inspectServer("first");
+    const search = gateway.searchTools("echo");
+    await new Promise(resolve => setTimeout(resolve, 10));
+    store.setMcpEnabled("first", "mcp", false);
+    await gateway.closeServer("first", "mcp");
+    release();
+    const result = await search;
+    expect(result.tools).toHaveLength(1);
   });
 
   it("calls one tool without listing the full catalog", async () => {

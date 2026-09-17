@@ -342,7 +342,6 @@ export class McpGateway implements McpRuntime {
   private readonly catalogControllers = new Map<string, AbortController>();
   private readonly catalogLoads = new Map<string, Promise<CatalogCache>>();
   private readonly catalogGenerations = new Map<string, object>();
-  private readonly dirtyCatalogs = new Set<string>();
   private readonly catalogIndex = new Map<string, CatalogRef>();
   private readonly serverIndex = new Map<string, Set<string>>();
   private readonly serverEpochs = new Map<string, object>();
@@ -391,7 +390,6 @@ export class McpGateway implements McpRuntime {
     this.catalogIndex.clear();
     this.serverIndex.clear();
     this.catalogGenerations.clear();
-    this.dirtyCatalogs.clear();
     this.catalogLoads.clear();
     this.catalogControllers.clear();
     this.providers.clear();
@@ -706,7 +704,6 @@ export class McpGateway implements McpRuntime {
       error,
     };
     this.catalogCache.set(key, cached);
-    this.dirtyCatalogs.delete(key);
     this.indexCatalog(key, cached);
     return cached;
   }
@@ -717,7 +714,6 @@ export class McpGateway implements McpRuntime {
     this.catalogControllers.delete(key);
     this.catalogCache.delete(key);
     this.catalogLoads.delete(key);
-    this.dirtyCatalogs.delete(key);
     this.dropIndex(key);
   }
 
@@ -781,7 +777,7 @@ export class McpGateway implements McpRuntime {
     const key = keyOf(record.pluginId, record.serverId);
     const cached = this.catalogCache.get(key);
     const age = cached ? Date.now() - cached.updatedAt : Number.POSITIVE_INFINITY;
-    if (cached && cached.configJson === record.configJson && !this.dirtyCatalogs.has(key)) {
+    if (cached && cached.configJson === record.configJson) {
       if (cached.error && age < RETRY_AFTER_MS) throw new Error(cached.error);
       if (!cached.error && age < CATALOG_TTL_MS) return cached;
     }
@@ -797,7 +793,7 @@ export class McpGateway implements McpRuntime {
         const hadConnection = this.conns.has(key);
         const connection = await this.ensureServer(record.pluginId, record.serverId);
         if (!connection) throw new Error(`MCP server unavailable: ${record.serverId}`);
-        const needsRefresh = this.dirtyCatalogs.has(key) || !cached || cached.configJson !== record.configJson || age >= CATALOG_TTL_MS;
+        const needsRefresh = !cached || Boolean(cached.error) || cached.configJson !== record.configJson || age >= CATALOG_TTL_MS;
         if (needsRefresh && (cached || hadConnection)) {
           await withTimeout(
             this.refreshCatalog(connection, controller.signal),
@@ -926,9 +922,13 @@ export class McpGateway implements McpRuntime {
     if (!q) return { tools: [], unavailable: [] };
     const servers = this.enabledApprovedServers();
     const waitMs = this.options.searchWaitMs ?? SEARCH_WAIT_MS;
-    const loaded = new Map<string, CatalogCache>();
+    const loaded = new Map<string, { catalog: CatalogCache; generation: object | undefined }>();
     const loads = servers.map((record) => this.getCatalog(record).then(
-      (catalog) => { loaded.set(keyOf(record.pluginId, record.serverId), catalog); return null as string | null; },
+      (catalog) => {
+        const key = keyOf(record.pluginId, record.serverId);
+        loaded.set(key, { catalog, generation: this.catalogGenerations.get(key) });
+        return null as string | null;
+      },
       () => this.store.getPlugin(record.pluginId)?.name ?? record.serverId,
     ));
     if (loads.length > 0) {
@@ -945,7 +945,12 @@ export class McpGateway implements McpRuntime {
     for (const record of servers) {
       const name = this.store.getPlugin(record.pluginId)?.name ?? record.serverId;
       const cfg = parseServerConfig(record.configJson);
-      const cached = loaded.get(keyOf(record.pluginId, record.serverId)) ?? this.catalogCache.get(keyOf(record.pluginId, record.serverId));
+      const key = keyOf(record.pluginId, record.serverId);
+      const current = this.store.getServer(record.pluginId, record.serverId);
+      const result = loaded.get(key);
+      if (!current?.enabled || !current.approved || current.configJson !== record.configJson) continue;
+      if (result && result.generation !== this.catalogGenerations.get(key)) continue;
+      const cached = result?.catalog ?? this.catalogCache.get(key);
       if (!cfg || !cached) {
         unavailable.push(name);
         continue;
