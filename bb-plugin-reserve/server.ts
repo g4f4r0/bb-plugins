@@ -186,7 +186,8 @@ export default function plugin(bb: BbPluginApi) {
       const readings = enabled.length === 0 ? [] : await loadFleetReadings(bb.sdk, fetchedAt, undefined, lifetime.signal);
       const enrichment = await cli;
       lifetime.signal.throwIfAborted();
-      if (readings.length > 0 && readings.every((reading) => reading.snapshot === null && reading.error !== null)) throw new Error("Usage is unavailable on connected machines.");
+      const connected = readings.filter((reading) => reading.host.status === "connected");
+      if (connected.length > 0 && connected.every((reading) => reading.snapshot === null && reading.error !== null)) throw new Error("Usage is unavailable on connected machines.");
       resetGate.setAvailableCount(
         enrichment.accountEmail === null ? null : enrichment.availableCount,
         extrasStartedAtMs,

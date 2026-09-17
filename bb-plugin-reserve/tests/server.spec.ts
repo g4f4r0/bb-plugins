@@ -41,3 +41,9 @@ it('serializes fleet once and safely skips oversized KV persistence',async()=>{
   expect(result.hosts).toHaveLength(1000);expect(result.totals).toHaveLength(1000);expect(result.totals.every(login=>login.hosts===undefined)).toBe(true);
   expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(500000);
 });
+it('offline fleet members do not mask failure of every connected host',async()=>{
+  const {harness}=host({enableCodex:false});
+  harness.sdk.stub('hosts.list',async()=>[{id:'online',name:'online',status:'connected',type:'persistent'},{id:'offline',name:'offline',status:'disconnected',type:'persistent'}]);
+  harness.sdk.stub('system.usageLimits',async()=>{throw new Error('network down');});
+  await expect(harness.behavior.callRpc('getUsage',{})).rejects.toThrow('Usage is unavailable on connected machines');
+});
