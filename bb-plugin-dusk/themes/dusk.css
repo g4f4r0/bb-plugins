@@ -210,18 +210,27 @@ pre,
 .bb-app-toast > div:has([data-testid="app-toast-title"]) {
   padding: 8px 8px 8px 12px;
 }
-.bb-app-toast > div > div > div:first-child:has(> svg[data-icon]) {
+/* One neutral surface for every tone; only success, warning and error keep a colored icon. */
+.bb-app-toast > div > div > div:first-child:has(> [data-icon]) {
   display: none;
+  margin-top: 0;
+}
+.bb-app-toast > div > div > div:first-child:has(> [data-icon]:is([data-icon="CircleCheck"], [data-icon="AlertTriangle"], [data-icon="AlertCircle"])) {
+  display: flex;
+}
+.bb-app-toast [data-icon="CircleCheck"] {
+  color: var(--success);
+}
+.bb-app-toast [data-icon="AlertTriangle"] {
+  color: var(--warning);
+}
+.bb-app-toast [data-icon="AlertCircle"] {
+  color: var(--dusk-stop);
 }
 /* Hide the description row and its empty container, retaining any actions. */
 .bb-app-toast div:has(> [data-testid="app-toast-description"]),
 .bb-app-toast .flex-col:has([data-testid="app-toast-description"]):not(:has(button)) {
   display: none;
-}
-.bb-app-toast > div:has(> div > div > svg[data-icon="AlertCircle"]) {
-  background: #ad2934;
-  border-color: color-mix(in srgb, #ad2934 65%, #ffffff);
-  color: #ffffff;
 }
 /* Keep title, actions, and dismiss on one compact row. */
 .bb-app-toast > div:has([data-testid="app-toast-title"]) > div {
@@ -283,11 +292,4 @@ pre,
   background: var(--state-hover);
   color: var(--foreground);
   text-decoration: none;
-}
-.bb-app-toast > div:has(> div > div > svg[data-icon="AlertCircle"]) button.underline[type="button"] {
-  border-color: rgb(255 255 255 / 35%);
-  color: #ffffff;
-}
-.bb-app-toast > div:has(> div > div > svg[data-icon="AlertCircle"]) button[aria-label="Dismiss notification"] {
-  color: #ffffff;
 }
