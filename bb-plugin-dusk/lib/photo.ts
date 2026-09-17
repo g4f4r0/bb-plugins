@@ -1,16 +1,17 @@
 // Adapted from Aura's capy-effect.ts (MIT). See THIRD_PARTY_NOTICES.md.
 import { VERTEX_SHADER, ANIMATED_PHOTO_SHADER } from "./photo-shaders";
-import { drawFade } from "./fade";
+import { setSnapshotSource } from "./fade";
 
-/** Aura's photo texture, presented through Dusk's existing 2D wallpaper canvas. */
+/** Present Aura's photo texture directly; the 2D canvas retains handoff frames. */
 export function animatePhoto(canvas: HTMLCanvasElement, image: HTMLImageElement, from: HTMLCanvasElement | null): () => void {
   const surface = document.createElement("canvas");
-  const gl = surface.getContext("webgl2", { alpha: true, antialias: false, depth: false, stencil: false, premultipliedAlpha: true, preserveDrawingBuffer: false });
+  const gl = surface.getContext("webgl2", { alpha: true, antialias: false, depth: false, stencil: false, premultipliedAlpha: true, preserveDrawingBuffer: true });
   const visible = canvas.getContext("2d")!;
   let disposed = false, lost = false, inView = true, raf = 0;
   let previous = 0, lastDraw = 0, time = 40;
-  let fading = !!from;
-  const fadeStart = performance.now();
+  const previousVisibility = canvas.style.visibility;
+  let fade: Animation | null = null;
+  const clearFade = () => { if (fade) { fade.onfinish = null; fade.cancel(); fade = null; } from?.remove(); };
   const reduced = matchMedia("(prefers-reduced-motion: reduce)");
   const shaders: WebGLShader[] = [];
   let program: WebGLProgram | null = null, buffer: WebGLBuffer | null = null, texture: WebGLTexture | null = null;
@@ -30,6 +31,7 @@ export function animatePhoto(canvas: HTMLCanvasElement, image: HTMLImageElement,
   }
 
   function fallback() {
+    clearFade(); surface.remove(); setSnapshotSource(canvas, null); canvas.style.visibility = previousVisibility;
     // Like Aura, retain the original photo if WebGL is unavailable or lost.
     const scale = Math.min(1, 2400 / image.naturalWidth, 1800 / image.naturalHeight);
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
@@ -77,15 +79,24 @@ export function animatePhoto(canvas: HTMLCanvasElement, image: HTMLImageElement,
     return () => { delete canvas.dataset.photoRenderer; };
   }
 
+  surface.className = "dusk-photo-surface";
+  canvas.before(surface);
+  setSnapshotSource(canvas, surface);
+  if (from && !reduced.matches) {
+    from.className = "dusk-photo-fade";
+    canvas.before(from);
+    fade = from.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 240, easing: "ease-in-out", fill: "forwards" });
+    fade.onfinish = clearFade;
+  }
+
   function draw() {
     if (disposed || lost) return;
     gl!.useProgram(program);
     gl!.uniform1f(uniform("u_time"), time);
     gl!.clear(gl!.COLOR_BUFFER_BIT); gl!.drawArrays(gl!.TRIANGLES, 0, 6);
-    // Copy immediately: the offscreen WebGL drawing buffer is not preserved.
-    visible.clearRect(0, 0, canvas.width, canvas.height);
-    visible.drawImage(surface, 0, 0);
-    if (fading && from) fading = drawFade(visible, from, fadeStart);
+    // Present the GPU surface directly. Read back only at a renderer handoff.
+    surface.dataset.ready = "";
+    canvas.style.visibility = "hidden";
     canvas.dataset.ready = "";
     canvas.dataset.photoRenderer = "webgl";
   }
@@ -98,8 +109,6 @@ export function animatePhoto(canvas: HTMLCanvasElement, image: HTMLImageElement,
     const w = Math.max(1, Math.round(width * scale)), h = Math.max(1, Math.round(height * scale));
     if (surface.width !== w) surface.width = w;
     if (surface.height !== h) surface.height = h;
-    if (canvas.width !== w) canvas.width = w;
-    if (canvas.height !== h) canvas.height = h;
     gl!.viewport(0, 0, w, h);
     gl!.useProgram(program);
     gl!.uniform2f(uniform("u_resolution"), w, h);
@@ -120,7 +129,7 @@ export function animatePhoto(canvas: HTMLCanvasElement, image: HTMLImageElement,
   function schedule() {
     cancelAnimationFrame(raf); raf = 0; previous = 0;
     if (disposed || lost || document.hidden || !inView) return;
-    if (reduced.matches) fading = false;
+    if (reduced.matches) clearFade();
     draw();
     if (!reduced.matches) raf = requestAnimationFrame(tick);
   }
@@ -137,6 +146,13 @@ export function animatePhoto(canvas: HTMLCanvasElement, image: HTMLImageElement,
   return () => {
     if (disposed) return;
     disposed = true; cancelAnimationFrame(raf);
+    // Keep the last photo visible while a replacement image is decoding.
+    if (!lost && surface.width && surface.height) {
+      canvas.width = surface.width; canvas.height = surface.height;
+      visible.drawImage(surface, 0, 0);
+    }
+    clearFade(); surface.remove(); setSnapshotSource(canvas, null);
+    canvas.style.visibility = previousVisibility;
     observer.disconnect(); intersection.disconnect();
     document.removeEventListener("visibilitychange", schedule); reduced.removeEventListener("change", schedule);
     surface.removeEventListener("webglcontextlost", onLost);

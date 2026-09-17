@@ -1,8 +1,13 @@
 // Wallpaper changes dissolve over the same duration as the layer fade-in.
 const FADE_MS = 240;
+const sources = new WeakMap<HTMLCanvasElement, HTMLCanvasElement>();
+export function setSnapshotSource(canvas: HTMLCanvasElement, source: HTMLCanvasElement | null) {
+  if (source) sources.set(canvas, source); else sources.delete(canvas);
+}
 
 export function snapshot(canvas: HTMLCanvasElement): HTMLCanvasElement | null {
   if (!canvas.hasAttribute("data-ready") || matchMedia("(prefers-reduced-motion: reduce)").matches) return null;
+  canvas = sources.get(canvas) ?? canvas;
   const copy = document.createElement("canvas");
   copy.width = canvas.width; copy.height = canvas.height;
   copy.getContext("2d")?.drawImage(canvas, 0, 0);

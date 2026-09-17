@@ -7,6 +7,7 @@ await mkdir(output, { recursive: true });
 const count = Number(process.env.DUSK_THREADS || 500);
 const browser = await chromium.launch({ executablePath: process.env.DUSK_BROWSER, args: ['--no-sandbox'] });
 try {
+ let detailRequests=0;
  const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
  await context.route('**/api/v1/sidebar-bootstrap', async route => {
   const data = await (await route.fetch()).json();
@@ -17,6 +18,7 @@ try {
  });
  await context.route('**/api/v1/plugins/dusk/rpc/*', route => {
   const method=route.request().url().split('/').pop();
+  if(method==='threadDetails')detailRequests++;
   return route.fulfill({json:{ok:true,result:method==='get'?{image:null}:method==='threadDetails'?{model:null,reasoning:null,provider:null,modelProviderId:null,fullTitle:null}:[]}});
  });
  // No fixture actions or UI preferences can reach persistent state.
@@ -33,15 +35,23 @@ try {
  console.log(JSON.stringify({count,rows,buttons:await page.locator('[data-sidebar="trigger"]').count()}));
  await page.evaluate(()=>{window.framesSample=[];window.perfRunning=true;let last=performance.now();function tick(now){window.framesSample.push(now-last);last=now;if(window.perfRunning)requestAnimationFrame(tick)}requestAnimationFrame(tick)});
  for(let i=0;i<8;i++) { await page.locator('[data-sidebar="trigger"]:visible').first().click(); await page.waitForTimeout(300); }
+ if(process.env.DUSK_HOVER) {
+  for(let offset=0;offset<count*50;offset+=500){
+   await page.evaluate(offset=>{let p=document.querySelector('.dusk-status-list').parentElement;while(p&&!/(auto|scroll)/.test(getComputedStyle(p).overflowY))p=p.parentElement;if(p)p.scrollTop=offset},offset);
+   await page.waitForTimeout(40);
+   await page.locator('.dusk-status-row').evaluateAll(rows=>rows.forEach(row=>{row.dispatchEvent(new PointerEvent('pointerover',{bubbles:true,pointerType:'mouse'}));row.dispatchEvent(new PointerEvent('pointerout',{bubbles:true,pointerType:'mouse'}))}));
+  }
+  await page.waitForTimeout(100);console.log(JSON.stringify({detailRequests}));
+ }
  const frames=await page.evaluate(()=>{window.perfRunning=false;return window.framesSample});
  const completed=new Promise(resolve=>cdp.once('Tracing.tracingComplete',resolve));await cdp.send('Tracing.end');await completed;
  const trace=JSON.stringify({traceEvents:collected});
  const label=process.env.DUSK_LABEL||'baseline';await writeFile(new URL(`${label}-${count}.trace.json`,output),trace);
  const events=JSON.parse(trace).traceEvents;const totals={};for(const e of events)if(e.ph==='X' && ['Layout','UpdateLayoutTree','Paint','FunctionCall','RunTask'].includes(e.name)){const v=totals[e.name]||={count:0,ms:0,max:0};v.count++;v.ms+=(e.dur||0)/1000;v.max=Math.max(v.max,(e.dur||0)/1000);}
- frames.sort((a,b)=>a-b);const result={count,rows,frames:frames.length,p95:frames[Math.floor(frames.length*.95)],max:frames.at(-1),over25:frames.filter(x=>x>25).length,totals,errors};
+ frames.sort((a,b)=>a-b);const result={count,rows,detailRequests,frames:frames.length,p95:frames[Math.floor(frames.length*.95)],max:frames.at(-1),over25:frames.filter(x=>x>25).length,totals,errors};
  await writeFile(new URL(`${label}-${count}.json`,output),JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));
  await page.screenshot({path:new URL(`${label}-${count}.png`,output).pathname});
- if (label !== 'baseline' && count > 0) {
+ if (label !== 'baseline' && count > 0 && !process.env.DUSK_HOVER) {
   assert(rows < 60, `Mounted ${rows} rows`);
   const first = page.locator('[data-sidebar-thread-id="thr_duskperf0"]');
   await first.focus(); await page.keyboard.press('End');

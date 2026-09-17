@@ -14,6 +14,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { buildFamilies, canSnooze, lastActivity, SECTIONS, snoozePresets, wakeLabel, type Family, type SectionId, type SnoozeRow } from './status';
 import { relativeMessageTime } from './sidebar';
 import { VirtualStatusList, type StatusItem } from './virtual-status-list';
+import { PromiseCache } from './promise-cache';
 
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 const COLLAPSED_KEY = 'dusk:status-collapsed';
@@ -199,21 +200,15 @@ function SnoozeItems({ family, now, actions }: { family: Family; now: number; ac
 const title = (thread: PluginSidebarThread) => thread.title || thread.titleFallback || 'New thread';
 
 type Details = { model: string | null; reasoning: string | null; provider: string | null; modelProviderId: string | null; fullTitle: string | null };
-const detailsCache = new Map<string, { at: number; value: Promise<Details> }>();
+const detailsCache = new PromiseCache<Details>();
 function useThreadDetails(rpc: Rpc, threadId: string, enabled: boolean) {
-  // Callers enable this on pointer enter, so the model is usually loaded
-  // before the card opens and the card doesn't change height.
+  // Fetch only when the hover card opens; scrolling across rows does no RPC work.
   const [details, setDetails] = useState<Details | null>(null);
   useEffect(() => {
     if (!enabled) return;
-    let cached = detailsCache.get(threadId);
-    if (!cached || Date.now() - cached.at > 60_000) {
-      cached = { at: Date.now(), value: rpc.call('threadDetails', { threadId }) };
-      cached.value.catch(() => detailsCache.delete(threadId));
-      detailsCache.set(threadId, cached);
-    }
+    const details = detailsCache.get(threadId, () => rpc.call('threadDetails', { threadId }));
     let live = true;
-    cached.value.then(value => { if (live) setDetails(value); }, () => { if (live) setDetails({ model: null, reasoning: null, provider: null, modelProviderId: null, fullTitle: null }); });
+    details.then(value => { if (live) setDetails(value); }, () => { if (live) setDetails({ model: null, reasoning: null, provider: null, modelProviderId: null, fullTitle: null }); });
     return () => { live = false; };
   }, [rpc, threadId, enabled]);
   return details;
@@ -258,7 +253,7 @@ const StatusRow = memo(function StatusRow({ thread, project, family, child, acti
   const split = experimental_useSidebarThreadSplit(thread.id);
   const [menuOpen, setMenuOpen] = useState(false);
   const [cardOpen, setCardOpen] = useState(false);
-  // Stays true after the first hover so the card keeps its content while it
+  // Stays true after the first open so the card keeps its content while it
   // fades out instead of collapsing to an empty box.
   const [wanted, setWanted] = useState(false);
   const rpc = useRpc<typeof rpcContract>();
@@ -278,9 +273,9 @@ const StatusRow = memo(function StatusRow({ thread, project, family, child, acti
   };
   const label = title(thread);
   const hasState = thread.indicator !== 'none' && !!thread.indicatorLabel;
-  return <HoverCard open={cardOpen && !menuOpen} onOpenChange={setCardOpen} openDelay={400} closeDelay={60}>
+  return <HoverCard open={cardOpen && !menuOpen} onOpenChange={open => { setCardOpen(open); if (open) setWanted(true); }} openDelay={400} closeDelay={60}>
   <HoverCardTrigger asChild>
-  <div className="dusk-status-row" data-child={child || undefined} data-active={active || undefined} data-menu-open={menuOpen || undefined} data-has-state={hasState || undefined} data-hints={hint !== null || undefined} onPointerEnter={() => setWanted(true)}>
+  <div className="dusk-status-row" data-child={child || undefined} data-active={active || undefined} data-menu-open={menuOpen || undefined} data-has-state={hasState || undefined} data-hints={hint !== null || undefined}>
     <a className="dusk-status-link" href={`/projects/${thread.projectId}/threads/${thread.id}`} aria-label={`Open ${label}`} aria-current={active ? 'page' : undefined}
       data-sidebar-thread-shortcut-target="" data-sidebar-thread-id={thread.id} aria-keyshortcuts={hint !== null ? jumpShortcut(hint).aria : undefined} {...split.splitProps}
       onClick={event => {

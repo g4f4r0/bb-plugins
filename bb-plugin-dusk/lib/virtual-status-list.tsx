@@ -24,7 +24,13 @@ export function VirtualStatusList({ items, activeThreadId }: { items: StatusItem
     getItemKey: index => items[index].key,
     estimateSize: index => items[index].height,
     overscan: 6,
-    rangeExtractor: range => [...new Set([...defaultRangeExtractor(range), ...keep])].sort((a, b) => a - b),
+    rangeExtractor: range => {
+      // Radix menus live in a portal; focus leaving the row must not unmount
+      // their trigger when the user scrolls the sidebar with the menu open.
+      const menuKey = root.current?.querySelector('[data-menu-open]')?.closest<HTMLElement>('[data-virtual-key]')?.dataset.virtualKey;
+      const menuIndex = menuKey ? items.findIndex(item => item.key === menuKey) : -1;
+      return [...new Set([...defaultRangeExtractor(range), ...keep, ...(menuIndex < 0 ? [] : [menuIndex])])].sort((a, b) => a - b);
+    },
   });
   const focusRow = useCallback((index: number) => {
     const item = items[index];
