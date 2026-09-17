@@ -282,7 +282,6 @@ export function ReservePopover({ snapshot, onReload, reloading, active = true }:
   return (
     <ProviderDirectory.Provider value={directory.providers}>
       {snapshot.totals.length === 0 ? <Section label="Logins"><p className="text-xs text-muted-foreground">No leftover windows to show.</p></Section> : null}
-      {snapshot.unavailableHosts > 0 ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">Some usage data is unavailable.</p> : null}
       <DisplayRows rows={rows} active={active} />
       <Section divider label={formatFetchedAt(snapshot.fetchedAt)} value={<ReloadButton onReload={onReload} reloading={reloading} />} />
     </ProviderDirectory.Provider>
