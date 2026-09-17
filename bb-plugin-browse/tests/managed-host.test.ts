@@ -59,6 +59,9 @@ vi.mock("../src/managed", () => ({
     close: mock.close,
   }),
 }));
+vi.mock("../src/runtime-cleanup", () => ({
+  prepareManagedRuntime: async () => {},
+}));
 vi.mock("../src/selkies", () => ({
   SelkiesStream: { start: async () => mock.videoInput },
 }));

@@ -424,6 +424,7 @@ export async function launchManaged(
     return browser;
   } catch (e) {
     activeProfiles.delete(key);
+    await fs.rm(join(root, "tmp", profileId), { recursive: true, force: true });
     throw e;
   }
 }
@@ -441,21 +442,27 @@ async function launchBrowser(
     );
   if (!/^ab-[a-z0-9-]+$/.test(profileId)) throw new Error("Invalid profile ID");
   const profile = join(root, "profiles", profileId);
+  const sessionTemp = join(root, "tmp", profileId);
+  const displayTemp = join(root, "tmp", "display");
   await fs.mkdir(profile, { recursive: true, mode: 0o700 });
+  await fs.rm(sessionTemp, { recursive: true, force: true });
+  await fs.mkdir(sessionTemp, { recursive: true, mode: 0o700 });
+  await fs.mkdir(displayTemp, { recursive: true, mode: 0o700 });
   await configureProfilePreferences(profile);
   await fs.rm(join(profile, "DevToolsActivePort"), { force: true });
   const display = await acquireDisplay(
     root,
-    managedEnv(root),
+    { ...managedEnv(root), TMPDIR: displayTemp },
     signal,
     process.platform,
     video,
   );
+  const browserEnv = { ...display.env, TMPDIR: sessionTemp };
   const child = spawnWatched(
     browserPath,
     video ? videoChromeArgs(profile, initialUrl) : chromeArgs(profile, initialUrl),
     {
-      env: display.env,
+      env: browserEnv,
       stderr: "pipe",
       windowsHide: true,
     },
@@ -488,6 +495,7 @@ async function launchBrowser(
       if (!released) {
         released = true;
         await display.release();
+        await fs.rm(sessionTemp, { recursive: true, force: true });
       }
     }
   };
@@ -509,7 +517,7 @@ async function launchBrowser(
           });
           return {
             process: child,
-            displayEnv: video ? display.env : undefined,
+            displayEnv: video ? browserEnv : undefined,
             endpoint: `ws://127.0.0.1:${port}${path}`,
             profile,
             close,

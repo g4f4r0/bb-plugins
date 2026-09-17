@@ -52,6 +52,7 @@ import {
   type DevToolsLayoutState,
 } from "./src/devtools-layout";
 import { assertBrowserMemory } from "./src/memory-budget";
+import { prepareManagedRuntime } from "./src/runtime-cleanup";
 
 type LocalSession = {
   credential?: {
@@ -841,7 +842,7 @@ export default experimental_defineHostEntry({
     videoStop: async ({id,clientId})=>{const s=sessions.get(id);if(s?.video?.clientId===clientId){const lease=s.video;const encoder=await lease.stream.catch(()=>undefined);await encoder?.resetInput(clientId);await encoder?.stop().catch(()=>{});if(s.video===lease)s.video=undefined;if(s.videoInput===encoder)s.videoInput=undefined;}return {ok:true};},
     probe: async (_, ctx) => {
       const root = ctx.experimental_paths.dataDir,
-        info = await diagnostics(root);
+        info = await prepareManagedRuntime(root).then(() => diagnostics(root));
       if (info.browserRunnable)
         try {
           const browser = await launchManaged(
@@ -1067,6 +1068,7 @@ export default experimental_defineHostEntry({
         ctx,
         async (signal, j) => {
           try {
+            if (input.mode === "managed") await prepareManagedRuntime(root);
             await fs.mkdir(artifactRoot, { recursive: true, mode: 0o700 });
             // Exclusive creation avoids truncating a config another start is reading.
             await fs
