@@ -83,3 +83,35 @@ describe('render bounds and reset safety',()=>{
     expect(state.call).toHaveBeenCalledTimes(1);
   });
 });
+
+it('keeps one loading button and inline status until reset completes, then hides until refreshed',async()=>{
+  let prepare!: (value:unknown)=>void,consume!: (value:unknown)=>void;
+  state.call.mockImplementation((method)=>new Promise(r=>{if(method==='prepareReset')prepare=r;else consume=r;}));
+  const data=snapshot(1);data.totals[0]!.resetCredits={availableCount:2};
+  const onReload=vi.fn();const view=render(<ReservePopover snapshot={data} onReload={onReload} reloading={false}/>);
+  fireEvent.click(screen.getByText('Use reset'));fireEvent.click(screen.getByText('Confirm'));
+  const row=view.container.querySelector('[data-reserve-reset]')!;
+  expect(row.querySelectorAll('button')).toHaveLength(1);
+  expect(screen.getByRole('button',{name:'Requesting reset'}).hasAttribute('disabled')).toBe(true);
+  expect(row.textContent).toBe('Requesting reset…');
+  expect(row.querySelector('p')).toBeNull();
+  prepare({outcome:'ready',confirmationToken:'token'});await flush();
+  expect(row.querySelectorAll('button')).toHaveLength(1);
+  consume({outcome:'reset'});await flush();
+  expect(onReload).toHaveBeenCalledTimes(1);expect(row.getAttribute('aria-hidden')).toBe('true');
+  const fresh={...data,fetchedAt:new Date(Date.now()+60000).toISOString(),totals:[{...data.totals[0]!,resetCredits:{availableCount:1}}]};
+  view.rerender(<ReservePopover snapshot={fresh} onReload={onReload} reloading={false}/>);
+  expect(screen.getByText('1 reset available')).toBeTruthy();
+  expect(screen.getByRole('button',{name:'Use reset'}).hasAttribute('disabled')).toBe(false);
+});
+
+it('shows reset failure inline and restores the action without an extra message row',async()=>{
+  state.call.mockRejectedValue(new Error('Usage reset is unavailable.'));
+  const data=snapshot(1);data.totals[0]!.resetCredits={availableCount:1};
+  const view=render(<ReservePopover snapshot={data} onReload={()=>{}} reloading={false}/>);
+  fireEvent.click(screen.getByText('Use reset'));fireEvent.click(screen.getByText('Confirm'));await flush();
+  const row=view.container.querySelector('[data-reserve-reset]')!;
+  expect(row.querySelector('[role="alert"]')?.textContent).toBe('Usage reset is unavailable.');
+  expect(row.querySelector('p')).toBeNull();expect(row.querySelectorAll('button')).toHaveLength(1);
+  expect(screen.getByRole('button',{name:'Use reset'}).hasAttribute('disabled')).toBe(false);
+});

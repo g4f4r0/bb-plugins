@@ -135,28 +135,32 @@ function Row({
   );
 }
 
-type ResetMessage = { kind: "info" | "success" | "error"; text: string };
+type ResetMessage = { kind: "info" | "error"; text: string };
 
 function CodexResetActions({
   availableCount,
+  snapshotKey,
   onApplied,
 }: {
   availableCount: number;
+  snapshotKey: string;
   onApplied: () => void;
 }) {
   const rpc = useRpc<typeof rpcContract>();
   const [confirming, setConfirming] = useState(false);
   const [consuming, setConsuming] = useState(false);
+  const [applied, setApplied] = useState(false);
+  useEffect(() => { setApplied(false); }, [snapshotKey]);
   const [message, setMessage] = useState<ResetMessage | null>(null);
   const inFlight = useRef(false);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   async function consume() {
-    if (inFlight.current) return;
+    if (inFlight.current || applied) return;
     inFlight.current = true;
     setConsuming(true);
-    setMessage({ kind: "info", text: "Sending usage reset." });
+    setMessage(null);
     try {
       const prepared = await rpc.call("prepareReset", null);
       if (!alive.current) return;
@@ -170,10 +174,10 @@ function CodexResetActions({
       setConfirming(false);
       switch (outcome) {
         case "reset":
-          setMessage({ kind: "success", text: "Usage reset. Refreshing limits." });
+          setApplied(true);
           break;
         case "alreadyRedeemed":
-          setMessage({ kind: "success", text: "Usage reset was already applied. Refreshing limits." });
+          setApplied(true);
           break;
         case "nothingToReset":
           setMessage({ kind: "info", text: "No eligible usage window needed a reset." });
@@ -190,7 +194,10 @@ function CodexResetActions({
       }
       onApplied();
     } catch (error) {
-      if (alive.current) setMessage({ kind: "error", text: error instanceof Error ? error.message : "Usage reset is unavailable." });
+      if (alive.current) {
+        setConfirming(false);
+        setMessage({ kind: "error", text: error instanceof Error ? error.message : "Usage reset is unavailable." });
+      }
     } finally {
       inFlight.current = false;
       if (alive.current) setConsuming(false);
@@ -201,53 +208,40 @@ function CodexResetActions({
     event.stopPropagation();
   }
 
+  const label = consuming ? "Requesting reset…" : message?.text ?? (confirming ? "Are you sure?" : formatResetCredits(availableCount));
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between gap-2 text-xs">
-        <span className="min-w-0 text-muted-foreground">
-          {confirming ? "Are you sure?" : formatResetCredits(availableCount)}
-        </span>
-        {availableCount > 0 && !confirming ? (
-          <Button
-            variant="outline"
-            size="xs"
-            className={FOOTER_BTN}
-            disabled={consuming}
-            onPointerDown={stayOpen}
-            onClick={(event) => { stayOpen(event); setMessage(null); setConfirming(true); }}
-          >
-            Use reset
+    <div
+      data-reserve-reset
+      aria-hidden={applied || undefined}
+      className={`flex h-7 items-center justify-between gap-2 text-xs transition-opacity duration-150 motion-reduce:transition-none ${applied ? "pointer-events-none opacity-0" : "opacity-100"}`}
+    >
+      <span
+        role={message?.kind === "error" ? "alert" : "status"}
+        title={label}
+        className={`min-w-0 truncate ${message?.kind === "error" ? "text-destructive" : "text-muted-foreground"}`}
+      >
+        {label}
+      </span>
+      {consuming ? (
+        <Button variant="outline" size="xs" className={`${FOOTER_BTN} w-16 shrink-0`} disabled aria-busy="true" aria-label="Requesting reset">
+          <Icon name="Loading" className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
+        </Button>
+      ) : confirming ? (
+        <div className="flex shrink-0 gap-1.5">
+          <Button variant="ghost" size="xs" className={FOOTER_BTN} onPointerDown={stayOpen}
+            onClick={(event) => { stayOpen(event); setConfirming(false); setMessage(null); }}>
+            Cancel
           </Button>
-        ) : null}
-        {confirming ? (
-          <div className="flex shrink-0 gap-1.5">
-            <Button
-              variant="ghost"
-              size="xs"
-              className={FOOTER_BTN}
-              disabled={consuming}
-              onPointerDown={stayOpen}
-              onClick={(event) => { stayOpen(event); setConfirming(false); setMessage(null); }}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="outline"
-              size="xs"
-              className={FOOTER_BTN}
-              disabled={consuming}
-              onPointerDown={stayOpen}
-              onClick={(event) => { stayOpen(event); void consume(); }}
-            >
-              Confirm
-            </Button>
-          </div>
-        ) : null}
-      </div>
-      {message !== null ? (
-        <p role={message.kind === "error" ? "alert" : "status"} className={message.kind === "error" ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>
-          {message.text}
-        </p>
+          <Button variant="outline" size="xs" className={`${FOOTER_BTN} w-16`} onPointerDown={stayOpen}
+            onClick={(event) => { stayOpen(event); void consume(); }}>
+            Confirm
+          </Button>
+        </div>
+      ) : availableCount > 0 ? (
+        <Button variant="outline" size="xs" className={`${FOOTER_BTN} shrink-0`} disabled={applied} onPointerDown={stayOpen}
+          onClick={(event) => { stayOpen(event); setMessage(null); setConfirming(true); }}>
+          Use reset
+        </Button>
       ) : null}
     </div>
   );
@@ -284,7 +278,7 @@ export function ReservePopover({ snapshot, onReload, reloading, active = true }:
         <div className="min-w-0 px-3 pb-3"><WindowBlock window={window} providerName={login.providerName} /></div>
       ) });
       if (login.resetCredits !== null) result.push({ key: JSON.stringify([login.key, 'reset']), content: (
-        <div className="px-3 pb-3"><CodexResetActions availableCount={login.resetCredits.availableCount} onApplied={onReload} /></div>
+        <div className="px-3 pb-3"><CodexResetActions availableCount={login.resetCredits.availableCount} snapshotKey={snapshot.fetchedAt} onApplied={onReload} /></div>
       ) });
     }
     // Every login previously repeated the same fleet. Display it once, with
