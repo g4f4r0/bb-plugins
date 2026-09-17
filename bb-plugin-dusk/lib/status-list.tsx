@@ -203,15 +203,15 @@ type Details = { model: string | null; reasoning: string | null; provider: strin
 const detailsCache = new PromiseCache<Details>();
 function useThreadDetails(rpc: Rpc, threadId: string, enabled: boolean) {
   // Fetch only when the hover card opens; scrolling across rows does no RPC work.
-  const [details, setDetails] = useState<Details | null>(null);
+  const [details, setDetails] = useState<Details | null>(() => detailsCache.peek(threadId) ?? null);
   useEffect(() => {
     if (!enabled) return;
     const details = detailsCache.get(threadId, () => rpc.call('threadDetails', { threadId }));
     let live = true;
-    details.then(value => { if (live) setDetails(value); }, () => { if (live) setDetails({ model: null, reasoning: null, provider: null, modelProviderId: null, fullTitle: null }); });
+    details.then(value => { if (live) setDetails(value); }, () => { if (live) setDetails(current => current ?? { model: null, reasoning: null, provider: null, modelProviderId: null, fullTitle: null }); });
     return () => { live = false; };
   }, [rpc, threadId, enabled]);
-  return details;
+  return detailsCache.peek(threadId) ?? details;
 }
 
 function ThreadCard({ thread, location, details, now }: { thread: PluginSidebarThread; location: string; details: Details | null; now: number }) {
@@ -258,7 +258,7 @@ const StatusRow = memo(function StatusRow({ thread, project, family, child, acti
   // fades out instead of collapsing to an empty box.
   const [wanted, setWanted] = useState(false);
   const rpc = useRpc<typeof rpcContract>();
-  const details = useThreadDetails(rpc, thread.id, wanted);
+  const details = useThreadDetails(rpc, thread.id, cardOpen && !menuOpen);
   const [busy, setBusy] = useState(false);
   // No project headings here, so the project replaces the branch.
   const location = !project || project.isPersonal ? 'Personal' : project.name;

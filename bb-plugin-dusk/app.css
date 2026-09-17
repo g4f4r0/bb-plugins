@@ -741,7 +741,7 @@ button.dusk-panel-toggle[hidden] { display: none; }
 .dusk-card-head time { flex-shrink: 0; }
 .dusk-card-title { margin: 0; max-height: 240px; overflow-y: auto; scrollbar-width: thin; color: var(--foreground); font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
 .dusk-card-facts { display: flex; flex-direction: column; gap: 6px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--muted-foreground); }
-.dusk-card-fact { display: flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.dusk-card-fact { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 16px; overflow-wrap: anywhere; }
 /* Same as the composer's model button: leading text truncates, a trailing
    muted fact (reasoning, worktree) never breaks mid-word. The fact's title
    attribute keeps the full text. */

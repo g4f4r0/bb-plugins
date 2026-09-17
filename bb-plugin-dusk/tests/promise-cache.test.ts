@@ -23,3 +23,16 @@ test('failures can retry and least recently used entries are evicted', async () 
  await cache.get('b',async()=>2);await cache.get('a',async()=>3);await cache.get('c',async()=>4);
  assert.equal(await cache.get('b',async()=>5),5);
 });
+test('resolved values are immediately readable and remain visible while revalidating', async () => {
+ const cache=new PromiseCache<number>(2,10);
+ assert.equal(cache.peek('a'),undefined);
+ await cache.get('a',async()=>1,0);
+ assert.equal(cache.peek('a'),1);
+ let resolve!:(value:number)=>void;
+ const pending=cache.get('a',()=>new Promise(r=>resolve=r),11);
+ assert.equal(cache.peek('a'),1);
+ await Promise.resolve();resolve(2);await pending;
+ assert.equal(cache.peek('a'),2);
+ await cache.get('b',async()=>3,12);await cache.get('c',async()=>4,13);
+ assert.equal(cache.peek('a'),undefined, 'resolved values share the same bounded lifetime');
+});
