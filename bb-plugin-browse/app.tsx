@@ -7,12 +7,14 @@ import {
   useBbContext,
   useBbNavigate,
   useRealtime,
+  useComposer,
   experimental_Icon as Icon,
 } from "@get-bb/plugin-sdk/app";
 import type { rpcContract, health, Job, Session } from "./src/contracts";
 import type { z } from "zod";
 import { openClientExternal } from "./src/client-external";
 import { browseLink } from "./src/link-routing";
+import { browseAnnotationMessage } from "./src/annotation-message";
 import { CredentialForm } from "./components/credential-form";
 import { Input } from "./components/ui/input";
 import { Button } from "./components/ui/button";
@@ -508,6 +510,17 @@ function SessionBrowser({
   params: unknown;
 }) {
   const rpc = useRpc<typeof rpcContract>();
+  const composer = useComposer();
+  const viewerFrame = useRef<HTMLIFrameElement>(null);
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || event.source !== viewerFrame.current?.contentWindow) return;
+      const annotation = browseAnnotationMessage(event.data);
+      if (annotation) composer.insertMention({ provider: "annotation", id: annotation.id, label: annotation.label });
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [composer]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loadedViewerId, setLoadedViewerId] = useState("");
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
@@ -690,6 +703,8 @@ function SessionBrowser({
       {loadedViewerId !== id && <div className="absolute inset-0 z-10"><LoadingBrowserFrame url={current?.url || address} /></div>}
       {error && <p role="alert" className="shrink-0 px-4 py-2 text-xs text-muted-foreground">{error}</p>}
       <iframe
+        ref={viewerFrame}
+        allow="microphone"
         title="Live browser"
         className="min-h-0 w-full flex-1 border-0 bg-sidebar"
         style={{ opacity: loadedViewerId === id ? 1 : 0 }}

@@ -24,6 +24,7 @@ import {
   CREDENTIAL_TIMEOUT_MS,
 } from "./src/contracts";
 import { viewerHtml } from "./src/viewer";
+import { registerAnnotations } from "./src/annotation-server";
 import { credentialRequest, credentialValues } from "./src/credentials";
 import { safeUrl, redact } from "./src/policy";
 export { rpcContract } from "./src/contracts";
@@ -1085,6 +1086,7 @@ export default async function plugin(bb: BbPluginApi) {
     credentials: (input) => startCredentialJob(input),
   };
   bb.rpc.register(rpcContract, handlers);
+  await registerAnnotations(bb, host, get);
   // BB origin authentication applies to every viewer route; no CDP endpoints reach the client.
   bb.http.route("GET", "/viewer", (c) => {
     c.header("Cache-Control", "no-store");

@@ -2,6 +2,7 @@ import { directBatch } from "./direct-input";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { credentialRequest, credentialValues } from "./credentials";
+import { annotationCaptureInput, annotationPoint, annotationRectsOutput, annotationSelectors, annotationTarget } from "./annotation";
 export const VERSION = "Fortress 151";
 const SESSION_TTL_MS = 15 * 60 * 1000;
 export const NATIVE_LEASE_TTL_MS = 30 * 60 * 1000;
@@ -201,6 +202,9 @@ export const hostContract = defineRpcContract({
   videoStop: {input:z.object({id,clientId:id}),output:z.object({ok:z.boolean()})},
   controlStart: {input:z.object({id,clientId:id}),output:z.object({port:z.number().int().min(1).max(65535),token:z.string()})},
   direct: { input: directBatch, output: z.object({selection:z.string().optional(),cursor:z.string().optional(),hostMs:z.number().optional()}) },
+  annotationTarget: { input: z.object({ id }).extend(annotationPoint.shape), output: z.object({ target: annotationTarget.nullable(), url: z.string(), title: z.string() }) },
+  annotationRects: { input: z.object({ id, selectors: annotationSelectors }), output: annotationRectsOutput },
+  annotationCapture: { input: z.object({ id }).extend(annotationCaptureInput.shape), output: z.object({ path: z.string().nullable() }) },
   "local-servers": { input: z.null(), output: localServerList },
   credentialPrepare: {
     input: credentialRequest,

@@ -48,6 +48,7 @@ import { Bridge } from "./src/bridge";
 import { validateCommand, redact } from "./src/policy";
 import { assertBrowserMemory } from "./src/memory-budget";
 import { prepareManagedRuntime } from "./src/runtime-cleanup";
+import { annotationTarget, captureClip, rectsExpression, targetExpression } from "./src/annotation";
 
 type LocalSession = {
   credential?: {
@@ -178,6 +179,13 @@ async function applyViewport(
   });
 }
 
+function pageCdp(s: LocalSession) {
+  if (s.status !== "ready" || !s.cdp)
+    throw new Error("The browser page is not ready for annotation.");
+  if (s.dialog)
+    throw new Error("Close the page dialog before annotating.");
+  return s.cdp;
+}
 function session(id: string) {
   const s = sessions.get(id);
   if (!s || s.closing)
@@ -894,6 +902,34 @@ export default experimental_defineHostEntry({
       }catch(e){s.controlRelays.delete(stop);throw e;}
     },
     direct: runDirect,
+    annotationTarget: async ({ id, x, y }) => {
+      const cdp = pageCdp(session(id));
+      const found = await cdp.evaluate(`({target:${targetExpression(x, y)},url:location.href,title:document.title})`, 3000);
+      const target = annotationTarget.nullable().safeParse(found?.target);
+      return {
+        target: target.success ? target.data : null,
+        url: String(found?.url ?? ""),
+        title: String(found?.title ?? "").slice(0, 300),
+      };
+    },
+    annotationRects: async ({ id, selectors }) =>
+      selectors.length ? await pageCdp(session(id)).evaluate(rectsExpression(selectors), 3000) : [],
+    annotationCapture: async ({ id, rect, name }) => {
+      const s = session(id);
+      const cdp = pageCdp(s);
+      const metrics = await cdp.send("Page.getLayoutMetrics");
+      const visual = metrics.cssVisualViewport ?? metrics.visualViewport;
+      const clip = captureClip(rect, {
+        width: visual.clientWidth,
+        height: visual.clientHeight,
+        pageX: visual.pageX,
+        pageY: visual.pageY,
+      });
+      if (!clip) return { path: null };
+      const { data } = await cdp.send("Page.captureScreenshot", { format: "png", clip }, true, 5000);
+      await fs.mkdir(s.artifactRoot, { recursive: true, mode: 0o700 });
+      return { path: (await save(s, name, Buffer.from(data, "base64"), "image/png")).path };
+    },
     frame: async ({ id, after = 0, stream }) => {
       const s = session(id);
       if (s.status !== "ready" || !s.cdp || s.expiresAt <= Date.now())

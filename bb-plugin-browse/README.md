@@ -14,6 +14,10 @@ Start with `bb browse start '{"url":"https://example.com"}'` from a BB thread. B
 
 The viewer is a custom authenticated web view. It streams binary JPEG frames into a canvas, with direct pointer movement, dragging, text selection, keyboard events, Unicode paste and scrolling. Each session opens as its own BB side-panel tab; the machine appears in the lower-right corner. The Open browser launcher lists this thread’s sessions across hosts. Routine refreshes preserve the selected tab. Relative viewer URLs resolve against the current BB web origin.
 
+### Annotations
+
+Press the annotate button in the viewer toolbar (⌘. or Ctrl+.) to point at page elements. Hovering outlines the element under the pointer; clicking opens a comment field. When the field is empty its button starts voice input using BB's own transcription; once there is text it adds the annotation. Each annotation becomes its own mention pill in the thread composer. When the message is sent, the pill resolves to a `<browser_annotation>` block with the page URL, comment, selector, text, HTML, key styles, the element's viewport rect, and the path of a cropped PNG on the Browse host. Numbered markers stay on the page while annotating. Click one to edit its comment, or clear the comment to delete it. Annotations are also listed under "Browser annotations" in the composer's `@` menu and are kept for seven days.
+
 `mode:"native"` retains the existing desktop backend and requires fresh hostId, instanceId and generation. The legacy preferredHost applies only to native discovery; it never changes managed placement.
 
 Agents get five tools:
