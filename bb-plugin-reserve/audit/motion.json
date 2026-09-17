@@ -1,0 +1,13 @@
+{
+  "before": [
+    {
+      "name": "spin",
+      "keys": [
+        "transform"
+      ]
+    }
+  ],
+  "reduced": 0,
+  "forcedReserveMediaRules": 1,
+  "note": "Activated original reduced-motion CSS rule in CSSOM; Browse has no media-emulation command."
+}

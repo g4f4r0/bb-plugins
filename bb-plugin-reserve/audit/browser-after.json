@@ -1,0 +1,12 @@
+{
+  "fixtureLogins": 1000,
+  "frameMs": 50.39999997615814,
+  "nodes": 89,
+  "meters": 3,
+  "virtualRows": 7,
+  "requests": 1,
+  "transitions": [
+    "none"
+  ],
+  "longTasks": []
+}
