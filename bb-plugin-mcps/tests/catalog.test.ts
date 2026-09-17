@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { clip, compactToolFromCatalog, formatMcpResult, packSearchResult, scoreMatch } from "../src/catalog.js";
-import { classifyTool, decideToolCall } from "../src/policy.js";
+import { classifyTool } from "../src/policy.js";
 import { normalizeRegistryServer, parseRegistryList } from "../src/registry.js";
 
 describe("catalog search", () => {
@@ -26,25 +26,11 @@ describe("catalog search", () => {
   });
 });
 
-describe("tool policy", () => {
-  it("confirms destructive tools by default", () => {
+describe("tool risk", () => {
+  it("classifies tools from annotations", () => {
     expect(classifyTool({ destructiveHint: true })).toBe("destructive");
-    expect(decideToolCall({
-      serverEnabled: true,
-      toolEnabled: true,
-      risk: "destructive",
-      mode: "inherit",
-      confirmWrites: false,
-      confirmed: false,
-    })).toEqual(expect.objectContaining({ allowed: false, needsConfirm: true }));
-    expect(decideToolCall({
-      serverEnabled: true,
-      toolEnabled: true,
-      risk: "write",
-      mode: "inherit",
-      confirmWrites: true,
-      confirmed: true,
-    }).allowed).toBe(true);
+    expect(classifyTool({ readOnlyHint: true })).toBe("read");
+    expect(classifyTool(undefined)).toBe("write");
   });
 });
 
@@ -110,8 +96,8 @@ describe("formatMcpResult", () => {
   });
 
   it("uses the policy error string", () => {
-    expect(formatMcpResult({ isError: true, error: "MCP tool is write; pass confirm=true after the user agrees" })).toEqual({
-      text: "MCP tool is write; pass confirm=true after the user agrees",
+    expect(formatMcpResult({ isError: true, error: "MCP tool is disabled" })).toEqual({
+      text: "MCP tool is disabled",
       isError: true,
     });
   });

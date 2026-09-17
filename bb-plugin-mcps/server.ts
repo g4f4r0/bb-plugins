@@ -11,7 +11,7 @@ import { parseHeaderLines, validateMcpServer } from "./src/loader.js";
 import { ensureDir, rimraf } from "./src/safe-fs.js";
 import { boundText, formatMcpResult, packSearchResult, SCHEMA_INLINE_CHARS, scoreMatch, SEARCH_LIMIT, writeArtifact } from "./src/catalog.js";
 import { callCard, validateCallArgs } from "./src/call-card.js";
-import { classifyTool, decideToolCall } from "./src/policy.js";
+import { classifyTool } from "./src/policy.js";
 import { fetchRegistryServers, normalizeRegistryServer, OFFICIAL_REGISTRY, type RegistryServerSummary } from "./src/registry.js";
 import type { JsonRecord, McpServerType, McpSourceKind } from "./src/types.js";
 
@@ -193,12 +193,6 @@ export default async function plugin(bb: BbPluginApi) {
   const store = new McpsStore(bb.storage.database(), (db, statements) => bb.storage.migrate(db, statements));
   store.admitPending();
   const settings = bb.settings.define({
-    confirmWrites: {
-      type: "boolean",
-      label: "Confirm write and destructive MCP tools",
-      description: "Require confirm=true on mcps_call for write/destructive tools unless a per-tool policy overrides it.",
-      default: true,
-    },
     registryUrl: {
       type: "string",
       label: "MCP Registry URL",
@@ -497,20 +491,10 @@ export default async function plugin(bb: BbPluginApi) {
     return { enabled: next.enabled === 1, status: store.getServer(source.id, server.serverId)?.status ?? next.status };
   }
 
-  async function invokeTool(opaqueId: string, args: JsonRecord, confirm: boolean, signal?: AbortSignal) {
+  async function invokeTool(opaqueId: string, args: JsonRecord, signal?: AbortSignal) {
     const tool = gateway.peekTool(opaqueId) ?? await gateway.getTool(opaqueId);
-    const policy = store.getToolPolicy(tool.pluginId, tool.serverId, tool.name);
-    const current = await settings.get();
-    const decision = decideToolCall({
-      serverEnabled: true,
-      toolEnabled: policy ? policy.enabled === 1 : true,
-      risk: classifyTool(tool.annotations),
-      mode: policy?.mode ?? "inherit",
-      confirmWrites: current.confirmWrites,
-      confirmed: confirm,
-    });
-    if (!decision.allowed) {
-      return { isError: true, needsConfirm: decision.needsConfirm, risk: decision.risk, error: decision.reason };
+    if (store.getToolPolicy(tool.pluginId, tool.serverId, tool.name)?.enabled === 0) {
+      return { isError: true, error: "MCP tool is disabled" };
     }
     const invalid = validateCallArgs(tool.inputSchema, args);
     if (invalid) {
@@ -652,15 +636,14 @@ export default async function plugin(bb: BbPluginApi) {
   bb.agents.registerTool({
     name: "mcps_call",
     description: "Call one MCP tool by opaqueId. Does not re-list the catalog.",
-    instructions: "Use the opaqueId from mcps_search. For write/destructive tools, ask the user then pass confirm=true. Repeat the returned tool text in your reply; the chat card may only show a success envelope.",
+    instructions: "Use the opaqueId from mcps_search. Repeat the returned tool text in your reply; the chat card may only show a success envelope.",
     presentation: { label: { pending: "Calling MCP tool", completed: "Called MCP tool" } },
     parameters: z.object({
       opaqueId: z.string().min(1),
       args: jsonRecordSchema.default({}),
-      confirm: z.boolean().optional(),
     }).strict(),
     async execute(input, ctx) {
-      return agentReply(await invokeTool(input.opaqueId, input.args as JsonRecord, input.confirm === true, ctx.signal), "call");
+      return agentReply(await invokeTool(input.opaqueId, input.args as JsonRecord, ctx.signal), "call");
     },
   });
   bb.agents.registerTool({
@@ -780,7 +763,7 @@ export default async function plugin(bb: BbPluginApi) {
     "  bb mcps enable <id> [--json]",
     "  bb mcps disable <id> [--json]",
     "  bb mcps remove <id> [--json]",
-    "  bb mcps call <opaqueId> [json-args] [--confirm] [--json]",
+    "  bb mcps call <opaqueId> [json-args] [--json]",
   ].join("\n");
 
   bb.cli.register({
@@ -797,12 +780,11 @@ export default async function plugin(bb: BbPluginApi) {
       { name: "enable", summary: "Enable a server", usage: "bb mcps enable <id> [--json]" },
       { name: "disable", summary: "Disable a server", usage: "bb mcps disable <id> [--json]" },
       { name: "remove", summary: "Remove a server", usage: "bb mcps remove <id> [--json]" },
-      { name: "call", summary: "Call one MCP tool by opaqueId", usage: "bb mcps call <opaqueId> [json-args] [--confirm] [--json]" },
+      { name: "call", summary: "Call one MCP tool by opaqueId", usage: "bb mcps call <opaqueId> [json-args] [--json]" },
     ],
     async run(argv) {
       const asJson = argv.includes("--json");
-      const confirm = argv.includes("--confirm");
-      const args = argv.filter((item) => item !== "--json" && item !== "--confirm");
+      const args = argv.filter((item) => item !== "--json");
       const [command, ...rest] = args;
       const reply = (value: unknown, text: string) => ({ exitCode: 0, stdout: (asJson ? JSON.stringify(value, null, 2) : text) + "\n" });
       const takeOptions = (argv: string[]) => {
@@ -943,7 +925,7 @@ export default async function plugin(bb: BbPluginApi) {
               try { callArgs = JSON.parse(rest.slice(1).join(" ")) as JsonRecord; }
               catch { return { exitCode: 2, stderr: "call args must be JSON object\n" }; }
             }
-            const result = await invokeTool(opaqueId, callArgs, confirm);
+            const result = await invokeTool(opaqueId, callArgs);
             return reply(result, JSON.stringify(result, null, 2));
           }
         }

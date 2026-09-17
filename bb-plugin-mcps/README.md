@@ -17,5 +17,5 @@ bb plugin install path:/home/g4f4r0/projects/bb-plugins/bb-plugin-mcps --yes
 ```
 
 CLI: `bb mcps list`, `bb mcps registry <query>`, `bb mcps add <name> <url|registry-id>`,
-`bb mcps auth <id>`, `bb mcps remove <id>`. Adding a server enables it. Write tools still
-need `confirm=true` when confirmWrites is on.
+`bb mcps auth <id>`, `bb mcps remove <id>`. Adding a server enables it. Tools run as the MCP
+server defines them; no extra confirmation layer.
