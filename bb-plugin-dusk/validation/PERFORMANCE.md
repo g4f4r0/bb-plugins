@@ -4,19 +4,21 @@ The changes are deployed under plugin ID `dusk` from `/home/g4f4r0/projects/bb-p
 
 Measurements use Chromium 153 headless on the shared server, Playwright 1.63, a 1440×960 desktop viewport or 360×960 touch viewport, and the live BB frontend/plugin bundle. The sidebar bootstrap is intercepted with 0/500/1000 synthetic threads. Mutating requests are intercepted; no fixture threads are persisted. Frame intervals cover eight toggle/collapse cycles, including the triggering clicks. Trace event totals also include initial load. CPU samples are approximate, and these results do not establish performance on the user's physical GPU or mobile device.
 
-| Workload | Before | After | Evidence |
-| --- | --- | --- | --- |
-| 500 desktop threads, mounted status rows | 500 | 19 initially; viewport + overscan + retained targets afterward | `artifacts/baseline-500.json`, `artifacts/final-v2-500.json` |
-| 500 desktop threads, p95 frame interval | 183.3 ms | 16.8 ms | Same files and corresponding `.trace.json` files |
-| 500 desktop threads, longest sampled frame | 433.3 ms | 66.7 ms | Same files; outliers remain |
-| Layout objects in desktop trace | 8,761 | At most 698 | Same traces, `Layout.beginData.totalObjects` |
-| 1,000 desktop threads | No comparable initial baseline captured | 19 initial rows, p95 33.3 ms, max 100 ms | `artifacts/final-v2-1000.json` |
-| Empty sidebar | — | 0 rows, p95 16.7 ms | `artifacts/final-0.json` |
-| Ambient hot-loop CPU samples | 392.6 ms / 95 uploads | 168.3 ms / 98 uploads | `artifacts/render-baseline.cpuprofile`, `artifacts/render-final.cpuprofile` |
-| Photo per-frame `drawImage` CPU samples | 1,453 ms | No per-frame copy, absent from the final hot functions | `artifacts/photo-baseline.cpuprofile`, `artifacts/photo-final.cpuprofile` |
-| Rapid traversal of 1,000 rows, detail RPCs | 1,000 | 0 | `artifacts/hover-baseline-1000.json`, `artifacts/hover-final-1000.json` |
-| Native row following a removed row | Pin button remounted | Pin DOM identity retained | `artifacts/portals-baseline.trace.json`, `artifacts/portals-final.trace.json`; `tests/native-portals.mjs` assertions |
-| Mobile shelf, 500 threads | p95 300 ms before recents containment | p95 66.6 ms after deployed containment | `artifacts/mobile-final-500.json`, `artifacts/mobile-deployed-500.json` |
+
+| Workload                                   | Before                                  | After                                                          | Evidence                                                                                                             |
+| ------------------------------------------ | --------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| 500 desktop threads, mounted status rows   | 500                                     | 19 initially; viewport + overscan + retained targets afterward | `artifacts/baseline-500.json`, `artifacts/final-v2-500.json`                                                         |
+| 500 desktop threads, p95 frame interval    | 183.3 ms                                | 16.8 ms                                                        | Same files and corresponding `.trace.json` files                                                                     |
+| 500 desktop threads, longest sampled frame | 433.3 ms                                | 66.7 ms                                                        | Same files; outliers remain                                                                                          |
+| Layout objects in desktop trace            | 8,761                                   | At most 698                                                    | Same traces, `Layout.beginData.totalObjects`                                                                         |
+| 1,000 desktop threads                      | No comparable initial baseline captured | 19 initial rows, p95 33.3 ms, max 100 ms                       | `artifacts/final-v2-1000.json`                                                                                       |
+| Empty sidebar                              | —                                       | 0 rows, p95 16.7 ms                                            | `artifacts/final-0.json`                                                                                             |
+| Ambient hot-loop CPU samples               | 392.6 ms / 95 uploads                   | 168.3 ms / 98 uploads                                          | `artifacts/render-baseline.cpuprofile`, `artifacts/render-final.cpuprofile`                                          |
+| Photo per-frame `drawImage` CPU samples    | 1,453 ms                                | No per-frame copy, absent from the final hot functions         | `artifacts/photo-baseline.cpuprofile`, `artifacts/photo-final.cpuprofile`                                            |
+| Rapid traversal of 1,000 rows, detail RPCs | 1,000                                   | 0                                                              | `artifacts/hover-baseline-1000.json`, `artifacts/hover-final-1000.json`                                              |
+| Native row following a removed row         | Pin button remounted                    | Pin DOM identity retained                                      | `artifacts/portals-baseline.trace.json`, `artifacts/portals-final.trace.json`; `tests/native-portals.mjs` assertions |
+| Mobile shelf, 500 threads                  | p95 300 ms before recents containment   | p95 66.6 ms after deployed containment                         | `artifacts/mobile-final-500.json`, `artifacts/mobile-deployed-500.json`                                              |
+
 
 Confirmed issues and resulting behavior:
 
@@ -30,13 +32,15 @@ Confirmed issues and resulting behavior:
 
 Disposition of the other hypotheses:
 
-| Hypothesis | Finding |
-| --- | --- |
-| Long `:is():has()` selectors | A broad ablation suggests a contribution: deleting 38 Dusk `:has()` rules only in the browser experiment reduced mobile p95 from 66.6 to 33.3 ms (`artifacts/mobile-no-has-500.json`). That experiment changes styling/layout as well as matching cost, removes required treatments, and is **not deployed**. Attribution to individual rules and a semantics-preserving rewrite remain unfinished. |
-| `mask-image` repaints | Paint appears in the traces, but an isolated mask-specific regression was not established. Masks remain. |
-| `coarse-pointer-sizing.ts` `transition-all` | The three reported exports have no consumers in this package. No live layout animation was reproduced from them; unchanged. No layout animation was added. |
-| Remote Geist import | The Google Fonts CSS request is present in the baseline trace. FOUT/CodeMirror remeasurement was not isolated; unchanged. |
-| 30-second clock updates | Virtualization bounds mounted row updates, but the clock and whole-list family calculation remain. Hidden-tab wallpaper animation is suspended; hidden-tab clock work was not independently optimized. |
+
+| Hypothesis                                  | Finding                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Long `:is():has()` selectors                | A broad ablation suggests a contribution: deleting 38 Dusk `:has()` rules only in the browser experiment reduced mobile p95 from 66.6 to 33.3 ms (`artifacts/mobile-no-has-500.json`). That experiment changes styling/layout as well as matching cost, removes required treatments, and is **not deployed**. Attribution to individual rules and a semantics-preserving rewrite remain unfinished. |
+| `mask-image` repaints                       | Paint appears in the traces, but an isolated mask-specific regression was not established. Masks remain.                                                                                                                                                                                                                                                                                            |
+| `coarse-pointer-sizing.ts` `transition-all` | The three reported exports have no consumers in this package. No live layout animation was reproduced from them; unchanged. No layout animation was added.                                                                                                                                                                                                                                          |
+| Remote Geist import                         | The Google Fonts CSS request is present in the baseline trace. FOUT/CodeMirror remeasurement was not isolated; unchanged.                                                                                                                                                                                                                                                                           |
+| 30-second clock updates                     | Virtualization bounds mounted row updates, but the clock and whole-list family calculation remain. Hidden-tab wallpaper animation is suspended; hidden-tab clock work was not independently optimized.                                                                                                                                                                                              |
+
 
 Verification:
 
