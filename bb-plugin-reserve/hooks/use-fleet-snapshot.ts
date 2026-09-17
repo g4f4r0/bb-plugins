@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import type { UsageSnapshot, rpcContract } from "../server";
+import { createSharedRequest } from "../lib/shared-request.ts";
 import { createVisiblePoller } from "../lib/visible-poller.ts";
 
 // Single bounded snapshot and transport lease across rapid remounts.
 let lastUsage: UsageSnapshot | null = null;
-let inflight: Promise<UsageSnapshot> | null = null;
+const transport = createSharedRequest<UsageSnapshot>();
 
 function stillFresh(snapshot: UsageSnapshot): boolean {
   const age = Date.now() - Date.parse(snapshot.fetchedAt);
@@ -28,15 +29,14 @@ export function useFleetSnapshot() {
     let intersecting = false;
     let pageHidden = false;
     const poller = createVisiblePoller({
-      async load() {
+      async load(signal) {
         const force = forceRefresh.current || (lastUsage !== null && !stillFresh(lastUsage));
         forceRefresh.current = false;
         if (!force && lastUsage !== null && stillFresh(lastUsage)) return lastUsage;
         setReloading(true);
         // SDK 0.4.87 has no frontend RPC AbortSignal: share its promise, then
         // let the poller's generation guard suppress detached deliveries.
-        if (!inflight) inflight = rpc.call("getUsage", force ? { force: true } : {}).finally(() => { inflight = null; });
-        return inflight;
+        return transport.read(() => rpc.call("getUsage", force ? { force: true } : {}), signal);
       },
       receive(next) {
         lastUsage = next;

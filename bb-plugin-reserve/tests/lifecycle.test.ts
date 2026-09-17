@@ -39,3 +39,12 @@ test('deadline preserves successful hosts while marking hung and queued hosts un
   await new Promise(r=>setImmediate(r));controller.abort();const readings=await result;
   assert.notEqual(readings[0]?.snapshot,null);assert.equal(readings[1]?.snapshot,null);assert.notEqual(readings[1]?.error,null);
 });
+
+test('1000 abandoned views leave no waiters on a never-settling shared RPC',async()=>{
+  const {createSharedRequest}=await import('../lib/shared-request.ts');const request=createSharedRequest<number>();let calls=0;
+  for(let i=0;i<1000;i++){
+    const controller=new AbortController();const result=request.read(async()=>{calls++;return new Promise(()=>{});},controller.signal);
+    const rejected=assert.rejects(result);controller.abort();await rejected;assert.equal(request.waiterCount,0);
+  }
+  assert.equal(calls,1);
+});

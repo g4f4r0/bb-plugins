@@ -16,6 +16,9 @@ function VirtualRows({ rows, active }: { rows: readonly DisplayRow[]; active: bo
     enabled: active,
     // Use scrollend where supported; the fallback timer is disposed by the library.
     useScrollendEvent: true,
+    onChange(instance) {
+      while (instance.itemSizeCache.size > 256) instance.itemSizeCache.delete(instance.itemSizeCache.keys().next().value!);
+    },
   });
   useEffect(() => {
     const keys = new Set(rows.map((row) => row.key));

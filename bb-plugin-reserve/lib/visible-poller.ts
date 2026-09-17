@@ -1,6 +1,6 @@
 /** Serialized polling with stale-response protection across hide/show and disposal. */
 export function createVisiblePoller<T>(options: {
-  load: () => Promise<T>;
+  load: (signal: AbortSignal) => Promise<T>;
   receive: (value: T) => void;
   error: (error: unknown) => void;
   clear: () => void;
@@ -21,11 +21,16 @@ export function createVisiblePoller<T>(options: {
     const requestGeneration = generation;
     let delay = 5000;
     try {
+      const request = new AbortController();
       const stopped = new Promise<never>((_, reject) => {
-        cancelWait = () => reject(new Error("Usage request timed out or was hidden."));
+        cancelWait = () => {
+          const error = new Error("Usage request timed out or was hidden.");
+          request.abort(error);
+          reject(error);
+        };
       });
       deadline = setTimeout(() => cancelWait?.(), 20_000);
-      const value = await Promise.race([options.load(), stopped]);
+      const value = await Promise.race([options.load(request.signal), stopped]);
       if (!active || disposed || requestGeneration !== generation) return;
       failures = 0;
       delay = Math.min(300_000, Math.max(2000, options.intervalMs(value) || 5000));
