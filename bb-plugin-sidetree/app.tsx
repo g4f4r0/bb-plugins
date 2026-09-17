@@ -431,7 +431,11 @@ function FilesSession({ threadId }: { threadId: string }) {
   const [root, setRoot] = useState<Root | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
-  const [hits, setHits] = useState<Entry[] | null>(null);
+  const [searchResult, setSearchResult] = useState<{
+    root: Root | null;
+    entries: Entry[];
+  } | null>(null);
+  const hits = searchResult?.root === root ? searchResult.entries : null;
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
@@ -470,7 +474,7 @@ function FilesSession({ threadId }: { threadId: string }) {
   useEffect(() => {
     const query = filter.trim();
     if (query === "") {
-      setHits(null);
+      setSearchResult(null);
       setSearching(false);
       setSearchError(null);
       return;
@@ -483,7 +487,7 @@ function FilesSession({ threadId }: { threadId: string }) {
         .call("search_files", { threadId, query })
         .then((result) => {
           if (cancelled) return;
-          setHits(result.entries);
+          setSearchResult({ root, entries: result.entries });
           setSearching(false);
         })
         .catch((cause: unknown) => {

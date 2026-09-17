@@ -133,6 +133,13 @@ these establish the reproduced flicker fixes, not a universal zero-flicker claim
 
 ## Deliberate limits
 
+Final audit: a new SDK/DOM regression reproduced search results surviving a
+workspace change and being rendered against the new environment. Results now
+carry their originating workspace and disappear immediately when it changes;
+ordinary query updates still retain results while searching. Removed the unused
+CodeMirror clean-value ref. The final suite passes 27 Node tests and 19 SDK/DOM
+tests, plus TypeScript checking.
+
 The SDK still reads and hashes the whole file on its host for a poll. The browser
 saves bandwidth for unchanged content, but host I/O is not eliminated. Trees retain
 expanded working data; the 128-directory / 50,000-entry eviction thresholds apply

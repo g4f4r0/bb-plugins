@@ -12,6 +12,29 @@ const root = {
   rootPath: "/repo",
 };
 
+test("workspace changes hide old search results before the new search resolves", async () => {
+  vi.useFakeTimers();
+  let workspace = root;
+  const slot = renderSlot(
+    { component: FilesPanel },
+    { threadId: "a" },
+    { rpc: {
+      workspace_root: () => workspace,
+      list_dir: () => ({ entries: [] }),
+      search_files: () => workspace === root
+        ? { entries: [{ name: "old-result", relativePath: "old-result", kind: "file" }] }
+        : new Promise(() => {}),
+    } },
+  );
+  await act(async () => {});
+  fireEvent.change(slot.getByLabelText("Search files"), { target: { value: "old" } });
+  await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+  expect(slot.getByRole("link", { name: "old-result" })).toBeTruthy();
+  workspace = { ...root, environmentId: "env_other", rootPath: "/other" };
+  await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+  expect(slot.queryByRole("link", { name: "old-result" })).toBeNull();
+});
+
 test("10k root only mounts viewport; keyboard reaches final row", async () => {
   const entries = Array.from({ length: 10_000 }, (_, i) => ({
     name: `f${i}`,
