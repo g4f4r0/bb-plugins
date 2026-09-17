@@ -447,8 +447,7 @@ export function StatusThreadList({ activeThreadId, onNavigate, Original }: Plugi
     for (const { id } of SECTIONS) {
       const families = sections.get(id)!;
       if (families.length === 0) continue;
-      const holdsActive = families.some(f => f.root.id === activeThreadId || f.children.some(c => c.id === activeThreadId));
-      if (collapsed.has(id) && !holdsActive) continue;
+      if (collapsed.has(id)) continue;
       for (const family of families) {
         ids.push(family.root.id);
         for (const child of family.children) ids.push(child.id);
@@ -457,7 +456,7 @@ export function StatusThreadList({ activeThreadId, onNavigate, Original }: Plugi
       if (ids.length >= MAX_SHORTCUT_HINTS) break;
     }
     return new Map(ids.slice(0, MAX_SHORTCUT_HINTS).map((id, i) => [id, i + 1]));
-  }, [showHints, sections, collapsed, activeThreadId]);
+  }, [showHints, sections, collapsed]);
 
   const actions = useMemo<RowActions>(() => ({
     snooze: (threadId, until) => { rpc.call('snooze', { threadId, until }).then(setSnoozes, error => toast.error(error instanceof Error ? error.message : 'Could not snooze the thread.')); },
@@ -487,8 +486,8 @@ export function StatusThreadList({ activeThreadId, onNavigate, Original }: Plugi
   for (const { id, label } of SECTIONS) {
     const families = sections.get(id)!;
     if (!families.length) continue;
-    const holdsActive = families.some(f => f.root.id === activeThreadId || f.children.some(c => c.id === activeThreadId));
-    const open = !collapsed.has(id) || holdsActive;
+    // Selection must not override the user's choice or change it on navigation.
+    const open = !collapsed.has(id);
     items.push({ key: `section:${id}`, height: 40, render: () => <button type="button" data-section={id} className="dusk-status-heading" aria-expanded={open} onClick={() => toggle(id)}>
       <span>{label}</span><span className="dusk-status-count">{families.length}</span>
       <Icon name="ChevronRight" className="dusk-status-chevron" aria-hidden />
