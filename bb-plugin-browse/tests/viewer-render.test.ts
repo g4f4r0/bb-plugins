@@ -5,16 +5,19 @@ it('keeps the current frame ratio until the requested viewport frame arrives',()
  Object.defineProperties(dom.window.document.querySelector('#viewport'),{clientWidth:{value:1400},clientHeight:{value:1000}});
  (dom.window as any).ResizeObserver=class{observe(){}};
  const code=viewerHtml.slice(viewerHtml.indexOf('const viewport='),viewerHtml.indexOf('const metrics=window.browseMetrics'));
- dom.window.eval(`const screen=document.querySelector('#screen');let vw=1280,vh=800,responsiveEnabled=true,responsiveWidth=412,responsiveHeight=915,expectedFrameWidth=412,expectedFrameHeight=915;${code};window.fitViewer=fit;window.commitFrame=(w,h)=>{vw=w;vh=h;expectedFrameWidth=0;expectedFrameHeight=0;fit();};`);
- try{
-  (dom.window as any).fitViewer();
-  const surface=dom.window.document.querySelector('#browser-surface') as HTMLElement;
-  expect(surface.style.width).toBe('1280px');
-  expect(surface.style.height).toBe('800px');
-  (dom.window as any).commitFrame(412,915);
-  expect(surface.style.width).toBe('412px');
-  expect(surface.style.height).toBe('915px');
- }finally{dom.window.close();}
+  dom.window.eval(`const screen=document.querySelector('#screen');let vw=1280,vh=800,responsiveEnabled=false,responsiveWidth=412,responsiveHeight=915,responsivePending=null,expectedFrameWidth=0,expectedFrameHeight=0;${code};window.fitViewer=fit;window.stageFrame=(w,h)=>{responsivePending={enabled:true,width:w,height:h,mobile:true,preset:'custom'};expectedFrameWidth=w;expectedFrameHeight=h;fit();};window.commitFrame=(w,h)=>{vw=w;vh=h;responsivePending=null;expectedFrameWidth=0;expectedFrameHeight=0;fit();};`);
+  try{
+   (dom.window as any).fitViewer();
+   const surface=dom.window.document.querySelector('#browser-surface') as HTMLElement;
+   expect(surface.style.width).toBe('1280px');
+   expect(surface.style.height).toBe('800px');
+   (dom.window as any).stageFrame(412,915);
+   expect(surface.style.width).toBe('412px');
+   expect(surface.style.height).toBe('915px');
+   (dom.window as any).commitFrame(412,915);
+   expect(surface.style.width).toBe('412px');
+   expect(surface.style.height).toBe('915px');
+  }finally{dom.window.close();}
 });
 it('paints the freshest decoded frame and closes every replaced bitmap',async()=>{
  const dom=new JSDOM('<div id="viewport"></div><div id="viewport-skeleton"></div><canvas id="screen"></canvas><span id="resolution"></span>',{runScripts:'outside-only',pretendToBeVisual:true});
