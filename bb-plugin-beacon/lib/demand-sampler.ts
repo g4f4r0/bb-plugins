@@ -56,6 +56,10 @@ export function createDemandSampler<T>(options: {
 
   return {
     sample,
+    intervalChanged() {
+      // A longer cadence must extend an existing expiry before the next reader.
+      if (cached !== null && !pending && !lifecycle.signal.aborted) expireLater();
+    },
     dispose() {
       lifecycle.abort();
       clearTimeout(expiry);

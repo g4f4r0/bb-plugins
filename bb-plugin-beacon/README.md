@@ -90,9 +90,9 @@ A failed process scan returns `processes.available: false`. Zero counts in that 
 
 ## How Status works
 
-The popover polls only while it is visible. Hiding it drops the view. The server keeps a shared cache for the greater of 15 seconds and twice the dashboard interval, then forgets history. Reopening after that starts cold, so CPU and network need a second sample.
+The popover polls only while it is visible. Closing it keeps one last snapshot per app bundle, with no timer or thread keys, so reopening does not replay placeholders. The last-sample time identifies older data while a refresh is pending. Remounts share an in-flight request, sampling cadence, and offline backoff. The server keeps a shared cache for the greater of 15 seconds and twice the dashboard interval, then forgets history. Reopening after that starts cold, so CPU and network need a second sample.
 
-History holds at most 72 points. Visible failures back off from 5 seconds to 60. Meters are green below 75%, amber from 75%, red from 95%. Those colors do not fire alerts.
+Increasing the dashboard interval also extends the existing server cache expiry. History holds at most 72 points. Visible failures back off from 5 seconds to 60. Meters are green below 75%, amber from 75%, red from 95%. Those colors do not fire alerts.
 
 ## Background alerts
 
@@ -127,7 +127,7 @@ For a UI change, open Status, wait for two samples, try a 390px width, then hide
 
 ## Troubleshooting
 
-Charts reset or show skeletons. History expired. CPU and network need a second sample. Logs are separate from charts.
+Charts reset after the server history expires. CPU and network then show a dash until a second sample. Initial placeholders are static; subsequent opens retain the last snapshot. Meters animate transforms and respect reduced motion. Logs are separate from charts.
 
 Memory is amber with no toast. Amber starts at 75%. Memory alerts need 90% for a full minute of samples.
 

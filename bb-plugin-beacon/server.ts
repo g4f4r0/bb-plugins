@@ -328,6 +328,7 @@ export default async function plugin(bb: BbPluginApi) {
   monitor.configure(initialSettings.backgroundMonitoring, initialSettings.pressureNotifications);
   settings.onChange((next) => {
     refreshIntervalMs = next.refreshIntervalSeconds * 1000;
+    sampler.intervalChanged();
     monitor.configure(next.backgroundMonitoring, next.pressureNotifications);
   });
   bb.background.service("pressure-monitor", { start: (signal) => monitor.start(signal) });

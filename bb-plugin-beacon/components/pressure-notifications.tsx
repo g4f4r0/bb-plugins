@@ -15,11 +15,12 @@ export function bindStatusOpener(open: () => void) {
 function ActiveNotifications() {
   const rpc = useRpc<typeof rpcContract>();
   const connection = useRealtimeConnectionState();
+  const pageHidden = useRef(false);
   const previousConnection = useRef(connection);
   const receiver = useRef<ReturnType<typeof createAlertReceiver> | null>(null);
   const sync = useRef<() => void>(() => {});
   useRealtime(PRESSURE_CHANNEL, (value) => {
-    if (document.visibilityState !== "visible") return;
+    if (pageHidden.current || document.visibilityState !== "visible") return;
     if (value && typeof value === "object" && "type" in value && value.type === "test") {
       toast.warning(TEST_ALERT_COPY.title, {
         id: "beacon-pressure-test", description: TEST_ALERT_COPY.description,
@@ -48,13 +49,13 @@ function ActiveNotifications() {
     }, (cursor) => { try { sessionStorage.setItem(CURSOR_KEY, JSON.stringify(cursor)); } catch { /* In-memory deduplication still applies. */ } });
     receiver.current = nextReceiver;
     const reconcile = async () => {
-      if (disposed || document.visibilityState !== "visible") return;
+      if (disposed || pageHidden.current || document.visibilityState !== "visible") return;
       if (pending) { repeat = true; return; }
       pending = true;
       const requestGeneration = generation;
       try {
         const status = await rpc.call("monitor_status");
-        if (!disposed && requestGeneration === generation && document.visibilityState === "visible") nextReceiver.reconcile(status);
+        if (!disposed && !pageHidden.current && requestGeneration === generation && document.visibilityState === "visible") nextReceiver.reconcile(status);
       } catch { /* Reconcile at the next reconnect/visibility event, never in a retry loop. */ }
       finally {
         pending = false;
@@ -65,13 +66,19 @@ function ActiveNotifications() {
     // has since recovered. Discard it before advancing cursors or showing toasts.
     sync.current = () => { generation++; void reconcile(); };
     const visible = () => { generation++; if (document.visibilityState === "visible") void reconcile(); };
+    const hide = () => { pageHidden.current = true; generation++; };
+    const show = () => { pageHidden.current = false; visible(); };
     document.addEventListener("visibilitychange", visible);
+    window.addEventListener("pagehide", hide);
+    window.addEventListener("pageshow", show);
     void reconcile();
     return () => {
       disposed = true;
       receiver.current = null;
       sync.current = () => {};
       document.removeEventListener("visibilitychange", visible);
+      window.removeEventListener("pagehide", hide);
+      window.removeEventListener("pageshow", show);
       toast.dismiss("beacon-pressure-cpu");
       toast.dismiss("beacon-pressure-memory");
       toast.dismiss("beacon-pressure-test");

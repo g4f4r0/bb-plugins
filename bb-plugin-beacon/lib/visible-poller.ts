@@ -3,7 +3,6 @@ export function createVisiblePoller<T>(options: {
   load: () => Promise<T>;
   receive: (value: T) => void;
   error: (error: unknown) => void;
-  clear: () => void;
   intervalMs: (value: T) => number;
 }) {
   let active = false;
@@ -11,6 +10,7 @@ export function createVisiblePoller<T>(options: {
   let generation = 0;
   let pending = false;
   let failures = 0;
+  let nextPollAt = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   async function poll() {
@@ -33,9 +33,14 @@ export function createVisiblePoller<T>(options: {
       pending = false;
       if (active && !disposed) {
         // A pre-hide request may finish after reopening. Discard it and fetch fresh.
-        timer = setTimeout(() => { timer = undefined; void poll(); }, requestGeneration === generation ? delay : 0);
+        schedule(requestGeneration === generation ? delay : 0);
       }
     }
+  }
+
+  function schedule(delay: number) {
+    nextPollAt = Date.now() + delay;
+    timer = setTimeout(() => { timer = undefined; void poll(); }, delay);
   }
 
   return {
@@ -45,8 +50,12 @@ export function createVisiblePoller<T>(options: {
       generation++;
       clearTimeout(timer);
       timer = undefined;
-      if (active) void poll();
-      else { failures = 0; options.clear(); }
+      if (active && !pending) {
+        // Reopening must not bypass either the sampling cadence or offline backoff.
+        const remaining = Math.max(0, nextPollAt - Date.now());
+        if (remaining > 0) schedule(remaining);
+        else void poll();
+      }
     },
     dispose() {
       disposed = true;

@@ -4,7 +4,7 @@ import type { ServerSnapshot } from "./server";
 import { useServerSnapshot } from "./hooks/use-server-snapshot";
 import { PressureNotifications, bindStatusOpener } from "./components/pressure-notifications";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Loading03Icon, ServerIcon } from "@hugeicons/core-free-icons";
+import { ServerIcon } from "@hugeicons/core-free-icons";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const GREEN = "#22c55e";
@@ -24,7 +24,7 @@ function formatBytes(bytes: number): string {
 
 // The first reading of rate-based counters needs a second sample.
 function Sampling() {
-  return <HugeiconsIcon icon={Loading03Icon} className="inline-block size-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" role="img" aria-label="Sampling" />;
+  return <span className="inline-block min-w-10 text-right" aria-label="Sampling" title="Waiting for a second sample">–</span>;
 }
 
 function formatRate(bytes: number | null): ReactNode {
@@ -54,7 +54,7 @@ function Meter({ value, label }: { value: number | null; label: string }) {
   const clamped = value === null ? 0 : Math.max(0, Math.min(100, value));
   return (
     <div className="relative h-2 min-w-0 w-full overflow-hidden rounded-none bg-sidebar-border" style={{ maskImage: "linear-gradient(to right, black calc(100% - 1px), transparent 0)", maskSize: "2% 100%", maskRepeat: "repeat-x" }} role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value ?? undefined} aria-valuetext={value === null ? "Unavailable" : `${value.toFixed(1)}%`} title="Green below 75% · amber from 75% · red from 95%">
-      <span aria-hidden="true" className="absolute inset-y-0 left-0" style={{ width: `${clamped}%`, backgroundColor: colorForPercent(value) }} />
+      <span aria-hidden="true" className="absolute inset-0 origin-left transition-transform duration-300 motion-reduce:transition-none" style={{ transform: `scaleX(${clamped / 100})`, backgroundColor: colorForPercent(value) }} />
     </div>
   );
 }
@@ -66,7 +66,7 @@ function Bars({ values }: { values: Array<number | null> }) {
   return (
     <div className="flex h-6 items-end gap-px" role="img" aria-label="CPU usage over the last few minutes" title="CPU usage, recent samples">
       {slots.map((value, index) => (
-        <span key={index} className="flex-1 bg-sidebar-border" style={value === null ? { height: "100%" } : { height: `${Math.max(8, value)}%`, backgroundColor: colorForPercent(value) }} />
+        <span key={index} className="h-full min-w-0 flex-1 origin-bottom bg-sidebar-border transition-transform duration-300 motion-reduce:transition-none" style={{ transform: `scaleY(${value === null ? 1 : Math.max(8, Math.min(100, value)) / 100})`, backgroundColor: value === null ? undefined : colorForPercent(value) }} />
       ))}
     </div>
   );
@@ -104,7 +104,7 @@ function StatusPopover({ snapshot }: { snapshot: ServerSnapshot }) {
           {cpu.perCoreUsagePercent.map((value, index) => (
             <div key={index} className="min-w-0 space-y-1" title={`Core ${index + 1}`}>
               <div className="flex justify-between text-2xs tabular-nums text-muted-foreground"><span>Core {index + 1}</span><span>{value === null ? "–" : `${Math.round(value)}%`}</span></div>
-              <div className="h-1 overflow-hidden rounded-full bg-sidebar-border"><div className="h-full rounded-full" style={{ width: `${value ?? 0}%`, backgroundColor: colorForPercent(value) }} /></div>
+              <div className="h-1 overflow-hidden rounded-full bg-sidebar-border"><div className="h-full origin-left rounded-full transition-transform duration-300 motion-reduce:transition-none" style={{ transform: `scaleX(${Math.max(0, Math.min(100, value ?? 0)) / 100})`, backgroundColor: colorForPercent(value) }} /></div>
             </div>
           ))}
         </div>
@@ -134,13 +134,14 @@ function StatusPopover({ snapshot }: { snapshot: ServerSnapshot }) {
       <Section label="Uptime">
         <Row label="Server" value={formatDuration(host.uptimeSeconds)} />
         <Row label="BB" value={formatDuration(runtime.processUptimeSeconds)} />
+        <Row label="Last sample" value={<time dateTime={snapshot.timestamp}>{new Date(snapshot.timestamp).toLocaleTimeString()}</time>} />
       </Section>
     </>
   );
 }
 
-// One block per section, sized to its loaded content so the popover does not grow.
-const LOADING_SECTIONS = [["CPU", "h-14"], ["Memory", "h-8"], ["Disk", "h-8"], ["Network", "h-10"], ["Top processes", "h-16"], ["Uptime", "h-10"]] as const;
+// Initial placeholders only. Core count and optional rows are unknown until loaded.
+const LOADING_SECTIONS = [["CPU", "h-24"], ["Memory", "h-8"], ["Disk", "h-8"], ["Network", "h-10"], ["Top processes", "h-16"], ["Uptime", "h-16"]] as const;
 
 function LoadingPopover() {
   return LOADING_SECTIONS.map(([label, height]) => (
@@ -155,11 +156,11 @@ function ServerMark({ className }: { className?: string }) {
 function StatusDisclosure(_props: ExperimentalSidebarFooterDisclosureProps) {
   const { container, active, snapshot, error } = useServerSnapshot();
   return (
-    <div ref={container} data-beacon-shell aria-busy={active && !snapshot && !error} className="w-full min-w-64 divide-y divide-sidebar-border">
+    <div ref={container} data-beacon-shell aria-busy={active && !snapshot && !error} className="w-full min-w-0 divide-y divide-sidebar-border">
       {error ? <div role="alert" className="px-3 py-2 text-xs text-destructive">Could not refresh: {error}</div> : null}
       {/* The skeleton gives the shell height so the visibility observer can activate polling. */}
-      {active && snapshot ? <StatusPopover snapshot={snapshot} /> : (
-        <LoadingPopover />
+      {snapshot ? <StatusPopover snapshot={snapshot} /> : (
+        error ? <div className="p-3 text-xs text-muted-foreground">Server data unavailable. Retrying while visible.</div> : <LoadingPopover />
       )}
     </div>
   );

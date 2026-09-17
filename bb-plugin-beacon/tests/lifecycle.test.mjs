@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createDemandSampler } from "../lib/demand-sampler.ts";
+import { createSnapshotSource } from "../lib/snapshot-source.ts";
 import { createVisiblePoller } from "../lib/visible-poller.ts";
 
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
@@ -77,10 +78,10 @@ test("dispose before collection begins does not start I/O", async (t) => {
 
 function poller(t, overrides = {}) {
   clock(t);
-  const received = [], errors = []; let calls = 0, clears = 0;
-  const instance = createVisiblePoller({ load: async () => ++calls, receive: (v) => received.push(v), error: (e) => errors.push(e), clear: () => { clears++; }, intervalMs: () => 5000, ...overrides });
+  const received = [], errors = []; let calls = 0;
+  const instance = createVisiblePoller({ load: async () => ++calls, receive: (v) => received.push(v), error: (e) => errors.push(e), intervalMs: () => 5000, ...overrides });
   t.after(() => instance.dispose());
-  return { ...instance, received, errors, calls: () => calls, clears: () => clears };
+  return { ...instance, received, errors, calls: () => calls };
 }
 test("hidden poller is dormant; activation loads once and schedules after completion", async (t) => {
   const p = poller(t); t.mock.timers.tick(60_000); await flush(); assert.equal(p.calls(), 0);
@@ -88,9 +89,9 @@ test("hidden poller is dormant; activation loads once and schedules after comple
   t.mock.timers.tick(4999); await flush(); assert.equal(p.calls(), 1);
   t.mock.timers.tick(1); await flush(); assert.equal(p.calls(), 2);
 });
-test("hiding drops snapshot and stops requests for arbitrarily long idle periods", async (t) => {
+test("hiding preserves the last received snapshot and stops requests for arbitrarily long idle periods", async (t) => {
   const p = poller(t); p.setActive(true); await flush(); p.setActive(false);
-  assert.equal(p.clears(), 1); t.mock.timers.tick(3_600_000); await flush(); assert.equal(p.calls(), 1);
+  assert.deepEqual(p.received, [1]); t.mock.timers.tick(3_600_000); await flush(); assert.equal(p.calls(), 1);
   p.setActive(true); await flush(); assert.equal(p.calls(), 2);
 });
 test("slow requests never overlap, even across rapid hide/show cycles", async (t) => {
@@ -130,4 +131,63 @@ test("server-supplied polling intervals are bounded", async (t) => {
   const p = poller(t, { intervalMs: () => 1 }); p.setActive(true); await flush();
   t.mock.timers.tick(1999); await flush(); assert.equal(p.calls(), 1);
   t.mock.timers.tick(1); await flush(); assert.equal(p.calls(), 2);
+});
+
+
+test("rapid reopening preserves the sampling cadence and offline backoff", async (t) => {
+  let fail = false;
+  const p = poller(t, { load: async () => { if (fail) throw new Error("offline"); return "ok"; } });
+  p.setActive(true); await flush();
+  for (let i = 0; i < 50; i++) { p.setActive(false); p.setActive(true); await flush(); }
+  assert.equal(p.received.length, 1);
+  fail = true; t.mock.timers.tick(5000); await flush();
+  assert.equal(p.errors.length, 1);
+  for (let i = 0; i < 50; i++) { p.setActive(false); p.setActive(true); await flush(); }
+  assert.equal(p.errors.length, 1);
+  t.mock.timers.tick(5000); await flush(); assert.equal(p.errors.length, 2);
+  p.setActive(false); p.setActive(true); t.mock.timers.tick(9999); await flush();
+  assert.equal(p.errors.length, 2);
+  t.mock.timers.tick(1); await flush(); assert.equal(p.errors.length, 3);
+});
+
+test("a longer interval extends cache expiry before the next dashboard request", async (t) => {
+  let interval = 2000;
+  const s = sampler(t, { intervalMs: () => interval }); await s.sample();
+  interval = 30_000; s.intervalChanged();
+  t.mock.timers.tick(30_000); assert.equal(s.resets(), 0);
+  await s.sample(); assert.equal(s.calls(), 2);
+  t.mock.timers.tick(60_000); assert.equal(s.resets(), 1);
+  s.dispose(); s.intervalChanged();
+  const resets = s.resets(); t.mock.timers.tick(60_000); assert.equal(s.resets(), resets);
+});
+
+test("polling switches from a clamped 1s interval to 30s without overlapping", async (t) => {
+  let interval = 1000;
+  const p = poller(t, { intervalMs: () => interval }); p.setActive(true); await flush();
+  interval = 30_000;
+  t.mock.timers.tick(2000); await flush(); assert.equal(p.calls(), 2);
+  t.mock.timers.tick(29_999); await flush(); assert.equal(p.calls(), 2);
+  t.mock.timers.tick(1); await flush(); assert.equal(p.calls(), 3);
+});
+
+
+test("disclosure remounts share one request and preserve snapshot and offline backoff", async (t) => {
+  clock(t);
+  const source = createSnapshotSource(() => 2000);
+  const first = deferred(); let calls = 0;
+  const collect = () => { calls++; return first.promise; };
+  const requests = Array.from({ length: 50 }, () => source.load(collect));
+  await flush(); assert.equal(calls, 1);
+  first.resolve("snapshot"); await Promise.all(requests);
+  assert.equal(source.snapshot(), "snapshot");
+  for (let i = 0; i < 50; i++) await source.load(collect);
+  assert.equal(calls, 1);
+  t.mock.timers.tick(2000);
+  const offline = () => { calls++; throw new Error("offline"); };
+  for (let i = 0; i < 50; i++) await assert.rejects(source.load(offline), /offline/);
+  assert.equal(calls, 2); assert.equal(source.snapshot(), "snapshot");
+  t.mock.timers.tick(5000); await assert.rejects(source.load(offline)); assert.equal(calls, 3);
+  t.mock.timers.tick(9999); await assert.rejects(source.load(offline)); assert.equal(calls, 3);
+  t.mock.timers.tick(600_000); await flush(); assert.equal(calls, 3);
+  assert.equal(await source.load(async () => "recovered"), "recovered");
 });

@@ -1,13 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract, ServerSnapshot } from "../server";
+import { createSnapshotSource } from "../lib/snapshot-source.ts";
 import { createVisiblePoller } from "../lib/visible-poller.ts";
+
+// One server snapshot per app bundle, never keyed by thread. Survives disclosure
+// remounts without timers; replaced on success and released with the bundle.
+const source = createSnapshotSource<ServerSnapshot>((value) => value.refreshIntervalMs);
 
 export function useServerSnapshot() {
   const rpc = useRpc<typeof rpcContract>();
   const container = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(false);
-  const [snapshot, setSnapshot] = useState<ServerSnapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<ServerSnapshot | null>(source.snapshot);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -16,10 +21,9 @@ export function useServerSnapshot() {
     let intersecting = false;
     let pageHidden = false;
     const poller = createVisiblePoller({
-      load: () => rpc.call("metrics_snapshot"),
+      load: () => source.load(() => rpc.call("metrics_snapshot")),
       receive(next) { setSnapshot(next); setError(null); },
       error(cause) { setError(cause instanceof Error ? cause.message : String(cause)); },
-      clear() { setSnapshot(null); setError(null); },
       intervalMs: (next) => next.refreshIntervalMs,
     });
     const update = () => {
