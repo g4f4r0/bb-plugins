@@ -1,5 +1,7 @@
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+vi.mock("@get-bb/plugin-sdk/app", { spy: true });
+
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { EditorView } from "@codemirror/view";
 import { FileOpener } from "./opener";
@@ -399,4 +401,44 @@ test("large Markdown opens in virtualized CodeMirror and remains editable", asyn
   act(() => editor.dispatch({ changes: { from: 0, insert: "x" } }));
   expect(editor.state.doc.sliceString(0, 1)).toBe("x");
   expect(slot.getByLabelText("Unsaved changes")).toBeTruthy();
+});
+
+import * as appSdk from "@get-bb/plugin-sdk/app";
+
+test("live code theme changes, same-name replacements, and reset preserve the view", () => {
+  const theme = {
+    name: "test",
+    type: "dark" as const,
+    bg: "#112233",
+    fg: "#eeeeee",
+    colors: {},
+    tokenColors: [],
+  };
+  const hook = vi
+    .spyOn(appSdk, "experimental_useCodeTheme")
+    .mockReturnValue({ mode: "dark", name: "test", theme });
+  try {
+    const slot = renderSlot(
+      { component: CodeEditor },
+      { path: "a.txt", value: "abc", readOnly: false },
+    );
+    const editor = view(slot);
+    expect(editor.state.facet(EditorView.darkTheme)).toBe(true);
+    hook.mockReturnValue({
+      mode: "light",
+      name: "test",
+      theme: { ...theme, type: "light", bg: "#aabbcc" },
+    });
+    slot.rerender(
+      <CodeEditor path="a.txt" value="abc" readOnly={false} wrap />,
+    );
+    expect(view(slot)).toBe(editor);
+    expect(editor.state.facet(EditorView.darkTheme)).toBe(false);
+    hook.mockReturnValue({ mode: "light", name: "default", theme: null });
+    slot.rerender(<CodeEditor path="a.txt" value="abc" readOnly={false} />);
+    expect(view(slot)).toBe(editor);
+    expect(editor.state.facet(EditorView.darkTheme)).toBe(false);
+  } finally {
+    hook.mockRestore();
+  }
 });

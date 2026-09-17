@@ -50,16 +50,41 @@ test("thread switches discard previous tree cache; initial search never claims n
     },
   );
   await act(async () => {});
-  expect(
-    slot.container.querySelector("[data-sidetree-tree]")?.textContent,
-  ).toBe("a");
+  expect(slot.getByRole("link", { name: "a" })).toBeTruthy();
   slot.rerender(<FilesPanel threadId="b" />);
   await act(async () => {});
-  expect(
-    slot.container.querySelector("[data-sidetree-tree]")?.textContent,
-  ).toBe("b");
+  expect(slot.getByRole("link", { name: "b" })).toBeTruthy();
+  expect(slot.queryByRole("link", { name: "a" })).toBeNull();
   fireEvent.change(slot.getByLabelText("Search files"), {
     target: { value: "xyz" },
   });
   expect(slot.queryByText("No matching files")).toBeNull();
+});
+
+test("workspace retry preserves the scroller and its overflow observer", async () => {
+  vi.useFakeTimers();
+  let offline = true;
+  const slot = renderSlot(
+    { component: FilesPanel },
+    { threadId: "a" },
+    {
+      rpc: {
+        workspace_root: () => {
+          if (offline) throw new Error("offline");
+          return root;
+        },
+        list_dir: () => ({ entries: [] }),
+      },
+    },
+  );
+  const scroller = slot.container.querySelector(".h-full.overflow-auto");
+  await act(async () => {});
+  expect(slot.getByRole("alert").textContent).toBe("offline");
+  expect(slot.container.querySelector(".h-full.overflow-auto")).toBe(scroller);
+  offline = false;
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10100);
+  });
+  expect(slot.queryByRole("alert")).toBeNull();
+  expect(slot.container.querySelector(".h-full.overflow-auto")).toBe(scroller);
 });

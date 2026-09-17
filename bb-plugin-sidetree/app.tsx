@@ -500,13 +500,6 @@ function FilesSession({ threadId }: { threadId: string }) {
     };
   }, [filter, rpc, threadId, root]);
 
-  if (error !== null && root === null) {
-    return (
-      <p role="alert" className="px-4 py-2.5 text-sm text-destructive">
-        {error}
-      </p>
-    );
-  }
   const filtering = filter.trim() !== "";
 
   return (
@@ -569,7 +562,11 @@ function FilesSession({ threadId }: { threadId: string }) {
         <div ref={scroller} className="h-full overflow-auto">
           <div ref={content}>
             {root === null ? (
-              <TreeSkeleton rows={8} />
+              error !== null ? (
+                <StatusLine tone="destructive">{error}</StatusLine>
+              ) : (
+                <TreeSkeleton rows={8} />
+              )
             ) : (
               <>
                 <div hidden={filtering}>
