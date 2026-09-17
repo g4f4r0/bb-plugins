@@ -275,3 +275,11 @@ it("builds a same-origin frontend url with an encoded debugger target", () => {
     dom.window.close();
   }
 });
+
+it("keeps the page pane stretched across the viewer grid", () => {
+  // Regression: without stretch, #page-pane collapses to content size under
+  // main's place-items:center, and fit() then shrinks the surface into it.
+  expect(viewerHtml).toContain(
+    "#page-pane{position:relative;display:grid;place-items:center;flex:1;min-width:0;min-height:0;overflow:hidden;padding:12px;align-self:stretch;justify-self:stretch}",
+  );
+});
