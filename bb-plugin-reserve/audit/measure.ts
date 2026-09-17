@@ -1,0 +1,12 @@
+import { loadFleetReadings } from '../lib/load-fleet.ts';
+import { buildFleetView } from '../lib/fleet.ts';
+let active = 0, peak = 0, calls = 0;
+const hosts = Array.from({length:1000}, (_,i) => ({id:`host-${i}`,name:`Machine ${i}`,status:'connected' as const,type:'persistent' as const}));
+const start = performance.now();
+const readings = await loadFleetReadings({ hosts:{async list(){return hosts;}}, system:{async usageLimits(args){active++; calls++; peak=Math.max(peak,active); await new Promise(r=>setTimeout(r,1)); active--; return {codex:{status:'ok',accountEmail:`${args?.hostId}@example.test`,windows:[{label:'Weekly',usedPercent:20,resetsAt:null}]}};}}});
+const loaded = performance.now();
+const view = buildFleetView(readings,['codex'],new Date().toISOString());
+const built = performance.now();
+const legacy = JSON.stringify(view);
+const compact = JSON.stringify({...view, hosts:view.totals[0]?.hosts ?? [], totals:view.totals.map(({hosts,...login})=>login)});
+console.log(JSON.stringify({hosts:hosts.length,peakHostCalls:peak,calls,loadMs:loaded-start,buildMs:built-loaded,legacyBytes:Buffer.byteLength(legacy),compactBytes:Buffer.byteLength(compact)},null,2));

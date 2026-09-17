@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import "./app.css";
 import {
   definePluginApp,
@@ -14,7 +14,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useFleetSnapshot } from "./hooks/use-fleet-snapshot";
 import type { UsageSnapshot, rpcContract } from "./server";
-import type { LoginTotal } from "./lib/fleet.ts";
+import { DisplayRows, type DisplayRow } from "./components/virtual-rows";
+const ProviderDirectory = createContext<ReturnType<typeof experimental_useProviders>["providers"]>([]);
 import type { ProviderId, UsageWindow } from "./lib/usage.ts";
 import { bbAgentProviderId, canonicalWindowLabel, formatCost, formatFetchedAt, formatRemainingPercent, formatResetCredits, formatResetTime } from "./lib/usage.ts";
 
@@ -30,9 +31,9 @@ function colorForUsed(value: number): string {
 }
 
 function ProviderGlyph({ id }: { id: ProviderId }) {
-  const directory = experimental_useProviders();
+  const directory = useContext(ProviderDirectory);
   const bbId = bbAgentProviderId(id);
-  const provider = directory.providers.find((item) => item.id === bbId);
+  const provider = directory.find((item) => item.id === bbId);
   return (
     <ProviderIcon
       providerKind="agent"
@@ -66,7 +67,7 @@ function ReloadButton({ onReload, reloading }: { onReload: () => void; reloading
     >
       <Icon
         name={reloading ? "Loading" : "ArrowReloadHorizontal"}
-        className={reloading ? "size-4 animate-spin" : "size-4"}
+        className={reloading ? "size-4 animate-spin motion-reduce:animate-none" : "size-4"}
         aria-hidden
       />
     </Button>
@@ -90,7 +91,7 @@ function Meter({ usedPercent, label }: { usedPercent: number; label: string }) {
       aria-valuenow={clamped}
       aria-valuetext={formatRemainingPercent(usedPercent)}
     >
-      <span aria-hidden="true" className="absolute inset-y-0 left-0" style={{ width: `${clamped}%`, backgroundColor: colorForUsed(usedPercent) }} />
+      <span aria-hidden="true" className="absolute inset-0 origin-left" style={{ transform: `scaleX(${clamped / 100})`, backgroundColor: colorForUsed(usedPercent) }} />
     </div>
   );
 }
@@ -148,6 +149,8 @@ function CodexResetActions({
   const [consuming, setConsuming] = useState(false);
   const [message, setMessage] = useState<ResetMessage | null>(null);
   const inFlight = useRef(false);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   async function consume() {
     if (inFlight.current) return;
@@ -156,12 +159,14 @@ function CodexResetActions({
     setMessage({ kind: "info", text: "Sending usage reset." });
     try {
       const prepared = await rpc.call("prepareReset", null);
+      if (!alive.current) return;
       if (prepared.outcome !== "ready") {
         setConfirming(false);
         setMessage({ kind: "error", text: prepared.message });
         return;
       }
       const { outcome } = await rpc.call("consumeReset", { confirmationToken: prepared.confirmationToken });
+      if (!alive.current) return;
       setConfirming(false);
       switch (outcome) {
         case "reset":
@@ -185,10 +190,10 @@ function CodexResetActions({
       }
       onApplied();
     } catch (error) {
-      setMessage({ kind: "error", text: error instanceof Error ? error.message : "Usage reset is unavailable." });
+      if (alive.current) setMessage({ kind: "error", text: error instanceof Error ? error.message : "Usage reset is unavailable." });
     } finally {
       inFlight.current = false;
-      setConsuming(false);
+      if (alive.current) setConsuming(false);
     }
   }
 
@@ -262,51 +267,43 @@ function WindowBlock({ window, providerName }: { window: UsageWindow; providerNa
   );
 }
 
-function LoginCard({ login, onReload }: { login: LoginTotal; onReload: () => void }) {
+export function ReservePopover({ snapshot, onReload, reloading, active = true }: { snapshot: UsageSnapshot; onReload: () => void; reloading: boolean; active?: boolean }) {
+  const directory = experimental_useProviders();
+  const rows = useMemo(() => {
+    const result: DisplayRow[] = [];
+    for (const login of snapshot.totals) {
+      result.push({ key: JSON.stringify([login.key, 'header']), content: (
+        <Section icon={<ProviderGlyph id={login.providerId} />} label={login.providerName} ariaLabel={login.accountEmail ? `${login.providerName} ${login.accountEmail}` : login.providerName}>
+          {login.accountEmail || login.planLabel ? <div className="flex min-w-0 flex-wrap gap-1.5">
+            {login.accountEmail ? <Pill>{login.accountEmail}</Pill> : null}
+            {login.planLabel ? <Pill>{login.planLabel}</Pill> : null}
+          </div> : null}
+        </Section>
+      ) });
+      for (const window of login.windows) result.push({ key: JSON.stringify([login.key, 'window', window.label]), content: (
+        <div className="min-w-0 px-3 pb-3"><WindowBlock window={window} providerName={login.providerName} /></div>
+      ) });
+      if (login.resetCredits !== null) result.push({ key: JSON.stringify([login.key, 'reset']), content: (
+        <div className="px-3 pb-3"><CodexResetActions availableCount={login.resetCredits.availableCount} onApplied={onReload} /></div>
+      ) });
+    }
+    // Every login previously repeated the same fleet. Display it once, with
+    // one virtualizable row per host so huge fleets cannot create a giant row.
+    if (snapshot.hosts.length) {
+      result.push({ key: 'machines', content: <Section label="Machines" /> });
+      for (const host of snapshot.hosts) result.push({ key: JSON.stringify(['host', host.id]), content: (
+        <div className="px-3 pb-2"><Row icon={<LaptopGlyph />} label={host.name} title={host.name} value={host.status === 'disconnected' ? 'Offline' : ''} /></div>
+      ) });
+    }
+    return result;
+  }, [snapshot, onReload]);
   return (
-    <Section
-      icon={<ProviderGlyph id={login.providerId} />}
-      label={login.providerName}
-      ariaLabel={login.accountEmail ? `${login.providerName} ${login.accountEmail}` : login.providerName}
-    >
-      {login.accountEmail || login.planLabel ? (
-        <div className="flex min-w-0 flex-wrap gap-1.5">
-          {login.accountEmail ? <Pill>{login.accountEmail}</Pill> : null}
-          {login.planLabel ? <Pill>{login.planLabel}</Pill> : null}
-        </div>
-      ) : null}
-      <div className="space-y-3">
-        {login.windows.map((window) => (
-          <WindowBlock key={window.label} window={window} providerName={login.providerName} />
-        ))}
-      </div>
-      {login.hosts.length > 0 ? (
-        <Row
-          icon={<LaptopGlyph />}
-          label={login.hosts.map((host) => host.name).join(" · ")}
-          wrap
-        />
-      ) : null}
-      {login.resetCredits !== null ? (
-        <CodexResetActions availableCount={login.resetCredits.availableCount} onApplied={onReload} />
-      ) : null}
-    </Section>
-  );
-}
-
-function ReservePopover({ snapshot, onReload, reloading }: { snapshot: UsageSnapshot; onReload: () => void; reloading: boolean }) {
-  return (
-    <>
-      {snapshot.totals.length === 0 ? (
-        <Section label="Logins"><p className="text-xs text-muted-foreground">No leftover windows to show.</p></Section>
-      ) : snapshot.totals.map((login) => (
-        <LoginCard key={login.key} login={login} onReload={onReload} />
-      ))}
-      <Section
-        label={formatFetchedAt(snapshot.fetchedAt)}
-        value={<ReloadButton onReload={onReload} reloading={reloading} />}
-      />
-    </>
+    <ProviderDirectory.Provider value={directory.providers}>
+      {snapshot.totals.length === 0 ? <Section label="Logins"><p className="text-xs text-muted-foreground">No leftover windows to show.</p></Section> : null}
+      {snapshot.unavailableHosts > 0 ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">Usage unavailable on {snapshot.unavailableHosts} machine(s).</p> : null}
+      <DisplayRows rows={rows} active={active} />
+      <Section label={formatFetchedAt(snapshot.fetchedAt)} value={<ReloadButton onReload={onReload} reloading={reloading} />} />
+    </ProviderDirectory.Provider>
   );
 }
 
@@ -332,9 +329,9 @@ function GaugeMark({ className }: { className?: string }) {
 function ReserveDisclosure(_props: ExperimentalSidebarFooterDisclosureProps) {
   const { container, active, snapshot, error, reload, reloading } = useFleetSnapshot();
   return (
-    <div ref={container} data-reserve-shell aria-busy={(active && !snapshot && !error) || reloading} className="w-full min-w-64">
+    <div ref={container} data-reserve-shell aria-busy={(active && !snapshot && !error) || reloading} data-reserve-active={active} className="w-full min-w-0">
       {error ? <div role="alert" className="relative px-3 py-2 text-xs text-destructive after:pointer-events-none after:absolute after:bottom-0 after:left-0 after:h-px after:w-[200%] after:bg-sidebar-border after:content-['']">Could not refresh: {error}</div> : null}
-      {snapshot ? <ReservePopover snapshot={snapshot} onReload={reload} reloading={reloading} /> : <LoadingPopover />}
+      {snapshot ? <ReservePopover active={active} snapshot={snapshot} onReload={reload} reloading={reloading} /> : <LoadingPopover />}
     </div>
   );
 }

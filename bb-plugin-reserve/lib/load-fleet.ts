@@ -1,3 +1,4 @@
+import { mapLimited, withDeadline, withTimeBudget } from "./async-limits.ts";
 import { buildFleetView, type CodexCliState, type FleetView, type HostRef, type HostUsageReading } from "./fleet.ts";
 import { normalizeUsage, type ProviderId, type RawUsageResponse } from "./usage.ts";
 
@@ -35,15 +36,17 @@ async function usageProviderIds(
   sdk: FleetSdk,
   hostId: string,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<string[] | null> {
   if (sdk.providers?.list === undefined) return null;
   try {
-    const providers = await sdk.providers.list({
+    const providers = await withDeadline((signal) => sdk.providers!.list({
       hostId,
       capability: "usage",
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const ids = providers.map((provider) => provider.id).filter((id) => id.trim().length > 0);
+      signal,
+    }), timeoutMs, signal);
+    const supported = new Set(["codex", "claude-code", "acp-cursor", "acp-grok", "acp-opencode"]);
+    const ids = [...new Set(providers.map((provider) => provider.id))].filter((id) => supported.has(id));
     return ids.length > 0 ? ids : null;
   } catch {
     return null;
@@ -54,27 +57,30 @@ async function readHostUsage(
   sdk: FleetSdk,
   hostId: string | undefined,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<RawUsageResponse> {
   try {
-    return await sdk.system.usageLimits({
+    return await withDeadline((signal) => sdk.system.usageLimits({
       ...(hostId === undefined ? {} : { hostId }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+      signal,
+    }), timeoutMs, signal);
   } catch (error) {
-    const ids = hostId === undefined ? null : await usageProviderIds(sdk, hostId, timeoutMs);
+    const ids = hostId === undefined ? null : await usageProviderIds(sdk, hostId, timeoutMs, signal);
     if (ids === null) throw error;
-    const parts = await Promise.all(ids.map(async (providerId) => {
+    const parts = await mapLimited(ids, 2, async (providerId) => {
       try {
-        return await sdk.system.usageLimits({
+        return await withDeadline((signal) => sdk.system.usageLimits({
           hostId,
           providerId,
-          signal: AbortSignal.timeout(timeoutMs),
-        });
+          signal,
+        }), timeoutMs, signal);
       } catch {
-        return {};
+        return null;
       }
-    }));
-    return Object.assign({}, ...parts);
+    });
+    const completed = parts.filter((part) => part !== null);
+    if (completed.length === 0) throw error;
+    return Object.assign({}, ...completed);
   }
 }
 
@@ -83,13 +89,14 @@ async function readHost(
   host: FleetHost,
   fetchedAt: Date,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<HostUsageReading> {
   const ref = hostRef(host);
   if (host.status !== "connected") {
     return { host: ref, error: null, snapshot: null };
   }
   try {
-    const response = await readHostUsage(sdk, host.id, timeoutMs);
+    const response = await readHostUsage(sdk, host.id, timeoutMs, signal);
     return {
       host: ref,
       error: null,
@@ -104,21 +111,22 @@ async function readHost(
   }
 }
 
-export async function loadFleetReadings(
+async function readFleetReadings(
   sdk: FleetSdk,
   fetchedAt = new Date(),
   timeoutMs = HOST_USAGE_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<HostUsageReading[]> {
   let hosts: FleetHost[];
   try {
-    hosts = (await sdk.hosts.list()).filter((host) => host.type === "persistent");
+    hosts = (await withDeadline(() => sdk.hosts.list(), timeoutMs, signal)).filter((host) => host.type === "persistent");
   } catch {
     hosts = [];
   }
 
   if (hosts.length === 0) {
     try {
-      const response = await readHostUsage(sdk, undefined, timeoutMs);
+      const response = await readHostUsage(sdk, undefined, timeoutMs, signal);
       return [{
         host: { id: "local", name: "This server", status: "connected" },
         error: null,
@@ -133,7 +141,16 @@ export async function loadFleetReadings(
     }
   }
 
-  return Promise.all(hosts.map((host) => readHost(sdk, host, fetchedAt, timeoutMs)));
+  return mapLimited(hosts, 8, (host) => readHost(sdk, host, fetchedAt, timeoutMs, signal));
+}
+
+export function loadFleetReadings(
+  sdk: FleetSdk,
+  fetchedAt = new Date(),
+  timeoutMs = HOST_USAGE_TIMEOUT_MS,
+  signal?: AbortSignal,
+): Promise<HostUsageReading[]> {
+  return withTimeBudget((budget) => readFleetReadings(sdk, fetchedAt, timeoutMs, budget), 15_000, signal);
 }
 
 export function assembleFleetView(

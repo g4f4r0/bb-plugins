@@ -1,3 +1,4 @@
+import { formatter } from "./formatters.ts";
 export const PROVIDER_IDS = [
   "codex",
   "claudeCode",
@@ -270,9 +271,7 @@ export function normalizeUsage(
 
 export function formatUsedPercent(value: number, locale?: string): string {
   if (!Number.isFinite(value)) return "Unavailable";
-  return new Intl.NumberFormat(locale, {
-    maximumFractionDigits: 1,
-  }).format(value);
+  return formatter("percent", locale, () => new Intl.NumberFormat(locale, { maximumFractionDigits: 1 })).format(value);
 }
 
 export function formatRemainingPercent(usedPercent: number, locale?: string): string {
@@ -290,26 +289,16 @@ export function formatResetTime(
   if (value === null) return "Reset unavailable";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Reset unavailable";
-  return `Resets ${new Intl.DateTimeFormat(locale, {
-    weekday: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date)}`;
+  return `Resets ${formatter("reset", locale, () => new Intl.DateTimeFormat(locale, { weekday: "short", hour: "numeric", minute: "2-digit" })).format(date)}`;
 }
 
 export function formatFetchedAt(value: string, locale?: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Updated recently";
-  return `Updated at ${new Intl.DateTimeFormat(locale, {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date)}`;
+  return `Updated at ${formatter("fetched", locale, () => new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" })).format(date)}`;
 }
 
 export function formatCost(cost: UsageCost, locale?: string): string {
-  const format = new Intl.NumberFormat(locale, {
-    style: "currency",
-    currency: "USD",
-  });
+  const format = formatter("cost", locale, () => new Intl.NumberFormat(locale, { style: "currency", currency: "USD" }));
   return `${format.format(cost.usedUsdCents / 100)} of ${format.format(cost.limitUsdCents / 100)}`;
 }

@@ -1,0 +1,9 @@
+{
+  "hosts": 1000,
+  "peakHostCalls": 8,
+  "calls": 1000,
+  "loadMs": 168.399773,
+  "buildMs": 13.47377499999999,
+  "legacyBytes": 60061831,
+  "compactBytes": 331621
+}

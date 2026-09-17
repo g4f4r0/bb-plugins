@@ -2,3 +2,12 @@
 section:has([data-reserve-shell]) > div {
   overflow-x: hidden;
 }
+
+[data-reserve-shell] { width: min(320px, calc(100vw - 32px)); }
+[data-reserve-shell][data-reserve-active="false"] * { animation-play-state: paused !important; }
+@media (prefers-reduced-motion: reduce) {
+  [data-reserve-shell] *, [data-reserve-shell] *::before, [data-reserve-shell] *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

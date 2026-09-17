@@ -119,12 +119,13 @@ function rpcError(message: JsonRpcMessage, fallback: string): Error {
 }
 
 function terminate(child: ChildProcessWithoutNullStreams): void {
-  if (child.exitCode !== null) return;
+  if (child.exitCode !== null || child.signalCode !== null) return;
   child.kill("SIGTERM");
   const forceKill = setTimeout(() => {
-    if (child.exitCode === null) child.kill("SIGKILL");
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
   }, 250);
   forceKill.unref();
+  child.once("close", () => clearTimeout(forceKill));
 }
 
 interface AppServerCall {
@@ -135,6 +136,7 @@ interface AppServerCall {
 function runCodexAppServerRequests(
   calls: readonly AppServerCall[],
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<unknown[]> {
   if (calls.length === 0) return Promise.resolve([]);
   return new Promise((resolve, reject) => {
@@ -142,6 +144,12 @@ function runCodexAppServerRequests(
     let reader: Interface | null = null;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let settled = false;
+    let outputBytes = 0;
+    const abort = () => finish(new Error("Codex request cancelled."));
+    const countOutput = (chunk: Buffer) => {
+      outputBytes += chunk.length;
+      if (outputBytes > 2 * 1024 * 1024) finish(new Error("Codex response exceeded 2 MiB."));
+    };
     let requestSent = false;
     const results: unknown[] = Array.from({ length: calls.length });
     const pending = new Set(calls.map((_, index) => index + 2));
@@ -150,6 +158,9 @@ function runCodexAppServerRequests(
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
+      child?.stdout.removeListener("data", countOutput);
+      reader?.removeAllListeners("line");
       reader?.close();
       if (child !== null) terminate(child);
       if (error !== null) {
@@ -166,6 +177,8 @@ function runCodexAppServerRequests(
       });
     };
 
+    if (signal?.aborted) { abort(); return; }
+    signal?.addEventListener("abort", abort, { once: true });
     try {
       child = spawn(CODEX_EXECUTABLE, ["app-server", "--stdio"], {
         stdio: ["pipe", "pipe", "pipe"],
@@ -182,8 +195,14 @@ function runCodexAppServerRequests(
     timeout.unref();
 
     child.stderr.resume();
-    child.once("error", (error) => finish(error));
+    child.stdout.on("data", countOutput);
+    const stdinError = (error: Error) => finish(error);
+    child.stdin.on("error", stdinError);
+    const childError = (error: Error) => finish(error);
+    child.once("error", childError);
     child.once("close", (code, signal) => {
+      child?.stdin.removeListener("error", stdinError);
+      child?.removeListener("error", childError);
       if (settled) return;
       const reason = signal === null ? `exit code ${code ?? "unknown"}` : signal;
       finish(new Error(`Codex app-server exited before responding (${reason}).`));
@@ -249,8 +268,9 @@ function runCodexAppServerRequest(
   method: string,
   params: unknown | undefined,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<unknown> {
-  return runCodexAppServerRequests([{ method, params }], timeoutMs).then((results) => results[0]);
+  return runCodexAppServerRequests([{ method, params }], timeoutMs, signal).then((results) => results[0]);
 }
 
 function resetsAtIso(value: number | null | undefined): string | null {
@@ -384,13 +404,14 @@ export function normalizeCodexCliEnrichment(account: unknown, limits: unknown): 
   };
 }
 
-export async function readCodexCliEnrichment(): Promise<CodexCliEnrichment> {
+export async function readCodexCliEnrichment(signal?: AbortSignal): Promise<CodexCliEnrichment> {
   const [account, limits] = await runCodexAppServerRequests(
     [
       { method: "account/read", params: {} },
       { method: "account/rateLimits/read" },
     ],
     USAGE_PROBE_TIMEOUT_MS,
+    signal,
   );
   return normalizeCodexCliEnrichment(account, limits);
 }
@@ -403,11 +424,13 @@ export type CodexResetConsumptionOutcome =
 
 export async function consumeCodexRateLimitResetCredit(
   idempotencyKey: string,
+  signal?: AbortSignal,
 ): Promise<CodexResetConsumptionOutcome> {
   const result = await runCodexAppServerRequest(
     "account/rateLimitResetCredit/consume",
     { idempotencyKey },
     CONSUME_TIMEOUT_MS,
+    signal,
   );
   return consumeResponseSchema.parse(result).outcome;
 }

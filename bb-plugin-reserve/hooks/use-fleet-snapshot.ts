@@ -1,100 +1,64 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import type { UsageSnapshot, rpcContract } from "../server";
 import { createVisiblePoller } from "../lib/visible-poller.ts";
 
-/** One last view. Survives hide/unmount without holding host payloads. */
+// Single bounded snapshot and transport lease across rapid remounts.
 let lastUsage: UsageSnapshot | null = null;
-let forceRefresh = false;
+let inflight: Promise<UsageSnapshot> | null = null;
 
 function stillFresh(snapshot: UsageSnapshot): boolean {
-  const fetchedAt = Date.parse(snapshot.fetchedAt);
-  if (!Number.isFinite(fetchedAt)) return false;
-  return Date.now() - fetchedAt < snapshot.refreshIntervalMs;
+  const age = Date.now() - Date.parse(snapshot.fetchedAt);
+  return Number.isFinite(age) && age >= 0 && age < snapshot.refreshIntervalMs;
 }
 
 export function useFleetSnapshot() {
   const rpc = useRpc<typeof rpcContract>();
   const container = useRef<HTMLDivElement>(null);
   const pollerRef = useRef<ReturnType<typeof createVisiblePoller<UsageSnapshot>> | null>(null);
-  const pending = useRef(0);
-  const queued = useRef(0);
+  const forceRefresh = useRef(false);
   const [active, setActive] = useState(false);
   const [snapshot, setSnapshot] = useState<UsageSnapshot | null>(lastUsage);
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
 
   useEffect(() => {
-    let alive = true;
-    async function getUsage(force: boolean) {
-      pending.current += 1;
-      setReloading(true);
-      try {
-        return await rpc.call("getUsage", force ? { force: true } : {});
-      } finally {
-        pending.current = Math.max(0, pending.current - 1);
-        if (force) queued.current = 0;
-        if (alive && pending.current === 0 && queued.current === 0) setReloading(false);
-      }
-    }
-
-    if (lastUsage === null) {
-      void getUsage(false).then((next) => {
-        if (!alive) return;
-        if (lastUsage === null) {
-          lastUsage = next;
-          setSnapshot(next);
-        }
-        if (stillFresh(next)) return;
-        return getUsage(true).then((fresh) => {
-          if (!alive) return;
-          lastUsage = fresh;
-          setSnapshot(fresh);
-        });
-      }).catch(() => {});
-    }
-
     const element = container.current;
-    if (!element) return () => { alive = false; };
-
+    if (!element) return;
     let intersecting = false;
     let pageHidden = false;
     const poller = createVisiblePoller({
       async load() {
-        const force = forceRefresh;
-        forceRefresh = false;
+        const force = forceRefresh.current || (lastUsage !== null && !stillFresh(lastUsage));
+        forceRefresh.current = false;
         if (!force && lastUsage !== null && stillFresh(lastUsage)) return lastUsage;
-        return getUsage(force);
+        setReloading(true);
+        // SDK 0.4.87 has no frontend RPC AbortSignal: share its promise, then
+        // let the poller's generation guard suppress detached deliveries.
+        if (!inflight) inflight = rpc.call("getUsage", force ? { force: true } : {}).finally(() => { inflight = null; });
+        return inflight;
       },
       receive(next) {
         lastUsage = next;
         setSnapshot(next);
         setError(null);
-        if (!stillFresh(next)) {
-          void getUsage(true).then((fresh) => {
-            if (!alive) return;
-            lastUsage = fresh;
-            setSnapshot(fresh);
-            setError(null);
-          }).catch(() => {});
-        }
+        setReloading(false);
       },
       error(cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
+        setReloading(false);
       },
-      clear() {
-        setError(null);
-      },
-      intervalMs: (next) => next.refreshIntervalMs,
+      clear() { setError(null); setReloading(false); },
+      intervalMs: (next) => stillFresh(next) ? next.refreshIntervalMs : 2000,
     });
     pollerRef.current = poller;
     const update = () => {
-      const visible = intersecting && !pageHidden && document.visibilityState === "visible" && element.getClientRects().length > 0;
+      const visible = intersecting && !pageHidden && navigator.onLine !== false && document.visibilityState === "visible";
       poller.setActive(visible);
       setActive(visible);
     };
     const observer = new IntersectionObserver(([entry]) => {
-      intersecting = entry.isIntersecting && entry.intersectionRect.width > 0 && entry.intersectionRect.height > 0;
+      intersecting = Boolean(entry?.isIntersecting && entry.intersectionRect.width > 0 && entry.intersectionRect.height > 0);
       update();
     });
     const hide = () => { pageHidden = true; update(); };
@@ -103,29 +67,23 @@ export function useFleetSnapshot() {
     document.addEventListener("visibilitychange", update);
     window.addEventListener("pagehide", hide);
     window.addEventListener("pageshow", show);
+    window.addEventListener("offline", update);
+    window.addEventListener("online", update);
     return () => {
-      alive = false;
       observer.disconnect();
       document.removeEventListener("visibilitychange", update);
       window.removeEventListener("pagehide", hide);
       window.removeEventListener("pageshow", show);
+      window.removeEventListener("offline", update);
+      window.removeEventListener("online", update);
       poller.dispose();
       pollerRef.current = null;
     };
   }, [rpc]);
 
-  return {
-    container,
-    active,
-    snapshot,
-    error,
-    reloading,
-    reload() {
-      if (pollerRef.current === null) return;
-      forceRefresh = true;
-      if (pollerRef.current.refresh() !== true) return;
-      queued.current += 1;
-      setReloading(true);
-    },
-  };
+  const reload = useCallback(() => {
+    forceRefresh.current = true;
+    if (pollerRef.current?.refresh()) setReloading(true);
+  }, []);
+  return { container, active, snapshot, error, reloading, reload };
 }

@@ -58,7 +58,6 @@ const loginTotalSchema = z
     windows: z.array(usageWindowSchema),
     remainingPercent: z.number().finite().min(0).max(100),
     resetCredits: resetCreditsSchema.nullable(),
-    hosts: z.array(hostRefSchema),
   })
   .strict();
 
@@ -66,6 +65,8 @@ const usageSnapshotSchema = z
   .object({
     fetchedAt: z.string(),
     refreshIntervalMs: z.number().int().min(2000).max(300_000),
+    hosts: z.array(hostRefSchema),
+    unavailableHosts: z.number().int().nonnegative(),
     totals: z.array(loginTotalSchema),
   })
   .strict();
@@ -162,23 +163,30 @@ export default function plugin(bb: BbPluginApi) {
     },
   });
 
-  const resetGate = createResetActionGate(consumeCodexRateLimitResetCredit);
+  const lifetime = new AbortController();
+  let generation = 0;
+  const resetGate = createResetActionGate((key) => consumeCodexRateLimitResetCredit(key, lifetime.signal));
 
-  const SNAPSHOT_KEY = "usage:last";
+  const SNAPSHOT_KEY = "usage:last:v2";
   const loadUsage = createCachedLoader({
     async load() {
+      const startedGeneration = generation;
+      lifetime.signal.throwIfAborted();
       const preferences = await settings.get();
       const enabled = enabledProviderIds(preferences);
       const fetchedAt = new Date();
       const extrasStartedAtMs = Date.now();
       const cli = enabled.includes("codex")
-        ? readCodexCliEnrichment().catch(() => {
+        ? readCodexCliEnrichment(lifetime.signal).catch(() => {
+            if (lifetime.signal.aborted) return EMPTY_CODEX_CLI;
             bb.log.warn("Codex CLI usage was unavailable; showing BB windows only.");
             return EMPTY_CODEX_CLI;
           })
         : Promise.resolve(EMPTY_CODEX_CLI);
-      const readings = await loadFleetReadings(bb.sdk, fetchedAt);
+      const readings = enabled.length === 0 ? [] : await loadFleetReadings(bb.sdk, fetchedAt, undefined, lifetime.signal);
       const enrichment = await cli;
+      lifetime.signal.throwIfAborted();
+      if (readings.length > 0 && readings.every((reading) => reading.snapshot === null && reading.error !== null)) throw new Error("Usage is unavailable on connected machines.");
       resetGate.setAvailableCount(
         enrichment.accountEmail === null ? null : enrichment.availableCount,
         extrasStartedAtMs,
@@ -190,21 +198,40 @@ export default function plugin(bb: BbPluginApi) {
         extraWindows: enrichment.extraWindows,
       });
       const snapshot = {
-        ...view,
+        fetchedAt: new Date().toISOString(),
+        hosts: readings.map((reading) => reading.host),
+        unavailableHosts: readings.filter((reading) => reading.snapshot === null).length,
+        totals: view.totals.map(({ hosts: _hosts, ...login }) => login),
         refreshIntervalMs: clampRefreshIntervalSeconds(preferences.refreshIntervalSeconds) * 1000,
       };
-      void bb.storage.kv.set(SNAPSHOT_KEY, snapshot);
+      // KV has a 256 KiB limit. Large fleets stay in the one-entry memory cache.
+      if (startedGeneration === generation && Buffer.byteLength(JSON.stringify(snapshot)) < 250_000) {
+        await bb.storage.kv.set(SNAPSHOT_KEY, snapshot).catch(() => {});
+      }
       return snapshot;
     },
     ttlMs: (snapshot) => snapshot.refreshIntervalMs,
   });
+  const restoreGeneration = generation;
   const restored = bb.storage.kv.get<unknown>(SNAPSHOT_KEY).then((stored) => {
+    if (lifetime.signal.aborted || restoreGeneration !== generation) return;
     const parsed = usageSnapshotSchema.safeParse(stored);
     if (!parsed.success) return;
     const at = Date.parse(parsed.data.fetchedAt);
     loadUsage.hydrate(parsed.data, Number.isFinite(at) ? at : 0);
   }).catch(() => {});
-  void restored.then(() => loadUsage.get());
+  // Restore only: plugin load must not spawn CLI/host reads with no viewer.
+  settings.onChange(() => {
+    generation++;
+    loadUsage.invalidate();
+    void bb.storage.kv.delete(SNAPSHOT_KEY).catch(() => {});
+  });
+  bb.onDispose(() => {
+    generation++;
+    lifetime.abort(new Error("Reserve reloaded."));
+    loadUsage.dispose();
+    resetGate.dispose();
+  });
 
   bb.rpc.register(rpcContract, {
     async getUsage({ force }) {
@@ -218,7 +245,8 @@ export default function plugin(bb: BbPluginApi) {
       const outcome = await resetGate.consume(confirmationToken);
       if (outcome !== "confirmation-invalid" && outcome !== "confirmation-expired") {
         loadUsage.invalidate();
-        void bb.storage.kv.delete(SNAPSHOT_KEY);
+        generation++;
+        if (!lifetime.signal.aborted) await bb.storage.kv.delete(SNAPSHOT_KEY).catch(() => {});
       }
       return { outcome };
     },

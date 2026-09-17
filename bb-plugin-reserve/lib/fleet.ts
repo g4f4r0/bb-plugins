@@ -69,15 +69,17 @@ function mergeWindow(current: UsageWindow, incoming: UsageWindow): UsageWindow {
   return incomingReset < currentReset ? incoming : current;
 }
 
-function mergeWindowList(windows: UsageWindow[], incoming: UsageWindow): UsageWindow[] {
-  const index = windows.findIndex((window) => window.label === incoming.label);
-  if (index < 0) return [...windows, incoming];
-  return windows.map((window, at) => (at === index ? mergeWindow(window, incoming) : window));
+function mergeWindowLists(windows: readonly UsageWindow[], incoming: readonly UsageWindow[]): UsageWindow[] {
+  const byLabel = new Map(windows.map((window) => [window.label, window]));
+  for (const window of incoming) {
+    const existing = byLabel.get(window.label);
+    byLabel.set(window.label, existing ? mergeWindow(existing, window) : window);
+  }
+  return [...byLabel.values()];
 }
 
 function tightestRemaining(windows: readonly UsageWindow[]): number {
-  if (windows.length === 0) return 100;
-  return remainingPercent(Math.max(...windows.map((window) => window.usedPercent)));
+  return remainingPercent(windows.reduce((used, window) => Math.max(used, window.usedPercent), 0));
 }
 
 function emailsEqual(left: string | null, right: string | null): boolean {
@@ -106,7 +108,7 @@ function coalesceAnonymousLogins(totals: Map<string, LoginTotal>): void {
     );
     if (candidates.length !== 1) continue;
     const target = candidates[0]!;
-    const windows = anonymous.windows.reduce(mergeWindowList, target.windows);
+    const windows = mergeWindowLists(target.windows, anonymous.windows);
     totals.set(target.key, {
       ...target,
       planLabel: target.planLabel ?? anonymous.planLabel,
@@ -125,6 +127,7 @@ export function buildFleetView(
 ): FleetView {
   const enabled = new Set(enabledIds);
   const totals = new Map<string, LoginTotal>();
+  const windowMaps = new Map<string, Map<string, UsageWindow>>();
 
   for (const reading of readings) {
     if (reading.snapshot === null) continue;
@@ -132,10 +135,13 @@ export function buildFleetView(
       if (!enabledProvider(provider, enabled) || provider.status !== "ok") continue;
       const key = loginKey(provider.id, provider.accountEmail);
       const existing = totals.get(key);
-      const windows = [...(existing?.windows ?? []), ...provider.windows].reduce<UsageWindow[]>(
-        (list, window) => mergeWindowList(list, window),
-        [],
-      );
+      let byLabel = windowMaps.get(key);
+      if (!byLabel) { byLabel = new Map(); windowMaps.set(key, byLabel); }
+      for (const window of provider.windows) {
+        const prior = byLabel.get(window.label);
+        byLabel.set(window.label, prior ? mergeWindow(prior, window) : window);
+      }
+      const windows: UsageWindow[] = [];
       totals.set(key, {
         key,
         providerId: provider.id,
@@ -150,15 +156,21 @@ export function buildFleetView(
     }
   }
 
+  for (const [key, total] of totals) {
+    total.windows = [...windowMaps.get(key)!.values()];
+    total.remainingPercent = tightestRemaining(total.windows);
+  }
   coalesceAnonymousLogins(totals);
 
   const owner = pickCodexCliOwner(totals.values(), codexCli.accountEmail);
   if (owner !== undefined) {
-    let windows = owner.windows;
+    const windows = [...owner.windows];
+    const labels = new Set(windows.map((window) => canonicalWindowLabel(window.label)));
     for (const window of [...(codexCli.coreWindows ?? []), ...(codexCli.extraWindows ?? [])]) {
       const label = canonicalWindowLabel(window.label);
-      if (windows.some((existing) => canonicalWindowLabel(existing.label) === label)) continue;
-      windows = mergeWindowList(windows, { ...window, label });
+      if (labels.has(label)) continue;
+      labels.add(label);
+      windows.push({ ...window, label });
     }
     totals.set(owner.key, {
       ...owner,

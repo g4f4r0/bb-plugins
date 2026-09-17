@@ -22,6 +22,7 @@ export type ResetPrepareResult =
     };
 
 export interface ResetActionGate {
+  dispose(): void;
   readonly availableCount: number | null;
   /** `readStartedAtMs` drops counts read before the latest spend started. */
   setAvailableCount(availableCount: number | null, readStartedAtMs?: number): void;
@@ -42,6 +43,7 @@ export function createResetActionGate(
   consumeReset: (idempotencyKey: string) => Promise<ResetConsumptionOutcome>,
   now: () => number = Date.now,
 ): ResetActionGate {
+  let disposed = false;
   let availableCount: number | null = null;
   let lastSpendStartedAtMs = -Infinity;
   const attempts = new Map<string, ResetAttempt>();
@@ -55,11 +57,13 @@ export function createResetActionGate(
   };
 
   return {
+    dispose() { disposed = true; availableCount = null; attempts.clear(); },
     get availableCount() {
       return availableCount;
     },
 
     setAvailableCount(nextAvailableCount, readStartedAtMs = Infinity) {
+      if (disposed) return;
       if (nextAvailableCount !== null && readStartedAtMs <= lastSpendStartedAtMs) return;
       availableCount = nextAvailableCount;
     },

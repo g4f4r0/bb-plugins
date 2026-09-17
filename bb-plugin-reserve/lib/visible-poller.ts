@@ -12,6 +12,8 @@ export function createVisiblePoller<T>(options: {
   let pending = false;
   let failures = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  let cancelWait: (() => void) | undefined;
 
   async function poll() {
     if (!active || disposed || pending) return;
@@ -19,7 +21,11 @@ export function createVisiblePoller<T>(options: {
     const requestGeneration = generation;
     let delay = 5000;
     try {
-      const value = await options.load();
+      const stopped = new Promise<never>((_, reject) => {
+        cancelWait = () => reject(new Error("Usage request timed out or was hidden."));
+      });
+      deadline = setTimeout(() => cancelWait?.(), 20_000);
+      const value = await Promise.race([options.load(), stopped]);
       if (!active || disposed || requestGeneration !== generation) return;
       failures = 0;
       delay = Math.min(300_000, Math.max(2000, options.intervalMs(value) || 5000));
@@ -30,6 +36,9 @@ export function createVisiblePoller<T>(options: {
       delay = Math.min(60_000, 5000 * 2 ** (failures - 1));
       options.error(error);
     } finally {
+      clearTimeout(deadline);
+      deadline = undefined;
+      cancelWait = undefined;
       pending = false;
       if (active && !disposed) {
         timer = setTimeout(() => { timer = undefined; void poll(); }, requestGeneration === generation ? delay : 0);
@@ -45,7 +54,7 @@ export function createVisiblePoller<T>(options: {
       clearTimeout(timer);
       timer = undefined;
       if (active) void poll();
-      else { failures = 0; options.clear(); }
+      else { clearTimeout(deadline); cancelWait?.(); options.clear(); }
     },
     refresh() {
       if (disposed || !active) return false;
@@ -57,6 +66,8 @@ export function createVisiblePoller<T>(options: {
     },
     dispose() {
       disposed = true;
+      clearTimeout(deadline);
+      cancelWait?.();
       active = false;
       generation++;
       clearTimeout(timer);
