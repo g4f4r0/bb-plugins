@@ -235,7 +235,7 @@ function ThreadCard({ thread, location, details, now }: { thread: PluginSidebarT
       {/* Same layout as the composer's model button: logo, model, reasoning. */}
       <span className="dusk-card-fact" title={details?.provider && details.model ? `${details.provider}: ${details.model}${reasoning ? ` · ${reasoning} reasoning` : ''}` : undefined}>
         <ProviderIcon providerKind="agent" provider={provider} className="dusk-card-icon" />
-        {details === null ? <span className="dusk-card-muted">Loading model</span>
+        {details === null ? <span role="status" aria-label="Loading model" className="inline-block h-3 w-20 shrink-0 animate-pulse rounded-sm bg-muted motion-reduce:animate-none" />
           : details.model ? <><span>{details.model}</span>{reasoning && <span className="dusk-card-muted">{reasoning}</span>}</>
           : <span className="dusk-card-muted">{details.provider ?? 'Unknown model'}</span>}
       </span>
