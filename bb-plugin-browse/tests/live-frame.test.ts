@@ -20,9 +20,9 @@ it("opens a same-origin screencast websocket from the viewer", () => {
   expect(viewerHtml).toContain("/cast");
   expect(viewerHtml).not.toContain("setTimeout(refresh,800)");
 });
-it("offers docked DevTools in the browser options", () => {
-  expect(viewerHtml).toContain('data-maintenance="open-devtools"');
-  expect(viewerHtml).toContain("Open DevTools");
+it("offers maintenance actions in the browser options without DevTools", () => {
+  expect(viewerHtml).not.toContain("open-devtools");
+  expect(viewerHtml).not.toContain("DevTools");
   expect(viewerHtml).toContain('details[open]>summary');
   expect(viewerHtml).toContain('width:184px');
   expect(browserIcons.Cookie).toBe(CookieIcon);
@@ -47,15 +47,6 @@ it("offers a responsive-mode toolbar toggle and compact viewport controls", () =
   expect(viewerHtml).toContain('data-pending="true"');
   expect(viewerHtml).toContain("setTimeout(r,100)");
   expect(viewerHtml).toContain("requestResponsive(!responsiveEnabled");
-  expect(viewerHtml).toContain("function openDevtoolsPane()");
-  expect(viewerHtml).toContain("function toggleDevtoolsPane()");
-  expect(viewerHtml).toContain("function seedDevtoolsTheme(mode)");
-  expect(viewerHtml).toContain("browse-devtools-theme");
-  expect(viewerHtml).toContain('id="devtools-frame"');
-  expect(viewerHtml).toContain('id="devtools-divider"');
-  expect(viewerHtml).toContain("./devtools-sw.js");
-  expect(viewerHtml).not.toContain("devtoolsSurface");
-  expect(viewerHtml).not.toContain("enterDevToolsSurface");
   expect(viewerHtml).not.toContain("requestResponsive(false,1280,800,false");
   expect(viewerHtml).not.toContain("Take control before changing the viewport.");
   expect(viewerHtml).toContain("responsivePending={enabled,width,height,mobile,preset}");
@@ -70,14 +61,11 @@ it("offers a responsive-mode toolbar toggle and compact viewport controls", () =
   expect(viewerHtml).toContain("frameWidth=hasFrame&&!responsivePending?vw:expectedFrameWidth||");
   expect(viewerHtml).toContain("responsiveCommitSent");
   expect(viewerHtml).toContain("onControlQueueCleared");
-  expect(viewerHtml).toContain("!expectedFrameWidth&&responsiveEnabled&&(");
+  expect(viewerHtml).toContain("!expectedFrameWidth&&responsiveEnabled&&(frame.width");
   expect(viewerHtml).toContain("const completed=responsivePending");
   expect(viewerHtml).toContain("if(completed.enabled){responsiveWidth=completed.width");
   expect(viewerHtml).toContain("frame.width!==expectedFrameWidth");
   expect(viewerHtml).toContain("if(!screen.dataset.frame)");
-  expect(viewerHtml).toContain('data-devtools="false"');
-  expect(viewerHtml).toContain('id="page-pane"');
-  expect(viewerHtml).toContain("responsivePending=null;expectedFrameWidth=0");
   expect(viewerHtml).toContain("visible:inViewport&&!closed&&!paused&&!document.hidden");
   expect(viewerHtml).not.toContain("Date.now()-lastFrame<15000");
   expect(viewerHtml).toContain("background:var(--popover");

@@ -37,20 +37,6 @@ export async function configureProfilePreferences(profile: string) {
     other_datatypes_enabled: false,
     payment_cvc_storage: false,
   });
-  const devtools = group("devtools");
-  if (
-    devtools.preferences !== undefined &&
-    (!devtools.preferences ||
-      typeof devtools.preferences !== "object" ||
-      Array.isArray(devtools.preferences))
-  )
-    throw new Error("Invalid Chrome devtools preferences");
-  const devtoolsPreferences = (devtools.preferences ??= {}) as Record<
-    string,
-    unknown
-  >;
-  devtoolsPreferences.currentDockState ??= '"right"';
-  devtoolsPreferences.lastDockState ??= '"right"';
   const temporary = join(directory, `.browse-preferences-${randomUUID()}`);
   try {
     await fs.writeFile(temporary, JSON.stringify(prefs), {

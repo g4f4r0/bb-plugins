@@ -78,7 +78,7 @@ export class SelkiesStream {
     this.inputKeys.clear();
     this.inputOwner = undefined;
   }
-  /** XTEST input reaches both the page and docked Chromium DevTools. */
+  /** XTEST input reaches the page through the isolated display. */
   async runInput(clientId: string, events: DirectEvent[]) {
     if (this.inputBusy || (this.inputOwner && this.inputOwner !== clientId))
       throw new Error("Browser is being controlled by another viewer.");

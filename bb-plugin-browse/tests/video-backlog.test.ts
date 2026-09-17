@@ -1,7 +1,7 @@
 import { it, expect, vi } from "vitest";
 import { SelkiesStream } from "../src/selkies";
 import type WebSocket from "ws";
-it("routes page and DevTools input through the isolated display", async () => {
+it("routes page input through the isolated display", async () => {
   const stream = new SelkiesStream();
   const send = vi.fn();
   stream["socket"] = {

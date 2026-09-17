@@ -13,9 +13,6 @@ const revision = createHash("sha256")
   .digest("hex")
   .slice(0, 12);
 
-/** Cache-buster for proxied DevTools frontend assets. */
-export const devtoolsFrontendRev = `${manifest.dependencies["tilion-fortress"]}-${revision}`;
-
 export function runtimePath(root: string) {
   return join(
     root,

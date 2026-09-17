@@ -24,13 +24,10 @@ test("disables prompts and filling on new and reconnected profiles without losin
   expect(prefs.password_manager.password_manager_blocklist).toEqual(["*"]);
   expect(prefs.autofill.profile_enabled).toBe(false);
   expect(prefs.autofill.credit_card_enabled).toBe(false);
-  expect(prefs.devtools.preferences.currentDockState).toBe('"right"');
-  expect(prefs.devtools.preferences.lastDockState).toBe('"right"');
   prefs.credentials_enable_service = true;
   prefs.autofill.profile_enabled = true;
   prefs.autofill.unrelated = "keep";
   prefs.content_settings = { untouched: true };
-  prefs.devtools.preferences.currentDockState = '"bottom"';
   await fs.writeFile(path, JSON.stringify(prefs));
   await configureProfilePreferences(root);
   prefs = JSON.parse(await fs.readFile(path, "utf8"));
@@ -39,7 +36,6 @@ test("disables prompts and filling on new and reconnected profiles without losin
   expect(prefs.autofill.profile_enabled).toBe(false);
   expect(prefs.autofill.unrelated).toBe("keep");
   expect(prefs.content_settings).toEqual({ untouched: true });
-  expect(prefs.devtools.preferences.currentDockState).toBe('"bottom"');
   expect((await fs.stat(path)).mode & 0o777).toBe(0o600);
 });
 test("refuses to overwrite malformed existing preferences", async () => {
@@ -49,7 +45,6 @@ test("refuses to overwrite malformed existing preferences", async () => {
     "null",
     "[]",
     '{"autofill":true}',
-    '{"devtools":{"preferences":true}}',
   ]) {
     await fs.writeFile(path, value);
     await expect(configureProfilePreferences(root)).rejects.toThrow();

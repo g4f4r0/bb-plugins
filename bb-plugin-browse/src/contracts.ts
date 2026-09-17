@@ -109,7 +109,6 @@ export const hostSession = z.object({
     height: z.number().int().min(320).max(2560),
     mobile: z.boolean(),
   }).optional(),
-  devtoolsOpen: z.boolean().optional(),
   dialog: z.object({
     type: z.enum(["alert", "confirm", "prompt", "beforeunload"]),
     message: z.string(),
@@ -186,7 +185,7 @@ export const viewerInput = z.discriminatedUnion("kind", [
     height: z.number().int().min(320).max(2560),
     mobile: z.boolean(),
   }),
-  z.object({ kind: z.literal("maintenance"), action: z.enum(["hard-reload", "open-devtools", "clear-cookies", "clear-cache"]) }),
+  z.object({ kind: z.literal("maintenance"), action: z.enum(["hard-reload", "clear-cookies", "clear-cache"]) }),
   z.object({
     kind: z.literal("dialog"),
     accept: z.boolean(),
@@ -201,11 +200,6 @@ export const hostContract = defineRpcContract({
   videoRead: {input:z.object({id,clientId:id}),output:z.object({packets:z.array(z.string()),url:z.string(),loading:z.boolean()})},
   videoStop: {input:z.object({id,clientId:id}),output:z.object({ok:z.boolean()})},
   controlStart: {input:z.object({id,clientId:id}),output:z.object({port:z.number().int().min(1).max(65535),token:z.string()})},
-  devtoolsOpen: {input:z.object({id,clientId:id}),output:z.object({ok:z.boolean(),rev:z.string()})},
-  devtoolsSend: {input:z.object({id,clientId:id,message:z.string().min(2).max(65536)}),output:z.object({response:z.string().max(8388608)})},
-  devtoolsPoll: {input:z.object({id,clientId:id}),output:z.object({events:z.array(z.string().max(262144))})},
-  devtoolsClose: {input:z.object({id,clientId:id}),output:z.object({ok:z.boolean()})},
-  devtoolsAsset: {input:z.object({id,path:z.string().min(1).max(500)}),output:z.object({data:z.string(),contentType:z.string()})},
   direct: { input: directBatch, output: z.object({selection:z.string().optional(),cursor:z.string().optional(),hostMs:z.number().optional()}) },
   "local-servers": { input: z.null(), output: localServerList },
   credentialPrepare: {
