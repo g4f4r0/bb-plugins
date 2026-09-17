@@ -36,6 +36,7 @@ function harness() {
     const status={textContent:''};
     function fit(){}
     function setResponsiveTransport(){}
+    const responsiveLoadingIcon='<svg data-icon="loading"/>',responsivePhoneIcon='<svg data-icon="phone"/>';
     ${extract("responsiveNeedsControl")}
     ${extract("noteResponsiveQueued")}
     ${extract("renderResponsive")}
@@ -73,27 +74,40 @@ type TestApi = {
   set: (state: Record<string, unknown>) => void;
 };
 
-it("keeps the toggle enabled while taking control or waiting for a frame", () => {
+it("shows a loading icon and disables the toggle while staging", () => {
   const { dom, test } = harness();
   try {
     test.render();
     expect(test.toggle().disabled).toBe(false);
     expect(test.toggle().hasAttribute("data-pending")).toBe(false);
+    expect(test.toggle().innerHTML).toContain('data-icon="phone"');
     test.set({ takingControl: true });
     test.render();
-    // First tap must not disable itself mid-takeover.
+    // Taking control alone must not disable the toggle.
     expect(test.toggle().disabled).toBe(false);
-    expect(test.toggle().getAttribute("data-pending")).toBe("true");
+    expect(test.toggle().hasAttribute("data-pending")).toBe(false);
     test.set({
       takingControl: false,
-      responsivePending: { enabled: true },
+      responsivePending: {
+        enabled: true,
+        width: 390,
+        height: 844,
+        mobile: true,
+        preset: "custom",
+      },
     });
     test.render();
-    expect(test.toggle().disabled).toBe(false);
+    expect(test.toggle().disabled).toBe(true);
     expect(test.toggle().getAttribute("data-pending")).toBe("true");
+    expect(test.toggle().innerHTML).toContain('data-icon="loading"');
+    expect(test.toggle().getAttribute("aria-label")).toBe(
+      "Switching viewport…",
+    );
     test.set({ responsiveAvailable: false, responsivePending: null });
     test.render();
     expect(test.toggle().disabled).toBe(true);
+    expect(test.toggle().innerHTML).toContain('data-icon="phone"');
+    expect(test.toggle().getAttribute("aria-label")).toBe("Responsive mode");
   } finally {
     dom.window.close();
   }

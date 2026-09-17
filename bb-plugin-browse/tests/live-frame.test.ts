@@ -39,9 +39,13 @@ it("offers a responsive-mode toolbar toggle and compact viewport controls", () =
   expect(viewerHtml).toContain("responsiveToggle.onclick=()=>{if(!responsiveAvailable)");
   expect(viewerHtml).toContain("noteResponsiveQueued()");
   expect(viewerHtml).toContain("Taking control…");
-  expect(viewerHtml).toContain("responsiveToggle.disabled=!responsiveAvailable;");
-  expect(viewerHtml).not.toContain("responsiveToggle.disabled=!responsiveAvailable||!!responsivePending");
+  expect(viewerHtml).toContain(
+    "responsiveToggle.disabled=!responsiveAvailable||responsiveStaging;",
+  );
+  expect(viewerHtml).toContain("responsiveLoadingIcon");
+  expect(viewerHtml).toContain("Switching viewport…");
   expect(viewerHtml).toContain('data-pending="true"');
+  expect(viewerHtml).toContain("setTimeout(r,100)");
   expect(viewerHtml).toContain("requestResponsive(!responsiveEnabled");
   expect(viewerHtml).toContain("function openDevTools()");
   expect(viewerHtml).toContain("devtoolsSurface=true;expectedFrameWidth=1280;expectedFrameHeight=800;setResponsiveTransport(false)");

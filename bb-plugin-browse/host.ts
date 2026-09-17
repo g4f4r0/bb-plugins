@@ -936,7 +936,10 @@ export default experimental_defineHostEntry({
       if (s.status !== "ready" || !s.cdp || s.expiresAt <= Date.now())
         throw new Error("Browser is not ready");
       const viewerDialog = !!clientId && input.kind === "dialog";
-      await releaseViewerInput(s, clientId, !viewerDialog);
+      // Viewport emulation never touches direct input, so it must not wait
+      // up to 750ms for pointer/keyboard busyness to drain first.
+      const viewerViewport = !!clientId && input.kind === "viewport";
+      await releaseViewerInput(s, clientId, !viewerDialog && !viewerViewport);
       const j = startJob(
         "viewer",
         ctx,
