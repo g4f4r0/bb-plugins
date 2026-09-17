@@ -13,6 +13,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { buildFamilies, canSnooze, lastActivity, SECTIONS, snoozePresets, wakeLabel, type Family, type SectionId, type SnoozeRow } from './status';
 import { relativeMessageTime } from './sidebar';
+import { VirtualStatusList, type StatusItem } from './virtual-status-list';
 
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 const COLLAPSED_KEY = 'dusk:status-collapsed';
@@ -484,27 +485,25 @@ export function StatusThreadList({ activeThreadId, onNavigate, Original }: Plugi
 
   if (status === 'error') return <Original />;
   if (status === 'loading' && threads.length === 0) return <div className="dusk-status-list" aria-busy="true" />;
-  const empty = SECTIONS.every(({ id }) => sections.get(id)!.length === 0);
+  const items: StatusItem[] = [];
+  for (const { id, label } of SECTIONS) {
+    const families = sections.get(id)!;
+    if (!families.length) continue;
+    const holdsActive = families.some(f => f.root.id === activeThreadId || f.children.some(c => c.id === activeThreadId));
+    const open = !collapsed.has(id) || holdsActive;
+    items.push({ key: `section:${id}`, height: 40, render: () => <button type="button" data-section={id} className="dusk-status-heading" aria-expanded={open} onClick={() => toggle(id)}>
+      <span>{label}</span><span className="dusk-status-count">{families.length}</span>
+      <Icon name="ChevronRight" className="dusk-status-chevron" aria-hidden />
+    </button> });
+    if (!open) continue;
+    for (const family of families) for (const thread of [family.root, ...family.children]) {
+      items.push({ key: thread.id, threadId: thread.id, height: 50, render: () =>
+        <StatusRow thread={thread} project={projectsById.get(thread.projectId)} family={family} child={thread !== family.root}
+          active={thread.id === activeThreadId} now={now} hint={hintNumbers.get(thread.id) ?? null} actions={actions} /> });
+    }
+  }
   return <div className="dusk-status-list">
-    {empty && <p className="dusk-status-empty">No threads yet</p>}
-    {SECTIONS.map(({ id, label }) => {
-      const families = sections.get(id)!;
-      if (families.length === 0) return null;
-      const holdsActive = families.some(f => f.root.id === activeThreadId || f.children.some(c => c.id === activeThreadId));
-      const open = !collapsed.has(id) || holdsActive;
-      return <section key={id} className="dusk-status-section" data-section={id}>
-        <button type="button" className="dusk-status-heading" aria-expanded={open} onClick={() => toggle(id)}>
-          <span>{label}</span><span className="dusk-status-count">{families.length}</span>
-          <Icon name="ChevronRight" className="dusk-status-chevron" aria-hidden />
-        </button>
-        {open && families.map(family => <div key={family.root.id} className="dusk-status-family" data-has-children={family.children.length > 0 || undefined}>
-          <StatusRow thread={family.root} project={projectsById.get(family.root.projectId)} family={family} child={false} active={family.root.id === activeThreadId} now={now} hint={hintNumbers.get(family.root.id) ?? null} actions={actions} />
-          {family.children.length > 0 && <div className="dusk-status-children">
-            {family.children.map(child => <StatusRow key={child.id} thread={child} project={projectsById.get(child.projectId)} family={family} child active={child.id === activeThreadId} now={now} hint={hintNumbers.get(child.id) ?? null} actions={actions} />)}
-          </div>}
-        </div>)}
-      </section>;
-    })}
+    {items.length ? <VirtualStatusList items={items} activeThreadId={activeThreadId} /> : <p className="dusk-status-empty">No threads yet</p>}
     <CustomSnooze threadId={customFor} onClose={() => setCustomFor(null)} onSnooze={actions.snooze} />
   </div>;
 }

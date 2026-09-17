@@ -3,7 +3,7 @@ import {readFile} from 'node:fs/promises';
 import ts from 'typescript';
 import {chromium} from 'playwright';
 const compile = async name => ts.transpileModule(await readFile(`lib/${name}.ts`, 'utf8'), {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
-const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+const browser=await chromium.launch({executablePath:process.env.DUSK_BROWSER,headless:true,args:['--no-sandbox']});
 try {
  const p=await browser.newPage();
  await p.setContent('<head><title>Initial</title></head><body><main><aside id="sidebar"></aside><article id="chat"></article></main></body>');

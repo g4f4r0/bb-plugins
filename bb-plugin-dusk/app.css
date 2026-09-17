@@ -747,3 +747,13 @@ button.dusk-panel-toggle[hidden] { display: none; }
 /* 14px glyphs in the subtle tone, like the composer's provider logo. */
 .dusk-card-icon { flex-shrink: 0; width: 14px; height: 14px; color: var(--subtle-foreground); }
 .dusk-card-muted { color: var(--subtle-foreground); }
+
+/* Fixed row geometry bounds DOM, layout and painting at any thread count. */
+.dusk-virtual-list { position: relative; flex: none; contain: layout style; }
+.dusk-virtual-item { position: absolute; top: 0; left: 0; right: 0; contain: layout style; }
+.dusk-virtual-item .dusk-status-heading { width: 100%; margin-top: 10px; }
+.dusk-virtual-item .dusk-status-row { height: 48px; }
+.dusk-virtual-item .dusk-status-row[data-child] { margin-left: 15px; border-left: 1px solid var(--border); border-radius: 0 6px 6px 0; }
+@media (prefers-reduced-motion: reduce) {
+  .dusk-status-chevron { transition: none; }
+}
