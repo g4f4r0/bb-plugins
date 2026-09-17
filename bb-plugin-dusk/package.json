@@ -68,6 +68,9 @@
     "build": "bb plugin build",
     "dev": "bb plugin dev",
     "test:homepage": "node tests/homepage.mjs",
-    "test:status": "node --test tests/status.test.ts"
+    "test:status": "node --test tests/status.test.ts",
+    "test": "node --test tests/*.test.ts",
+    "test:render": "node tests/performance.mjs && node tests/render-lifecycle.mjs",
+    "test:sidebar": "node tests/sidebar-performance.mjs"
   }
 }

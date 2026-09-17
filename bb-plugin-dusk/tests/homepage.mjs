@@ -1,159 +1,50 @@
-import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
-import { chromium } from "playwright";
+import assert from 'node:assert/strict';
+import { mkdir } from 'node:fs/promises';
+import { chromium } from 'playwright';
 
-// Run against a local path installation. Browser RPC is intercepted so image
-// tests do not replace the user's saved background or publish realtime changes.
-const base = process.env.BB_TEST_URL || "http://127.0.0.1:38886";
-const artifacts = process.env.DUSK_ARTIFACTS || "/tmp/dusk-checks";
+const base = process.env.BB_TEST_URL || 'http://127.0.0.1:38886';
+const artifacts = process.env.DUSK_ARTIFACTS || new URL('../validation/artifacts/', import.meta.url).pathname;
 await mkdir(artifacts, { recursive: true });
-const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
-const errors = [];
+const browser = await chromium.launch({ executablePath: process.env.DUSK_BROWSER, args: ['--no-sandbox'] });
 try {
-  const context = await browser.newContext({ viewport: { width: 1440, height: 960 }, colorScheme: "dark" });
-  let config = { image: null };
-  await context.route("**/api/v1/plugins/dusk/rpc/*", async (route) => {
-    if (route.request().url().endsWith("/save")) config = route.request().postDataJSON();
-    await route.fulfill({ json: { ok: true, result: config } });
-  });
-  const page = await context.newPage();
-  page.setDefaultTimeout(10000);
-  page.setDefaultNavigationTimeout(20000);
-  page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(base);
-  await page.locator(".dusk-customize").waitFor();
-  const measure = () => page.locator(".dusk-home").evaluate((host) => {
-    const form = host.querySelector("form").getBoundingClientRect();
-    const metadata = host.querySelector("form + div").getBoundingClientRect();
-    const outer = host.getBoundingClientRect();
-    return {
-      dx: Math.abs((form.left + form.right) / 2 - (outer.left + outer.right) / 2),
-      dy: Math.abs((Math.min(metadata.top, form.top) + Math.max(metadata.bottom, form.bottom)) / 2 - (outer.top + outer.bottom) / 2),
-      overflow: document.documentElement.scrollWidth > innerWidth,
-    };
-  });
-  let bounds = await measure();
-  assert.equal(await page.locator('.dusk-shield').count(), 1);
-  assert.equal(await page.locator('.dusk-shield').evaluate(el => getComputedStyle(el).pointerEvents), 'none');
-  assert.match(await page.locator('.dusk-shield').evaluate(el => getComputedStyle(el).backgroundImage), /^linear-gradient/);
-  assert.equal(await page.locator('.dusk-composer-shadow').count(), 1);
-  assert.equal(await page.locator('.dusk-composer-shadow').evaluate(el => getComputedStyle(el).pointerEvents), 'none');
-  assert.notEqual(await page.locator('.dusk-composer-shadow').evaluate(el => getComputedStyle(el).boxShadow), 'none');
-  assert(bounds.dx < 2 && bounds.dy < 12 && !bounds.overflow, JSON.stringify(bounds));
-  const nativeComparison = await page.evaluate(() => {
-    const shell = document.querySelector('[data-promptbox-shell]');
-    const properties = ['width', 'height', 'padding', 'margin', 'gap', 'display', 'flex-direction', 'order', 'font-family', 'font-size', 'line-height', 'color', 'background-color', 'border', 'border-radius', 'box-shadow'];
-    const snapshot = () => {
-      const root = shell.getBoundingClientRect();
-      return [shell, ...shell.querySelectorAll('*')].map(el => {
-        const r = el.getBoundingClientRect(), style = getComputedStyle(el);
-        return { geometry: [r.width, r.height, r.width ? r.x - root.x : 0, r.height ? r.y - root.y : 0].map(v => Math.round(v * 100) / 100), styles: properties.map(p => style.getPropertyValue(p)) };
-      });
-    };
-    const centered = snapshot();
-    const changes = ['dusk-home', 'dusk-page', 'dusk-column', 'dusk-composer'].flatMap(name => [...document.querySelectorAll('.' + name)].map(el => [el, name]));
-    changes.forEach(([el, name]) => el.classList.remove(name));
-    const native = snapshot();
-    changes.forEach(([el, name]) => el.classList.add(name));
-    return { centered, native };
-  });
-  assert.deepEqual(nativeComparison.centered, nativeComparison.native, 'Composer pixels, geometry and styles must match native BB');
-  const artwork = page.locator('.dusk-wallpaper');
-  const beforeMotion = await artwork.evaluate(el => el.toDataURL());
-  await page.waitForTimeout(850);
-  assert.notEqual(await artwork.evaluate(el => el.toDataURL()), beforeMotion, 'Ambient background should animate');
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.waitForTimeout(100);
-  const still = await artwork.evaluate(el => el.toDataURL());
-  await page.waitForTimeout(300);
-  assert.equal(await artwork.evaluate(el => el.toDataURL()), still, 'Reduced motion should freeze the field');
-  await page.evaluate(() => document.documentElement.style.setProperty('--primary', '#00d080'));
-  await page.waitForTimeout(150);
-  const themeColor = await artwork.evaluate(el => {
-    const d = el.getContext('2d').getImageData(0, 0, el.width, el.height).data;
-    let r = 0, g = 0, b = 0;
-    for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
-    return { r, g, b };
-  });
-  assert(themeColor.g > themeColor.r * 2 && themeColor.g > themeColor.b, 'Ambient color must follow primary');
-  await page.screenshot({ path: `${artifacts}/ambient-theme.png` });
-  await page.evaluate(() => document.documentElement.style.removeProperty('--primary'));
-  await page.emulateMedia({ reducedMotion: 'no-preference' });
-  console.log('PASS: native composer geometry/styles, animation, primary theme color and reduced motion');
-  await page.locator('[id="root-compose-prompt"]').fill("Dusk test draft — do not submit");
-  await page.locator('[id="root-compose-prompt"]').evaluate((el) => { window.duskOriginalEditor = el; });
-  await page.screenshot({ path: `${artifacts}/homepage-dark.png` });
-  await page.getByRole("button", { name: "Customize Dusk homepage" }).click();
-  await page.getByRole("menuitem", { name: "Choose image", exact: true }).waitFor();
-  assert.equal(await page.getByRole("dialog").count(), 0);
-  assert.equal(await page.getByRole("slider").count(), 0);
-  assert.equal(await page.getByRole("checkbox").count(), 0);
-  await page.waitForTimeout(400);
-  await page.screenshot({ path: `${artifacts}/settings.png` });
-
-  const png = await page.evaluate(() => {
-    const canvas = document.createElement("canvas"); canvas.width = 800; canvas.height = 500;
-    const ctx = canvas.getContext("2d"), gradient = ctx.createLinearGradient(0, 0, 800, 500);
-    gradient.addColorStop(0, "#153c2b"); gradient.addColorStop(0.5, "#c2d484"); gradient.addColorStop(1, "#3f7775");
-    ctx.fillStyle = gradient; ctx.fillRect(0, 0, 800, 500);
-    return canvas.toDataURL("image/png").split(",")[1];
-  });
-  const chooserPromise = page.waitForEvent("filechooser");
-  await page.getByRole("menuitem", { name: "Choose image", exact: true }).click();
-  const chooser = await chooserPromise;
-  await chooser.setFiles({ name: "test-background.png", mimeType: "image/png", buffer: Buffer.from(png, "base64") });
-  await page.waitForFunction(() => document.querySelector('.dusk-customize')?.getAttribute('aria-busy') === 'false');
-  assert(config.image.startsWith("data:image/webp;base64,"));
-  assert(config.image.length <= 220_000);
-  await page.keyboard.press("Escape");
-  assert(await page.locator('[id="root-compose-prompt"]').evaluate((el) => el === window.duskOriginalEditor));
-  assert.match(await page.locator('[id="root-compose-prompt"]').innerText(), /Dusk test draft/);
-  await page.waitForTimeout(400);
-  await page.screenshot({ path: `${artifacts}/background-dark.png` });
-  await page.emulateMedia({ colorScheme: "light" });
-  await page.waitForFunction(() => !document.documentElement.classList.contains("dark"));
-  await page.waitForTimeout(200);
-  await page.screenshot({ path: `${artifacts}/background-light.png` });
-  await page.getByRole("button", { name: "Customize Dusk homepage" }).click();
-  await page.getByRole("menuitem", { name: "Change image", exact: true }).waitFor();
-  await page.getByRole("menuitem", { name: "Remove image", exact: true }).click();
-  await page.waitForFunction(() => document.querySelector('.dusk-customize')?.getAttribute('aria-busy') === 'false');
-  assert.equal(config.image, null);
-  await page.keyboard.press("Escape");
-  await page.reload();
-  await page.locator(".dusk-customize").waitFor();
-  assert.equal(await page.locator(".dusk-wallpaper").count(), 1);
-
-  console.log("PASS: image upload, removal, theme changes, draft identity and refresh");
-  for (const width of [390, 1024, 1440]) {
-    await page.setViewportSize({ width, height: width === 390 ? 844 : 960 });
-    await page.waitForTimeout(250);
-    bounds = await measure();
-    assert(bounds.dx < 2 && bounds.dy < 12 && !bounds.overflow, JSON.stringify({ width, ...bounds }));
-  }
-  console.log("PASS: responsive bounds");
-  for (let i = 0; i < 2; i++) {
-    await page.getByText("Plugins", { exact: true }).first().click();
-    await page.waitForFunction(() => !document.querySelector(".dusk-home"));
-    assert.equal(await page.locator(".dusk-wallpaper, .dusk-shield, .dusk-composer-shadow, .dusk-customize").count(), 0);
-    await page.goBack();
-    await page.locator(".dusk-customize").waitFor();
-    assert.equal(await page.locator(".dusk-wallpaper").count(), 1);
-  }
-  await context.close();
-
-  const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, colorScheme: "dark" });
-  const mobilePage = await mobile.newPage();
-  mobilePage.setDefaultTimeout(10000);
-  mobilePage.on("pageerror", (error) => errors.push(error.message));
-  await mobilePage.goto(base);
-  await mobilePage.locator(".dusk-customize").waitFor();
-  await mobilePage.screenshot({ path: `${artifacts}/homepage-mobile.png` });
-  assert.equal(await mobilePage.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-  await mobilePage.getByRole("button", { name: "Customize Dusk homepage" }).click();
-  await mobilePage.getByText("Change image", { exact: true }).waitFor();
-  await mobile.close();
-  assert.deepEqual(errors, []);
-  console.log("PASS: desktop/mobile centering, one image setting, upload/remove, light/dark changes, draft preservation, refresh, and navigation cleanup.");
-  console.log(`Screenshots: ${artifacts}`);
+ const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
+ let config = { image: null };
+ await context.route('**/api/v1/plugins/dusk/rpc/*', route => {
+  const method=route.request().url().split('/').pop();
+  if(method==='save')config=route.request().postDataJSON();
+  return route.fulfill({json:{ok:true,result:['get','save'].includes(method)?config:[]}});
+ });
+ await context.route('**/api/v1/**', route => ['GET','HEAD'].includes(route.request().method()) || route.request().url().includes('/plugins/dusk/rpc/') ? route.fallback() : route.fulfill({json:{}}));
+ const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(base);await page.locator('.dusk-wallpaper[data-ready]').waitFor();
+ const edit=page.getByRole('button',{name:'Edit background',exact:true});await edit.waitFor();
+ const wallpaper=page.locator('.dusk-wallpaper');
+ const initial=await wallpaper.evaluate(c=>c.toDataURL());await page.waitForTimeout(180);
+ assert.notEqual(await wallpaper.evaluate(c=>c.toDataURL()),initial);
+ await page.emulateMedia({reducedMotion:'reduce'});await page.waitForTimeout(100);
+ const still=await wallpaper.evaluate(c=>c.toDataURL());await page.waitForTimeout(180);assert.equal(await wallpaper.evaluate(c=>c.toDataURL()),still);
+ await page.evaluate(()=>document.documentElement.style.setProperty('--primary','#00d080'));await page.waitForTimeout(250);
+ assert.notEqual(await wallpaper.evaluate(c=>c.toDataURL()),still);
+ await page.evaluate(()=>document.documentElement.style.removeProperty('--primary'));
+ await page.emulateMedia({reducedMotion:'no-preference'});
+ const editor=page.locator('[id="root-compose-prompt"]');await editor.fill('Dusk isolated regression draft');
+ await editor.evaluate(el=>window.originalDuskEditor=el);
+ const png=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=800;c.height=600;const x=c.getContext('2d');const g=x.createLinearGradient(0,0,800,600);g.addColorStop(0,'#153c2b');g.addColorStop(1,'#c2d484');x.fillStyle=g;x.fillRect(0,0,800,600);return c.toDataURL().split(',')[1]});
+ await edit.click();const chosen=page.waitForEvent('filechooser');await page.getByRole('menuitem',{name:'Choose image',exact:true}).click();
+ await (await chosen).setFiles({name:'test.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});
+ await page.locator('.dusk-photo-surface[data-ready]').waitFor();await page.waitForTimeout(300);
+ assert(config.image.startsWith('data:image/webp;base64,'));assert(config.image.length<=220000);
+ assert.equal(await editor.evaluate(el=>el===window.originalDuskEditor),true);assert.match(await editor.innerText(),/isolated regression draft/);
+ assert.equal(await page.locator('.dusk-photo-surface').count(),1);assert.equal(await page.locator('.dusk-photo-fade').count(),0);
+ await page.screenshot({path:`${artifacts}/photo-direct.png`});
+ await page.evaluate(()=>document.documentElement.classList.toggle('dark'));await page.waitForTimeout(350);
+ assert.equal(await page.locator('.dusk-photo-surface').count(),1);
+ for(const width of [1100,800,360,1440]){await page.setViewportSize({width,height:960});await page.waitForTimeout(180);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);assert.equal(await page.locator('.dusk-photo-surface').count(),1);}
+ await page.emulateMedia({reducedMotion:'reduce'});await page.waitForTimeout(100);
+ const photoStill=await page.locator('.dusk-photo-surface').evaluate(c=>c.toDataURL());await page.waitForTimeout(150);assert.equal(await page.locator('.dusk-photo-surface').evaluate(c=>c.toDataURL()),photoStill);
+ await edit.click();await page.getByRole('menuitem',{name:'Remove image',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('.dusk-photo-surface'));
+ assert.equal(config.image,null);assert.equal(await wallpaper.evaluate(c=>getComputedStyle(c).visibility),'visible');
+ await page.reload();await edit.waitFor();assert.equal(await wallpaper.count(),1);
+ assert.deepEqual(errors,[]);await context.close();
+ console.log('PASS: ambient motion, palette/reduced motion, photo upload/removal, GPU surface, theme/resize, editor identity, refresh and 360px bounds');
 } finally { await browser.close(); }

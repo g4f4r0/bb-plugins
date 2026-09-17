@@ -15,7 +15,8 @@ try {
  });
  const p=await context.newPage();
  if(process.env.DUSK_PHOTO)image=await p.evaluate(()=>{const c=document.createElement('canvas');c.width=800;c.height=600;const ctx=c.getContext('2d');const g=ctx.createLinearGradient(0,0,800,600);g.addColorStop(0,'#123456');g.addColorStop(1,'#abcdef');ctx.fillStyle=g;ctx.fillRect(0,0,800,600);return c.toDataURL()});
- await p.goto(process.env.BB_TEST_URL||'http://127.0.0.1:38886');await p.locator('.dusk-wallpaper[data-ready]').waitFor();
+ await p.goto(process.env.BB_TEST_URL||'http://127.0.0.1:38886');await p.locator('.dusk-wallpaper[data-ready]').waitFor({state:'attached'});
+ if(process.env.DUSK_PHOTO)await p.locator('.dusk-photo-surface[data-ready]').waitFor();
  const cdp=await context.newCDPSession(p);const events=[];cdp.on('Tracing.dataCollected',e=>events.push(...e.value));
  await cdp.send('Tracing.start',{categories:'devtools.timeline,v8.execute',transferMode:'ReportEvents'});await cdp.send('Profiler.enable');await cdp.send('Profiler.start');
  await p.waitForTimeout(2000);

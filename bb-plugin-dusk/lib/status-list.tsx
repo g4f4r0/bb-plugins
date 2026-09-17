@@ -253,6 +253,7 @@ const StatusRow = memo(function StatusRow({ thread, project, family, child, acti
   const split = experimental_useSidebarThreadSplit(thread.id);
   const [menuOpen, setMenuOpen] = useState(false);
   const [cardOpen, setCardOpen] = useState(false);
+  const [interactive, setInteractive] = useState(false);
   // Stays true after the first open so the card keeps its content while it
   // fades out instead of collapsing to an empty box.
   const [wanted, setWanted] = useState(false);
@@ -275,7 +276,9 @@ const StatusRow = memo(function StatusRow({ thread, project, family, child, acti
   const hasState = thread.indicator !== 'none' && !!thread.indicatorLabel;
   return <HoverCard open={cardOpen && !menuOpen} onOpenChange={open => { setCardOpen(open); if (open) setWanted(true); }} openDelay={400} closeDelay={60}>
   <HoverCardTrigger asChild>
-  <div className="dusk-status-row" data-child={child || undefined} data-active={active || undefined} data-menu-open={menuOpen || undefined} data-has-state={hasState || undefined} data-hints={hint !== null || undefined}>
+  <div className="dusk-status-row" data-child={child || undefined} data-active={active || undefined} data-menu-open={menuOpen || undefined} data-has-state={hasState || undefined} data-hints={hint !== null || undefined}
+    onPointerEnter={() => setInteractive(true)}
+    onFocusCapture={() => setInteractive(true)}>
     <a className="dusk-status-link" href={`/projects/${thread.projectId}/threads/${thread.id}`} aria-label={`Open ${label}`} aria-current={active ? 'page' : undefined}
       data-sidebar-thread-shortcut-target="" data-sidebar-thread-id={thread.id} aria-keyshortcuts={hint !== null ? jumpShortcut(hint).aria : undefined} {...split.splitProps}
       onClick={event => {
@@ -294,7 +297,7 @@ const StatusRow = memo(function StatusRow({ thread, project, family, child, acti
         </span>}
       </span>
       <span className="dusk-status-actions">
-      <TooltipProvider>
+      {(interactive || menuOpen || busy) && <TooltipProvider>
         <Tooltip disableHoverableContent open={menuOpen ? false : undefined}>
           <TooltipTrigger asChild>
         <button type="button" className="dusk-status-action" aria-label={thread.isPinned ? 'Unpin thread' : 'Pin thread'} aria-pressed={thread.isPinned} disabled={busy} onClick={pin} onPointerDown={e => e.stopPropagation()}>
@@ -343,7 +346,7 @@ const StatusRow = memo(function StatusRow({ thread, project, family, child, acti
             <DropdownMenuItem variant="destructive" onSelect={() => threadActions.requestDelete(thread.id)}><Icon name="Trash2" className="size-4" aria-hidden />Delete</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-      </TooltipProvider>
+      </TooltipProvider>}
       </span>
     </span>
     <span className="dusk-thread-meta">

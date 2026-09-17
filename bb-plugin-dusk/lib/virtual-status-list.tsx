@@ -51,7 +51,12 @@ export function VirtualStatusList({ items, activeThreadId }: { items: StatusItem
       const row = (event.target as HTMLElement).closest<HTMLElement>('[data-virtual-key]');
       if (row) setRetained(row.dataset.virtualKey!);
     }}
-    onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setRetained(null); }}
+    onPointerDownCapture={event => {
+      // Keep the last interaction target until another row takes its place.
+      // Radix restores focus after its portal closes, potentially after a scroll.
+      const row = (event.target as HTMLElement).closest<HTMLElement>('[data-virtual-key]');
+      if (row) setRetained(row.dataset.virtualKey!);
+    }}
     onKeyDown={event => {
       if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
       if (!(event.target instanceof HTMLElement) || !event.target.matches('.dusk-status-link, .dusk-status-heading')) return;

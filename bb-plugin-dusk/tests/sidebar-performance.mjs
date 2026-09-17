@@ -8,7 +8,7 @@ const count = Number(process.env.DUSK_THREADS || 500);
 const browser = await chromium.launch({ executablePath: process.env.DUSK_BROWSER, args: ['--no-sandbox'] });
 try {
  let detailRequests=0;
- const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
+ const context = await browser.newContext({ viewport: { width: process.env.DUSK_MOBILE ? 360 : 1440, height: 960 }, isMobile:!!process.env.DUSK_MOBILE, hasTouch:!!process.env.DUSK_MOBILE });
  await context.route('**/api/v1/sidebar-bootstrap', async route => {
   const data = await (await route.fetch()).json();
   const sample = data.personalProject.threads[0] || data.projects.flatMap(p => p.threads)[0];
@@ -30,7 +30,9 @@ try {
  const cdp=await context.newCDPSession(page);
  const collected=[];cdp.on('Tracing.dataCollected',e=>collected.push(...e.value));
  await cdp.send('Tracing.start',{categories:'devtools.timeline,v8.execute,disabled-by-default-devtools.timeline',transferMode:'ReportEvents'});
- await page.goto(base);await page.locator('.dusk-status-list').waitFor();await page.waitForTimeout(1500);
+ await page.goto(base);
+ if(process.env.DUSK_MOBILE)await page.locator('[data-sidebar="trigger"]:visible').first().click();
+ await page.locator('.dusk-status-list').waitFor();await page.waitForTimeout(1500);
  const rows=await page.locator('.dusk-status-row').count();
  console.log(JSON.stringify({count,rows,buttons:await page.locator('[data-sidebar="trigger"]').count()}));
  await page.evaluate(()=>{window.framesSample=[];window.perfRunning=true;let last=performance.now();function tick(now){window.framesSample.push(now-last);last=now;if(window.perfRunning)requestAnimationFrame(tick)}requestAnimationFrame(tick)});
@@ -51,7 +53,7 @@ try {
  frames.sort((a,b)=>a-b);const result={count,rows,detailRequests,frames:frames.length,p95:frames[Math.floor(frames.length*.95)],max:frames.at(-1),over25:frames.filter(x=>x>25).length,totals,errors};
  await writeFile(new URL(`${label}-${count}.json`,output),JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));
  await page.screenshot({path:new URL(`${label}-${count}.png`,output).pathname});
- if (label !== 'baseline' && count > 0 && !process.env.DUSK_HOVER) {
+ if (label !== 'baseline' && count > 0 && !process.env.DUSK_HOVER && !process.env.DUSK_MOBILE) {
   assert(rows < 60, `Mounted ${rows} rows`);
   const first = page.locator('[data-sidebar-thread-id="thr_duskperf0"]');
   await first.focus(); await page.keyboard.press('End');
@@ -59,6 +61,10 @@ try {
   const last = page.locator(`[data-sidebar-thread-id="thr_duskperf${count-1}"]`);
   assert(await last.isVisible());
   const lastBounds=await last.boundingBox();assert(lastBounds.y >= 0 && lastBounds.y < 960, JSON.stringify(lastBounds));
+  await last.hover();await last.locator('..').getByRole('button',{name:'Thread actions',exact:true}).click();
+  await page.evaluate(()=>{let p=document.querySelector('.dusk-status-list').parentElement;while(p&&!/(auto|scroll)/.test(getComputedStyle(p).overflowY))p=p.parentElement;if(p)p.scrollTop=0});
+  await page.waitForTimeout(100);assert(await page.getByRole('menu').isVisible());assert.equal(await last.count(),1);
+  await page.keyboard.press('Escape');await last.focus();
   await page.keyboard.press('Home');
   await page.waitForFunction(()=>document.activeElement?.classList.contains('dusk-status-heading'));
   for(let i=0;i<6;i++)await page.locator('.dusk-status-heading').first().click();

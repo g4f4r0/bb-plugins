@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 
-type Mount = { id: string; link: HTMLElement; row: HTMLElement; meta: HTMLElement; pin: HTMLElement | null; pinClass: string; nativeMeta?: HTMLElement };
+let nextMountKey = 0;
+type Mount = { key: number; id: string; link: HTMLElement; row: HTMLElement; meta: HTMLElement; pin: HTMLElement | null; pinClass: string; nativeMeta?: HTMLElement };
 export function relativeMessageTime(at: number, now: number) {
   const seconds = Math.max(0, Math.floor((now - at) / 1000));
   if (seconds < 60) return 'now';
@@ -52,7 +53,7 @@ export function SidebarDetails() {
         let pin: HTMLElement | null = null;
         const pinClass = controls?.querySelector('button')?.className || 'size-7 p-0';
         if (controls) { pin = document.createElement('span'); pin.className = 'dusk-pin-slot'; controls.prepend(pin); }
-        entries.set(link, { id, link, row, meta, pin, pinClass }); changed = true;
+        entries.set(link, { key: ++nextMountKey, id, link, row, meta, pin, pinClass }); changed = true;
       });
       document.querySelectorAll<HTMLElement>('[data-root-compose-mobile-recents] a[href]').forEach(link => {
         const id = link.getAttribute('href')?.match(/\/threads\/(thr_[^/?#]+)/)?.[1];
@@ -66,7 +67,7 @@ export function SidebarDetails() {
         if (old) dispose(old);
         const meta = document.createElement('span'); meta.className = 'dusk-thread-meta';
         nativeMeta.setAttribute('data-dusk-native-meta', ''); text.append(meta);
-        entries.set(link, { id, link, row, meta, nativeMeta, pin: null, pinClass: '' }); changed = true;
+        entries.set(link, { key: ++nextMountKey, id, link, row, meta, nativeMeta, pin: null, pinClass: '' }); changed = true;
       });
       for (const [link, entry] of entries) if (!found.has(link)) { dispose(entry); entries.delete(link); changed = true; }
       if (changed) setMounts([...entries.values()]);
@@ -90,7 +91,7 @@ export function SidebarDetails() {
     const branch = thread.environment?.branchName;
     const location = branch || thread.environment?.name || thread.host?.name;
     const at = Math.max(thread.updatedAt, thread.latestAttentionAt);
-    return <span key={m.id + '-' + mounts.indexOf(m)} style={{ display: 'contents' }}>
+    return <span key={m.key} style={{ display: 'contents' }}>
       {createPortal(<>{location && <><span className="dusk-thread-loc-icon" aria-hidden><Icon name={branch ? 'GitBranch' : thread.environment?.name ? 'Folder' : 'Laptop'} className="size-3" /></span><span className="dusk-thread-location" title={location}>{location}</span></>}
         {location && <span className="dusk-thread-sep" aria-hidden>·</span>}
         <time dateTime={new Date(at).toISOString()} title={`Last update: ${new Date(at).toLocaleString()}`}>{relativeMessageTime(at, now)}</time>
