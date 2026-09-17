@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import {
@@ -23,7 +29,10 @@ import {
 import { CodeEditor, type CodeEditorHandle } from "./code-editor";
 import { MarkdownEditor } from "./markdown-editor";
 import { Skeleton } from "./components/ui/skeleton";
-import { isLastInputKeyboard, preventOverlayTriggerSelection } from "./components/ui/overlay-trigger";
+import {
+  isLastInputKeyboard,
+  preventOverlayTriggerSelection,
+} from "./components/ui/overlay-trigger";
 import { usePortalScopeProps } from "./lib/portal-scope";
 import { cn } from "./lib/utils";
 import type { FileTarget, rpcContract } from "./server";
@@ -109,8 +118,8 @@ function FileActions({
 }
 
 const LINE_WIDTHS = [
-  72, 54, 88, 41, 63, 79, 36, 58, 91, 47, 70, 33, 85, 52, 66, 44, 77, 39, 60, 83,
-  49, 68, 31, 74,
+  72, 54, 88, 41, 63, 79, 36, 58, 91, 47, 70, 33, 85, 52, 66, 44, 77, 39, 60,
+  83, 49, 68, 31, 74,
 ];
 
 function FileSkeleton() {
@@ -199,7 +208,12 @@ function notify(title: string, tone: "success" | "error"): void {
   );
 }
 
-export function FileOpener({
+export function FileOpener(props: PluginFileOpenerProps) {
+  const key = JSON.stringify(toTarget(props.path, props.source));
+  return <FileSession key={key} {...props} />;
+}
+
+function FileSession({
   path,
   source,
   experimental_lineRange,
@@ -219,8 +233,10 @@ export function FileOpener({
   const [encoding, setEncoding] = useState<"utf8" | "base64">("utf8");
   const [mimeType, setMimeType] = useState<string | null>(null);
   const [image, setImage] = useState(false);
+  const [imageFailed, setImageFailed] = useState(false);
   const [text, setText] = useState(true);
   const [deleted, setDeleted] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"load" | "save" | "delete" | null>("load");
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -231,6 +247,18 @@ export function FileOpener({
   );
   const [draft, setDraft] = useState("");
   const [fileRevision, setFileRevision] = useState(0);
+  const richMarkdown = markdown && draft.length <= 500_000;
+  const operation = useRef(0);
+  const mounted = useRef(true);
+  const saving = useRef(false);
+  const editVersion = useRef(0);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      operation.current += 1;
+    };
+  }, []);
 
   const applyFile = useCallback(
     (file: {
@@ -244,13 +272,14 @@ export function FileOpener({
       setContent(file.content);
       setSaved(file.content);
       setDraft(file.content);
-      // A reload must replace local edits even when the draft prop is unchanged.
+      // An explicit reset updates the existing editor even when the prop is unchanged.
       setFileRevision((revision) => revision + 1);
       setDirty(false);
       setSha256(file.sha256);
       setEncoding(file.encoding);
       setMimeType(file.mimeType);
       setImage(file.image);
+      setImageFailed(false);
       setText(file.text);
     },
     [],
@@ -258,14 +287,24 @@ export function FileOpener({
 
   const load = useCallback(
     async (opts?: { silent?: boolean }) => {
+      const version = ++operation.current;
+      const editsAtStart = editVersion.current;
       if (!opts?.silent) setBusy("load");
       setError(null);
       try {
-        applyFile(await rpc.call("read_file", target));
+        const file = await rpc.call("read_file", target);
+        if (!mounted.current || version !== operation.current) return;
+        if (editsAtStart !== editVersion.current) {
+          setError(DISK_CONFLICT);
+          return;
+        }
+        applyFile(file);
       } catch (cause: unknown) {
+        if (!mounted.current || version !== operation.current) return;
         setError(cause instanceof Error ? cause.message : String(cause));
       } finally {
-        if (!opts?.silent) setBusy(null);
+        if (mounted.current && version === operation.current && !opts?.silent)
+          setBusy(null);
       }
     },
     [
@@ -327,18 +366,32 @@ export function FileOpener({
         !visible() ||
         current.deleted ||
         current.sha256 === null ||
-        current.busy === "load" ||
-        current.busy === "save"
+        current.busy !== null ||
+        saving.current
       ) {
         return;
       }
       pending = true;
+      const version = operation.current;
       try {
-        const file = await current.rpc.call("read_file", current.target);
-        if (cancelled) return;
+        const file = await current.rpc.call("poll_file", {
+          ...current.target,
+          sha256: current.sha256,
+        });
+        if (cancelled || version !== operation.current) return;
+        setRefreshError(null);
         const latest = syncRef.current;
-        if (latest.busy === "save" || latest.sha256 === null) return;
-        const action = fileSyncAction(latest.sha256, file.sha256, latest.dirty);
+        if (
+          latest.busy !== null ||
+          saving.current ||
+          latest.sha256 === null ||
+          editor.current?.isComposing?.()
+        )
+          return;
+        const action =
+          file === null
+            ? "same"
+            : fileSyncAction(latest.sha256, file.sha256, latest.dirty);
         if (action === "same") {
           if (latest.error === DISK_CONFLICT) setError(null);
           return;
@@ -347,10 +400,14 @@ export function FileOpener({
           setError(DISK_CONFLICT);
           return;
         }
-        latest.applyFile(file);
+        if (file !== null) latest.applyFile(file);
         if (latest.error === DISK_CONFLICT) setError(null);
-      } catch {
-        // Keep the last good snapshot across a missed poll.
+      } catch (cause: unknown) {
+        // Keep the editable snapshot while surfacing deletion/offline failures.
+        if (!cancelled && version === operation.current)
+          setRefreshError(
+            `Unable to refresh: ${cause instanceof Error ? cause.message : String(cause)}`,
+          );
       } finally {
         pending = false;
       }
@@ -407,6 +464,8 @@ export function FileOpener({
   }
 
   const markDirty = useCallback((next: boolean) => {
+    editVersion.current += 1;
+    syncRef.current.dirty = next;
     setDirty(next);
     if (next) {
       setError((current) => (current === DISK_CONFLICT ? current : null));
@@ -415,7 +474,18 @@ export function FileOpener({
   }, []);
 
   async function save(): Promise<void> {
-    if (!text || sha256 === null || !dirty || deleted || busy === "save") return;
+    if (
+      !text ||
+      sha256 === null ||
+      !syncRef.current.dirty ||
+      deleted ||
+      busy !== null ||
+      saving.current ||
+      editor.current?.isComposing?.()
+    )
+      return;
+    saving.current = true;
+    const version = ++operation.current;
     const next = liveText();
     setBusy("save");
     setError(null);
@@ -425,23 +495,25 @@ export function FileOpener({
         content: next,
         expectedSha256: sha256,
       });
+      if (!mounted.current || version !== operation.current) return;
       if (result.outcome === "conflict") {
         setError(DISK_CONFLICT);
         return;
       }
       setContent(next);
       setSha256(result.sha256);
-      if (liveText() === next) {
-        setSaved(next);
-        setDraft(next);
-        setDirty(false);
-      } else {
-        setDirty(true);
-      }
+      // The disk baseline advances even if more edits arrived during the write.
+      setSaved(next);
+      const stillDirty = liveText() !== next;
+      syncRef.current.dirty = stillDirty;
+      setDirty(stillDirty);
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (mounted.current && version === operation.current) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
     } finally {
-      setBusy(null);
+      saving.current = false;
+      if (mounted.current && version === operation.current) setBusy(null);
     }
   }
 
@@ -468,17 +540,22 @@ export function FileOpener({
   }
 
   async function remove(): Promise<void> {
+    if (busy !== null || saving.current) return;
+    const version = ++operation.current;
     setBusy("delete");
     setError(null);
     try {
       await rpc.call("remove_file", target);
+      if (!mounted.current || version !== operation.current) return;
       setDeleted(true);
       setConfirmDelete(false);
       setSaved(content);
+      syncRef.current.deleted = true;
     } catch (cause: unknown) {
+      if (!mounted.current || version !== operation.current) return;
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setBusy(null);
+      if (mounted.current && version === operation.current) setBusy(null);
     }
   }
 
@@ -488,7 +565,14 @@ export function FileOpener({
     void saveRef.current();
   }, []);
   useEffect(() => {
-    if (!text || deleted || sha256 === null || !dirty || busy !== null || error !== null) {
+    if (
+      !text ||
+      deleted ||
+      sha256 === null ||
+      !dirty ||
+      busy !== null ||
+      error !== null
+    ) {
       return;
     }
     const timer = window.setTimeout(() => {
@@ -498,9 +582,17 @@ export function FileOpener({
   }, [busy, deleted, dirty, edits, error, sha256, text]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "s") {
+      if (
+        !(event.metaKey || event.ctrlKey) ||
+        event.key.toLowerCase() !== "s"
+      ) {
         return;
       }
+      if (
+        event.defaultPrevented ||
+        !root.current?.contains(document.activeElement)
+      )
+        return;
       event.preventDefault();
       void saveRef.current();
     };
@@ -531,13 +623,17 @@ export function FileOpener({
               >
                 <FileGlyph token={fileIconToken(path)} />
                 <span className="min-w-0 truncate">{path}</span>
-                {dirty ? (
+                {
                   <span
-                    className="size-1.5 shrink-0 rounded-full bg-primary ring-1 ring-primary/40"
-                    title="Unsaved changes"
-                    aria-label="Unsaved changes"
+                    className={cn(
+                      "size-1.5 shrink-0 rounded-full bg-primary ring-1 ring-primary/40",
+                      !dirty && "invisible",
+                    )}
+                    title={dirty ? "Unsaved changes" : undefined}
+                    aria-label={dirty ? "Unsaved changes" : undefined}
+                    aria-hidden={!dirty}
                   />
-                ) : null}
+                }
               </Button>
             </Tooltip.Trigger>
             <Tooltip.Portal>
@@ -552,14 +648,16 @@ export function FileOpener({
             </Tooltip.Portal>
           </Tooltip.Root>
           <div className="ml-auto flex shrink-0 items-center gap-1">
-            {busy === "save" ? (
+            {
               <Button
                 type="button"
                 variant="ghost"
                 tabIndex={-1}
-                aria-label="Saving"
+                aria-label={busy === "save" ? "Saving" : undefined}
+                aria-hidden={busy !== "save"}
                 className={cn(
                   COARSE_POINTER_TOOLBAR_ACTION_BUTTON_CLASS,
+                  busy !== "save" && "invisible",
                   "pointer-events-none gap-1.5 bg-transparent text-muted-foreground hover:bg-transparent hover:text-muted-foreground [&_svg]:size-3.5 max-md:pointer-coarse:[&_svg]:size-5",
                 )}
               >
@@ -571,8 +669,8 @@ export function FileOpener({
                 />
                 Saving
               </Button>
-            ) : null}
-            {text && (!markdown || sourceMode) ? (
+            }
+            {text && (!richMarkdown || sourceMode) ? (
               <Tooltip.Root>
                 <Tooltip.Trigger asChild>
                   <span className="inline-flex">
@@ -601,7 +699,7 @@ export function FileOpener({
                 </Tooltip.Portal>
               </Tooltip.Root>
             ) : null}
-            {markdown ? (
+            {richMarkdown ? (
               <Tooltip.Root>
                 <Tooltip.Trigger asChild>
                   <span className="inline-flex">
@@ -635,7 +733,7 @@ export function FileOpener({
             ) : null}
             <FileActions
               text={text}
-              disabled={deleted || busy === "load"}
+              disabled={deleted || busy !== null || sha256 === null}
               onCopy={() => void copyContents()}
               onDownload={download}
               onDelete={() => setConfirmDelete(true)}
@@ -644,43 +742,59 @@ export function FileOpener({
           </div>
         </Tooltip.Provider>
       </div>
-      {error !== null ? (
+      {error !== null || refreshError !== null ? (
         <div
           role="alert"
           className="flex items-center gap-2 px-4 py-2 text-sm text-destructive"
         >
-          <p className="min-w-0 flex-1">{error}</p>
-          {error === DISK_CONFLICT ? (
+          <p className="min-w-0 flex-1">{error ?? refreshError}</p>
+          {error !== null ? (
             <Button
               type="button"
               variant="ghost"
               className={COARSE_POINTER_TOOLBAR_ACTION_BUTTON_CLASS}
-              onClick={() => void load({ silent: true })}
+              onClick={() => void load({ silent: sha256 !== null })}
             >
-              Reload
+              {error === DISK_CONFLICT ? "Reload" : "Retry"}
             </Button>
           ) : null}
         </div>
       ) : null}
-      <div className={cn("min-h-0 flex-1 overflow-hidden", text ? "" : "overflow-auto")}>
+      <div
+        className={cn(
+          "min-h-0 flex-1 overflow-hidden",
+          text ? "" : "overflow-auto",
+        )}
+      >
         {deleted ? (
-          <p className="px-4 py-2.5 text-sm text-muted-foreground">{name} was deleted.</p>
+          <p className="px-4 py-2.5 text-sm text-muted-foreground">
+            {name} was deleted.
+          </p>
         ) : busy === "load" ? (
           <FileSkeleton />
+        ) : sha256 === null ? (
+          <p className="px-4 py-2.5 text-sm text-muted-foreground">
+            File unavailable.
+          </p>
+        ) : image && imageFailed ? (
+          <p className="px-4 py-2.5 text-sm text-muted-foreground">
+            Image preview unavailable. Use File actions to download it.
+          </p>
         ) : image ? (
           <img
             alt={name}
             src={
               encoding === "base64"
                 ? `data:${mimeType ?? "image/*"};base64,${content}`
-                : undefined
+                : `data:${mimeType ?? "application/octet-stream"};charset=utf-8,${encodeURIComponent(content)}`
             }
-            className="mx-4 my-3 max-h-full max-w-full"
+            onError={() => setImageFailed(true)}
+            className="h-full w-full object-contain p-4"
           />
         ) : text ? (
-          markdown && !sourceMode ? (
+          richMarkdown && !sourceMode ? (
             <MarkdownEditor
-              key={fileRevision}
+              revision={fileRevision}
               path={path}
               value={draft}
               saved={saved}
@@ -690,10 +804,10 @@ export function FileOpener({
             />
           ) : (
             <CodeEditor
-              key={fileRevision}
+              revision={fileRevision}
               path={path}
-              value={markdown ? draft : saved}
-              cleanValue={markdown ? saved : undefined}
+              value={draft}
+              cleanValue={saved}
               onDirty={markDirty}
               onSave={onSave}
               readOnly={deleted}

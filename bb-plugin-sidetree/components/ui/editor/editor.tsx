@@ -1,5 +1,5 @@
-import { type HTMLAttributes, type MouseEvent, useEffect, useRef, useState } from "react";
-import { Node as TiptapNode, mergeAttributes, type Editor as TiptapEditor } from "@tiptap/core";
+import { type HTMLAttributes, type MouseEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Node as TiptapNode, createDocument, mergeAttributes, type Editor as TiptapEditor } from "@tiptap/core";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import StarterKit from "@tiptap/starter-kit";
@@ -368,6 +368,7 @@ const UploadableImage = Image.extend({
 
 export type EditorProps = {
   value?: string;
+  revision?: number;
   onChange?: (value: string) => void;
   disabled?: boolean;
   format?: EditorFormat;
@@ -477,6 +478,7 @@ const blockOptions: Array<{ value: BlockType; label: string }> = [
 
 export function Editor({
   value = "",
+  revision = 0,
   onChange = () => undefined,
   disabled = false,
   format = "html",
@@ -512,6 +514,8 @@ export function Editor({
   );
   const pickImageUrlRef = useRef<ImagePickerHandler>(async () => null);
   const lastEmittedValueRef = useRef<string>(value);
+  const appliedRevision = useRef(revision);
+  const lastSerializedValueRef = useRef<string | null>(null);
   const pendingUploadsRef = useRef(0);
   const objectUrlByUploadIdRef = useRef(new Map<string, string>());
   const expectedBlobByUploadIdRef = useRef(new Map<string, string>());
@@ -655,6 +659,8 @@ export function Editor({
               .replace(/\sdata-upload-id="[^"]*"/g, "")
               .replace(/\sdata-uploading="[^"]*"/g, "")
               .replace(/\sdata-upload-error="[^"]*"/g, "");
+      if (nextValue === lastSerializedValueRef.current) return;
+      lastSerializedValueRef.current = nextValue;
       lastEmittedValueRef.current = nextValue;
       onChange(nextValue);
     },
@@ -697,22 +703,52 @@ export function Editor({
     },
   }) as ActiveState | null) ?? defaultActiveState;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!editor) return;
-    if (value === lastEmittedValueRef.current) return;
+    const current =
+      format === "markdown" ? editor.getMarkdown() : editor.getHTML();
+    if (lastSerializedValueRef.current === null)
+      lastSerializedValueRef.current = current;
+    const forced = appliedRevision.current !== revision;
+    appliedRevision.current = revision;
+    if (!forced && value === lastEmittedValueRef.current) return;
 
-    const current = format === "markdown" ? editor.getMarkdown() : editor.getHTML();
     const hasChanged =
-      format === "markdown" ? value.trimEnd() !== current.trimEnd() : value !== current;
+      format === "markdown"
+        ? value.trimEnd() !== current.trimEnd()
+        : value !== current;
 
     if (hasChanged) {
-      editor.commands.setContent(value || (format === "markdown" ? "" : "<p></p>"), {
-        emitUpdate: false,
-        contentType: format,
-      });
+      const next = createDocument(
+        format === "markdown"
+          ? editor.markdown!.parse(value)
+          : value || "<p></p>",
+        editor.schema,
+      );
+      const before = editor.state.doc;
+      const start = before.content.findDiffStart(next.content);
+      if (start !== null) {
+        const end = before.content.findDiffEnd(next.content)!;
+        const overlap = start - Math.min(end.a, end.b);
+        if (overlap > 0) {
+          end.a += overlap;
+          end.b += overlap;
+        }
+        const scroller = editor.view.dom.closest(".sidetree-md");
+        const top = scroller?.scrollTop;
+        editor.view.dispatch(
+          editor.state.tr
+            .replace(start, end.a, next.slice(start, end.b))
+            .setMeta("preventUpdate", true)
+            .setMeta("addToHistory", false),
+        );
+        if (scroller && top !== undefined) scroller.scrollTop = top;
+      }
+      lastSerializedValueRef.current =
+        format === "markdown" ? editor.getMarkdown() : editor.getHTML();
       lastEmittedValueRef.current = value;
     }
-  }, [editor, value, format]);
+  }, [editor, value, format, revision]);
 
   useEffect(() => {
     if (!editor) return;

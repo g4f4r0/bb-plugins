@@ -1,6 +1,6 @@
 import {
   memo,
-  useEffect,
+  useLayoutEffect,
   useImperativeHandle,
   useRef,
   useState,
@@ -19,7 +19,13 @@ import {
   syntaxHighlighting,
 } from "@codemirror/language";
 import { searchKeymap } from "@codemirror/search";
-import { Compartment, EditorState, Prec, Text } from "@codemirror/state";
+import {
+  Compartment,
+  EditorState,
+  Prec,
+  Text,
+  Transaction,
+} from "@codemirror/state";
 import {
   EditorView,
   drawSelection,
@@ -29,8 +35,14 @@ import {
   lineNumbers,
 } from "@codemirror/view";
 import { experimental_useCodeTheme } from "@get-bb/plugin-sdk/app";
+import { textChange } from "./file-sync";
 import { languageForPath } from "./editor-language";
-import { codeMirrorTheme, editorChrome, editorSurface, selectionForeground } from "./editor-theme";
+import {
+  codeMirrorTheme,
+  editorChrome,
+  editorSurface,
+  selectionForeground,
+} from "./editor-theme";
 import { ScrollEdgeFades, watchOverflowEdges } from "./scroll-fade";
 import { useSelectionAddToChat } from "./selection-add-to-chat";
 
@@ -45,19 +57,26 @@ function setup() {
     indentOnInput(),
     bracketMatching(),
     highlightActiveLine(),
-    keymap.of([indentWithTab, ...defaultKeymap, ...searchKeymap, ...historyKeymap]),
+    keymap.of([
+      indentWithTab,
+      ...defaultKeymap,
+      ...searchKeymap,
+      ...historyKeymap,
+    ]),
   ];
 }
 
 export type CodeEditorHandle = {
   getDoc(): string;
   blur(): void;
+  isComposing?(): boolean;
 };
 
 export const CodeEditor = memo(function CodeEditor({
   path,
   value,
   cleanValue,
+  revision = 0,
   onDirty,
   onSave,
   readOnly,
@@ -69,6 +88,7 @@ export const CodeEditor = memo(function CodeEditor({
   path: string;
   value: string;
   cleanValue?: string;
+  revision?: number;
   onDirty?: (dirty: boolean) => void;
   onSave?: () => void;
   readOnly: boolean;
@@ -95,9 +115,16 @@ export const CodeEditor = memo(function CodeEditor({
   onDirtyRef.current = onDirty;
   onSaveRef.current = onSave;
   const codeTheme = experimental_useCodeTheme();
-  const themeName = codeTheme.theme?.name ?? null;
+  const configuration = useRef({
+    path,
+    theme: codeTheme.theme,
+    readOnly,
+    wrap,
+  });
   const surface =
-    codeTheme.theme === null ? "var(--background)" : editorSurface(codeTheme.theme);
+    codeTheme.theme === null
+      ? "var(--background)"
+      : editorSurface(codeTheme.theme);
   const [edges, setEdges] = useState({ above: false, below: false });
   const { menu } = useSelectionAddToChat({
     containerRef: parent,
@@ -108,14 +135,17 @@ export const CodeEditor = memo(function CodeEditor({
 
   useImperativeHandle(editorRef, () => ({
     getDoc() {
-      return viewRef.current?.state.doc.toString() ?? valueRef.current;
+      return viewRef.current?.state.sliceDoc() ?? valueRef.current;
     },
     blur() {
       viewRef.current?.contentDOM.blur();
     },
+    isComposing() {
+      return viewRef.current?.composing ?? false;
+    },
   }));
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const node = parent.current;
     if (node === null) return;
     setEdges({ above: false, below: false });
@@ -123,9 +153,10 @@ export const CodeEditor = memo(function CodeEditor({
     const view = new EditorView({
       parent: node,
       state: EditorState.create({
-        doc: value,
+        doc: Text.of(value.split(/\r\n?|\n/)),
         extensions: [
           setup(),
+          EditorState.lineSeparator.of(value.includes("\r\n") ? "\r\n" : "\n"),
           Prec.highest(
             keymap.of([
               {
@@ -164,59 +195,73 @@ export const CodeEditor = memo(function CodeEditor({
       view.destroy();
       viewRef.current = null;
     };
-  }, [path]);
+  }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const view = viewRef.current;
     if (view === null) return;
-    const clean = cleanValueRef.current;
-    const baselineDoc =
-      clean === undefined ? undefined : EditorState.create({ doc: clean }).doc;
-    if (view.state.doc.toString() === value) {
-      baseline.current = baselineDoc ?? view.state.doc;
-      return;
-    }
-    const scroll = view.scrollDOM.scrollTop;
+    const previous = view.state.doc.toString();
+    const normalized = value.replace(/\r\n?/g, "\n");
+    if (previous === normalized) return;
+    const scrollTop = view.scrollDOM.scrollTop;
+    const scrollLeft = view.scrollDOM.scrollLeft;
     applying.current = true;
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: value },
-    });
-    applying.current = false;
-    baseline.current = baselineDoc ?? view.state.doc;
-    view.scrollDOM.scrollTop = scroll;
-    onDirtyRef.current?.(clean === undefined ? false : value !== clean);
-  }, [value]);
+    try {
+      const change = textChange(previous, normalized);
+      view.dispatch({
+        changes: { ...change, insert: Text.of(change.insert.split("\n")) },
+        annotations: Transaction.addToHistory.of(false),
+      });
+    } finally {
+      applying.current = false;
+    }
+    view.scrollDOM.scrollTop = scrollTop;
+    view.scrollDOM.scrollLeft = scrollLeft;
+  }, [value, revision]);
 
-  useEffect(() => {
-    const view = viewRef.current;
-    if (view === null || codeTheme.theme === null) return;
-    view.dispatch({
-      effects: theme.current.reconfigure(codeMirrorTheme(codeTheme.theme)),
-    });
-  }, [themeName]);
-
-  useEffect(() => {
+  useLayoutEffect(() => {
     const view = viewRef.current;
     if (view === null) return;
-    view.dispatch({
-      effects: editable.current.reconfigure(EditorState.readOnly.of(readOnly)),
-    });
-  }, [readOnly]);
+    baseline.current = Text.of((cleanValue ?? value).split(/\r\n?|\n/));
+    onDirtyRef.current?.(!view.state.doc.eq(baseline.current));
+  }, [cleanValue, value, revision]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const view = viewRef.current;
     if (view === null) return;
-    view.dispatch({
-      effects: wrapping.current.reconfigure(wrap ? EditorView.lineWrapping : []),
-    });
-  }, [wrap]);
+    const previous = configuration.current;
+    const effects = [];
+    if (previous.path !== path)
+      effects.push(language.current.reconfigure(languageForPath(path)));
+    if (previous.theme !== codeTheme.theme)
+      effects.push(
+        theme.current.reconfigure(
+          codeTheme.theme === null
+            ? syntaxHighlighting(defaultHighlightStyle, { fallback: true })
+            : codeMirrorTheme(codeTheme.theme),
+        ),
+      );
+    if (previous.readOnly !== readOnly)
+      effects.push(
+        editable.current.reconfigure(EditorState.readOnly.of(readOnly)),
+      );
+    if (previous.wrap !== wrap)
+      effects.push(
+        wrapping.current.reconfigure(wrap ? EditorView.lineWrapping : []),
+      );
+    configuration.current = { path, theme: codeTheme.theme, readOnly, wrap };
+    if (effects.length) view.dispatch({ effects });
+  }, [path, codeTheme.theme, readOnly, wrap]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const view = viewRef.current;
-    if (view === null || startLine == null || endLine == null) return;
+    if (view === null || startLine == null) return;
     const doc = view.state.doc;
     const fromLine = Math.min(Math.max(startLine, 1), doc.lines);
-    const toLine = Math.min(Math.max(endLine, fromLine), doc.lines);
+    const toLine = Math.min(
+      Math.max(endLine ?? startLine, fromLine),
+      doc.lines,
+    );
     const start = doc.line(fromLine);
     const end = doc.line(toLine);
     const sel = view.state.selection.main;
@@ -226,13 +271,17 @@ export const CodeEditor = memo(function CodeEditor({
       selection: { anchor: start.from, head: end.to },
       scrollIntoView: true,
     });
-  }, [startLine, endLine]);
+  }, [path, startLine, endLine]);
 
   return (
     <div className="relative h-full min-h-0 overflow-hidden px-4">
       <div ref={parent} className="h-full min-h-0 overflow-hidden" />
       {menu}
-      <ScrollEdgeFades above={edges.above} below={edges.below} color={surface} />
+      <ScrollEdgeFades
+        above={edges.above}
+        below={edges.below}
+        color={surface}
+      />
     </div>
   );
 });

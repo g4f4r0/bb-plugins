@@ -10,7 +10,11 @@ import { editorSelectionPaint, tokenStyles } from "./editor-theme.ts";
 function loadTheme(file: string): PluginCodeThemeData {
   const raw = JSON.parse(
     readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "../bb-plugin-dusk/themes", file),
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        "../bb-plugin-dusk/themes",
+        file,
+      ),
       "utf8",
     ),
   ) as {
@@ -67,4 +71,16 @@ test("Pages CMS github-light tokens on Dusk sidebar", () => {
   assert.equal(styles.get(t.attributeName)?.color, "#6f42c1");
   assert.equal(styles.get(t.tagName)?.color, "#005cc5");
   assert.equal(styles.get(t.punctuation)?.color, undefined);
+});
+
+import { codeMirrorTheme } from "./editor-theme.ts";
+
+test("same-name theme replacement does not reuse stale colors", () => {
+  const first = loadTheme("dusk-dark.json");
+  const second = {
+    ...first,
+    colors: { ...first.colors, "editor.background": "#123456" },
+  };
+  assert.equal(codeMirrorTheme(first), codeMirrorTheme(first));
+  assert.notEqual(codeMirrorTheme(first), codeMirrorTheme(second));
 });

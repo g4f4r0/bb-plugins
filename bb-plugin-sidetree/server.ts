@@ -32,6 +32,16 @@ const fileTargetSchema = z.object({
 });
 export type FileTarget = z.infer<typeof fileTargetSchema>;
 
+const fileSchema = z.object({
+  content: z.string(),
+  encoding: z.enum(["utf8", "base64"]),
+  mimeType: z.string().nullable(),
+  sha256: z.string(),
+  sizeBytes: z.number(),
+  image: z.boolean(),
+  text: z.boolean(),
+});
+
 export const rpcContract = defineRpcContract({
   workspace_root: {
     input: z.object({ threadId: z.string() }),
@@ -53,15 +63,11 @@ export const rpcContract = defineRpcContract({
   },
   read_file: {
     input: fileTargetSchema,
-    output: z.object({
-      content: z.string(),
-      encoding: z.enum(["utf8", "base64"]),
-      mimeType: z.string().nullable(),
-      sha256: z.string(),
-      sizeBytes: z.number(),
-      image: z.boolean(),
-      text: z.boolean(),
-    }),
+    output: fileSchema,
+  },
+  poll_file: {
+    input: fileTargetSchema.extend({ sha256: z.string() }),
+    output: fileSchema.nullable(),
   },
   write_file: {
     input: fileTargetSchema.extend({
@@ -157,6 +163,43 @@ async function resolveTarget(
 }
 
 export default async function plugin(bb: BbPluginApi) {
+  // Share overlapping reads, retaining no file contents after the request completes.
+  const readKey = (target: FileTarget) =>
+    JSON.stringify([
+      target.kind,
+      target.hostId,
+      target.environmentId,
+      target.threadId,
+      target.path,
+    ]);
+  const reads = new Map<string, Promise<z.infer<typeof fileSchema>>>();
+  const readFile = (target: FileTarget) => {
+    const key = readKey(target);
+    const pending = reads.get(key);
+    if (pending) return pending;
+    const request = (async () => {
+      const resolved = await resolveTarget(bb, target);
+      const file = await bb.sdk.files.read({
+        hostId: resolved.hostId,
+        path: resolved.absolute,
+        rootPath: resolved.rootPath,
+      });
+      const image = isImagePath(target.path);
+      return {
+        content: file.content,
+        encoding: file.contentEncoding,
+        mimeType: file.mimeType ?? null,
+        sha256: file.sha256,
+        sizeBytes: file.sizeBytes,
+        image,
+        text: file.contentEncoding === "utf8" && !image,
+      };
+    })().finally(() => {
+      if (reads.get(key) === request) reads.delete(key);
+    });
+    reads.set(key, request);
+    return request;
+  };
   bb.rpc.register(rpcContract, {
     workspace_root: ({ threadId }) => resolveRoot(bb, threadId),
 
@@ -202,24 +245,10 @@ export default async function plugin(bb: BbPluginApi) {
       return { entries };
     },
 
-    read_file: async (target) => {
-      const resolved = await resolveTarget(bb, target);
-      const file = await bb.sdk.files.read({
-        hostId: resolved.hostId,
-        path: resolved.absolute,
-        rootPath: resolved.rootPath,
-      });
-      const image = isImagePath(target.path);
-      const text = file.contentEncoding === "utf8" && !image;
-      return {
-        content: file.content,
-        encoding: file.contentEncoding,
-        mimeType: file.mimeType ?? null,
-        sha256: file.sha256,
-        sizeBytes: file.sizeBytes,
-        image,
-        text,
-      };
+    read_file: readFile,
+    poll_file: async ({ sha256, ...target }) => {
+      const file = await readFile(target);
+      return file.sha256 === sha256 ? null : file;
     },
 
     write_file: async ({ content, expectedSha256, ...target }) => {
@@ -227,6 +256,7 @@ export default async function plugin(bb: BbPluginApi) {
       if (isImagePath(target.path)) {
         throw new Error("This file type cannot be edited as text.");
       }
+      reads.delete(readKey(target));
       const saved = await bb.sdk.files.write({
         hostId: resolved.hostId,
         path: resolved.absolute,
@@ -234,6 +264,7 @@ export default async function plugin(bb: BbPluginApi) {
         content,
         expectedSha256,
       });
+      reads.delete(readKey(target));
       if (saved.outcome === "conflict") {
         return { outcome: "conflict" as const };
       }
@@ -242,11 +273,13 @@ export default async function plugin(bb: BbPluginApi) {
 
     remove_file: async (target) => {
       const resolved = await resolveTarget(bb, target);
+      reads.delete(readKey(target));
       await bb.sdk.files.remove({
         hostId: resolved.hostId,
         path: resolved.absolute,
         rootPath: resolved.rootPath,
       });
+      reads.delete(readKey(target));
       return { ok: true as const };
     },
   });

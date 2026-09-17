@@ -1,4 +1,11 @@
-import { memo, useEffect, useImperativeHandle, useRef, type CSSProperties, type Ref } from "react";
+import {
+  memo,
+  useLayoutEffect,
+  useImperativeHandle,
+  useRef,
+  type CSSProperties,
+  type Ref,
+} from "react";
 import { experimental_useCodeTheme, useComposer } from "@get-bb/plugin-sdk/app";
 import type { CodeEditorHandle } from "./code-editor";
 import { Editor } from "./components/ui/editor/editor";
@@ -10,6 +17,7 @@ export const MarkdownEditor = memo(function MarkdownEditor({
   path,
   value,
   saved,
+  revision = 0,
   onDirty,
   readOnly,
   editorRef,
@@ -17,12 +25,14 @@ export const MarkdownEditor = memo(function MarkdownEditor({
   path: string;
   value: string;
   saved: string;
+  revision?: number;
   onDirty?: (dirty: boolean) => void;
   readOnly: boolean;
   editorRef?: Ref<CodeEditorHandle | null>;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const live = useRef(value);
+  const composing = useRef(false);
   const savedRef = useRef(saved);
   const onDirtyRef = useRef(onDirty);
   const composer = useComposer();
@@ -30,13 +40,16 @@ export const MarkdownEditor = memo(function MarkdownEditor({
   savedRef.current = saved;
   onDirtyRef.current = onDirty;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     live.current = value;
-  }, [value]);
+  }, [value, revision]);
 
   useImperativeHandle(editorRef, () => ({
     getDoc() {
       return live.current;
+    },
+    isComposing() {
+      return composing.current;
     },
     blur() {
       const node = root.current?.querySelector<HTMLElement>(".ProseMirror");
@@ -47,6 +60,12 @@ export const MarkdownEditor = memo(function MarkdownEditor({
   return (
     <div
       ref={root}
+      onCompositionStartCapture={() => {
+        composing.current = true;
+      }}
+      onCompositionEndCapture={() => {
+        composing.current = false;
+      }}
       className="sidetree-md h-full min-h-0 overflow-auto"
       style={
         {
@@ -57,6 +76,7 @@ export const MarkdownEditor = memo(function MarkdownEditor({
     >
       <Editor
         value={value}
+        revision={revision}
         format="markdown"
         disabled={readOnly}
         enableImages

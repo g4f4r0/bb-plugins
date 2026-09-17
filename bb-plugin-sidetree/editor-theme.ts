@@ -149,7 +149,7 @@ export const editorChrome = EditorView.theme({
   "&": { height: "100%" },
   ".cm-scroller": {
     overflow: "auto",
-    fontFamily: "var(--font-mono), ui-monospace, monospace",
+    fontFamily: "var(--font-mono, ui-monospace), monospace",
     fontSize: "13px",
     fontKerning: "none",
     fontVariantLigatures: "none",
@@ -184,11 +184,10 @@ export const selectionForeground = ViewPlugin.fromClass(
   { decorations: (value) => value.decorations },
 );
 
-const themeCache = new Map<string, Extension>();
+const themeCache = new WeakMap<PluginCodeThemeData, Extension>();
 
 export function codeMirrorTheme(theme: PluginCodeThemeData): Extension {
-  const key = `${theme.type}:${theme.name}`;
-  const cached = themeCache.get(key);
+  const cached = themeCache.get(theme);
   if (cached !== undefined) return cached;
   const bg = editorSurface(theme);
   const fg = workbench(theme.colors, "editor.foreground", theme.fg);
@@ -257,6 +256,6 @@ export function codeMirrorTheme(theme: PluginCodeThemeData): Extension {
     ),
     syntaxHighlighting(HighlightStyle.define(highlight)),
   ];
-  themeCache.set(key, extension);
+  themeCache.set(theme, extension);
   return extension;
 }

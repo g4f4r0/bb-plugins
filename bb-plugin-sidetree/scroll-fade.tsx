@@ -1,9 +1,14 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useLayoutEffect, useState, type RefObject } from "react";
 
-export function overflowEdges(el: HTMLElement): { above: boolean; below: boolean } {
+export function overflowEdges(
+  el: HTMLElement,
+  previous = { above: false, below: false },
+): { above: boolean; below: boolean } {
   return {
-    above: el.scrollTop > 1,
-    below: el.scrollHeight - el.scrollTop - el.clientHeight > 1,
+    above: el.scrollTop > (previous.above ? 0.5 : 2),
+    below:
+      el.scrollHeight - el.scrollTop - el.clientHeight >
+      (previous.below ? 0.5 : 2),
   };
 }
 
@@ -16,7 +21,7 @@ export function watchOverflowEdges(
   let prev = { above: false, below: false };
   const measure = () => {
     frame = 0;
-    const next = overflowEdges(scroller);
+    const next = overflowEdges(scroller, prev);
     if (prev.above === next.above && prev.below === next.below) return;
     prev = next;
     onChange(next);
@@ -45,7 +50,7 @@ export function useOverflowEdges(
   content?: RefObject<HTMLElement | null>,
 ): { above: boolean; below: boolean } {
   const [edges, setEdges] = useState({ above: false, below: false });
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = scroller.current;
     if (el === null) return;
     const extra = content?.current;
@@ -70,26 +75,28 @@ export function ScrollEdgeFades({
 }) {
   return (
     <>
-      {above ? (
+      {
         <div
           aria-hidden
           data-detail-scroll-fade="above"
           className="pointer-events-none absolute inset-x-0 top-0 z-10 h-6"
           style={{
+            opacity: above ? 1 : 0,
             backgroundImage: `linear-gradient(to bottom, ${color}, transparent)`,
           }}
         />
-      ) : null}
-      {below ? (
+      }
+      {
         <div
           aria-hidden
           data-detail-scroll-fade="below"
           className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-6"
           style={{
+            opacity: below ? 1 : 0,
             backgroundImage: `linear-gradient(to top, ${color}, transparent)`,
           }}
         />
-      ) : null}
+      }
     </>
   );
 }

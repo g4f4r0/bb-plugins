@@ -36,12 +36,14 @@ export function toRelative(root: string, absolute: string): string {
 
 export type Kind = "directory" | "file";
 
+const entryCollator = new Intl.Collator(undefined, { sensitivity: "base" });
+
 export function compareEntries(
   a: { kind: Kind; name: string },
   b: { kind: Kind; name: string },
 ): number {
   if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;
-  return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  return entryCollator.compare(a.name, b.name);
 }
 
 /** Open the workspace checkout when it is the only root entry. */
