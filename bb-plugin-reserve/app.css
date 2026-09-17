@@ -1,8 +1,3 @@
-/* Clip full-bleed dividers to the card, including the scrollbar gutter. */
-section:has([data-reserve-shell]) > div {
-  overflow-x: hidden;
-}
-
 [data-reserve-shell] { width: 100%; max-width: calc(100vw - 32px); }
 /* The host disclosure animates height; opt this plugin out of layout animation. */
 section:has([data-reserve-shell]) { transition: none !important; }

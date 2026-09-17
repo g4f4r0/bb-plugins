@@ -22,7 +22,7 @@ import { bbAgentProviderId, canonicalWindowLabel, formatCost, formatFetchedAt, f
 const GREEN = "#22c55e";
 const AMBER = "#eab308";
 const RED = "#ef4444";
-const SECTION = "relative min-w-0 space-y-2 p-3 after:pointer-events-none after:absolute after:bottom-0 after:left-0 after:h-px after:w-[200%] after:bg-sidebar-border after:content-[''] last:after:hidden";
+const SECTION = "min-w-0 space-y-2 p-3";
 
 function colorForUsed(value: number): string {
   if (value >= 95) return RED;
@@ -96,9 +96,9 @@ function Meter({ usedPercent, label }: { usedPercent: number; label: string }) {
   );
 }
 
-function Section({ icon, label, ariaLabel, value, children }: { icon?: ReactNode; label: ReactNode; ariaLabel?: string; value?: ReactNode; children?: ReactNode }) {
+function Section({ icon, label, ariaLabel, value, children, divider = false }: { icon?: ReactNode; label: ReactNode; ariaLabel?: string; value?: ReactNode; children?: ReactNode; divider?: boolean }) {
   return (
-    <section className={SECTION} aria-label={ariaLabel ?? (typeof label === "string" ? label : undefined)}>
+    <section className={`${SECTION}${divider ? " border-t border-sidebar-border" : ""}`} aria-label={ariaLabel ?? (typeof label === "string" ? label : undefined)}>
       <div className="flex items-center justify-between gap-3 text-xs">
         <span className="flex min-w-0 items-center gap-2 font-medium text-sidebar-foreground">
           {icon}
@@ -265,9 +265,9 @@ export function ReservePopover({ snapshot, onReload, reloading, active = true }:
   const directory = experimental_useProviders();
   const rows = useMemo(() => {
     const result: DisplayRow[] = [];
-    for (const login of snapshot.totals) {
+    for (const [index, login] of snapshot.totals.entries()) {
       result.push({ key: JSON.stringify([login.key, 'header']), content: (
-        <Section icon={<ProviderGlyph id={login.providerId} />} label={login.providerName} ariaLabel={login.accountEmail ? `${login.providerName} ${login.accountEmail}` : login.providerName}>
+        <Section divider={index > 0} icon={<ProviderGlyph id={login.providerId} />} label={login.providerName} ariaLabel={login.accountEmail ? `${login.providerName} ${login.accountEmail}` : login.providerName}>
           {login.accountEmail || login.planLabel ? <div className="flex min-w-0 flex-wrap gap-1.5">
             {login.accountEmail ? <Pill>{login.accountEmail}</Pill> : null}
             {login.planLabel ? <Pill>{login.planLabel}</Pill> : null}
@@ -284,7 +284,7 @@ export function ReservePopover({ snapshot, onReload, reloading, active = true }:
     // Every login previously repeated the same fleet. Display it once, with
     // one virtualizable row per host so huge fleets cannot create a giant row.
     if (snapshot.hosts.length) {
-      result.push({ key: 'machines', content: <Section label="Machines" /> });
+      result.push({ key: 'machines', content: <Section divider label="Machines" /> });
       for (const host of snapshot.hosts) result.push({ key: JSON.stringify(['host', host.id]), content: (
         <div className="px-3 pb-2"><Row icon={<LaptopGlyph />} label={host.name} title={host.name} value={host.status === 'disconnected' ? 'Offline' : ''} /></div>
       ) });
@@ -296,7 +296,7 @@ export function ReservePopover({ snapshot, onReload, reloading, active = true }:
       {snapshot.totals.length === 0 ? <Section label="Logins"><p className="text-xs text-muted-foreground">No leftover windows to show.</p></Section> : null}
       {snapshot.unavailableHosts > 0 ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">Usage unavailable on {snapshot.unavailableHosts} machine(s).</p> : null}
       <DisplayRows rows={rows} active={active} />
-      <Section label={formatFetchedAt(snapshot.fetchedAt)} value={<ReloadButton onReload={onReload} reloading={reloading} />} />
+      <Section divider label={formatFetchedAt(snapshot.fetchedAt)} value={<ReloadButton onReload={onReload} reloading={reloading} />} />
     </ProviderDirectory.Provider>
   );
 }
@@ -305,13 +305,13 @@ function LoadingPopover() {
   return (
     <>
       {Array.from({ length: 3 }, (_, key) => (
-        <Section key={key} label={<Skeleton className="h-3 w-16" />}>
+        <Section divider={key > 0} key={key} label={<Skeleton className="h-3 w-16" />}>
           <Skeleton className="h-6 w-44" />
           <Skeleton className="h-2 w-full rounded-none" />
           <Skeleton className="h-10 w-full" />
         </Section>
       ))}
-      <Section label={<Skeleton className="h-3 w-24" />} value={<Skeleton className="size-8 rounded-md" />} />
+      <Section divider label={<Skeleton className="h-3 w-24" />} value={<Skeleton className="size-8 rounded-md" />} />
     </>
   );
 }
@@ -324,7 +324,7 @@ function ReserveDisclosure(_props: ExperimentalSidebarFooterDisclosureProps) {
   const { container, active, snapshot, error, reload, reloading } = useFleetSnapshot();
   return (
     <div ref={container} data-reserve-shell aria-busy={(active && !snapshot && !error) || reloading} data-reserve-active={active} className="w-full min-w-0">
-      {error ? <div role="alert" className="relative px-3 py-2 text-xs text-destructive after:pointer-events-none after:absolute after:bottom-0 after:left-0 after:h-px after:w-[200%] after:bg-sidebar-border after:content-['']">Could not refresh: {error}</div> : null}
+      {error ? <div role="alert" className="border-b border-sidebar-border px-3 py-2 text-xs text-destructive">Could not refresh: {error}</div> : null}
       {snapshot ? <ReservePopover active={active} snapshot={snapshot} onReload={reload} reloading={reloading} /> : <LoadingPopover />}
     </div>
   );
