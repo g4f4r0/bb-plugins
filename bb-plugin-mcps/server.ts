@@ -675,7 +675,7 @@ export default async function plugin(bb: BbPluginApi) {
   bb.agents.registerTool({
     name: "mcps_search",
     description: "Search MCP tools directly; returns id, server handle, description and input fields (? optional, dots nested). Default 5 results; optional limit is capped at 12.",
-    instructions: "Do not list servers first. Search a short capability phrase, optionally filtering by a known server ID or handle. Usually omit limit; oversized values are capped. Call by id. Request mcps_schema only for missing constraints or schemaRequired results.",
+    instructions: "Do not list servers first. Search a short capability phrase, optionally filtering by a known server ID or handle. Do not repeat an unchanged query after it succeeds. Usually omit limit; oversized values are capped. Call by id. Request mcps_schema only for missing constraints or schemaRequired results.",
     presentation: { label: { pending: "Searching MCP tools", completed: "Searched MCP tools" } },
     parameters: z.object({
       query: z.string().trim().min(1).max(200),
