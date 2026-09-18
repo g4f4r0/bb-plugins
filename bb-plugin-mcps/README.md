@@ -59,6 +59,9 @@ Search emits one input map instead of overlapping shape/field/example objects.
 `?` marks optional fields; dots represent nested argument objects. Common value
 constraints remain visible, and complex or truncated schemas are explicitly
 marked `schemaRequired`. Use the `server` filter on tool, prompt and resource
-discovery to avoid unrelated connections. JSON responses are compact, empty
-availability lists are omitted, and oversized discovery responses remain valid
-JSON with a full-data artifact link. Agent output defaults to 8,000 characters.
+discovery to avoid unrelated connections. Tool search works directly across
+enabled servers, so agents do not need to list servers first. Its optional
+result limit is capped at 12 instead of rejecting oversized requests. JSON
+responses are compact, empty availability lists are omitted, and oversized
+discovery responses remain valid JSON with a full-data artifact link. Agent
+output defaults to 8,000 characters.

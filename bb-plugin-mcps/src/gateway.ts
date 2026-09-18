@@ -27,7 +27,7 @@ import type { McpsStore } from "./store.js";
 import { expandPlaceholders, validateMcpServer } from "./loader.js";
 import { isWithinRoot } from "./safe-fs.js";
 import { McpOAuthProvider } from "./oauth.js";
-import { compactToolFromCatalog, scoreTokens, tokenize, SEARCH_LIMIT } from "./catalog.js";
+import { compactToolFromCatalog, scoreTokens, tokenize, SEARCH_LIMIT, SEARCH_MAX } from "./catalog.js";
 import { parameterNames, validateCallArgs } from "./call-card.js";
 import type {
   CatalogPrompt,
@@ -996,7 +996,7 @@ export class McpGateway implements McpRuntime {
       }
     }
     ranked.sort((a, b) => b.score - a.score || a.tool.name.localeCompare(b.tool.name));
-    const cap = Math.min(Math.max(1, limit), 12);
+    const cap = Math.min(Math.max(1, limit), SEARCH_MAX);
     return {
       tools: ranked.slice(0, cap).map((hit) => compactToolFromCatalog(this.catalogTool(hit.record, hit.cfg, hit.pluginName, hit.tool), { card: true })),
       unavailable,

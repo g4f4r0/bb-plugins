@@ -10,7 +10,7 @@ import { DeferredOAuthCredentialStore, McpOAuthProvider, type OAuthCredentialRec
 import { oauthRedirectBase, serverAccessPublicUrl, serverAppUrl } from "./src/oauth-redirect.js";
 import { parseHeaderLines, validateMcpServer } from "./src/loader.js";
 import { ensureDir, rimraf } from "./src/safe-fs.js";
-import { boundText, boundJson, formatMcpResult, SCHEMA_INLINE_CHARS, scoreMatch, SEARCH_LIMIT, writeArtifact } from "./src/catalog.js";
+import { boundText, boundJson, formatMcpResult, SCHEMA_INLINE_CHARS, scoreMatch, SEARCH_LIMIT, SEARCH_MAX, writeArtifact } from "./src/catalog.js";
 import { validateCallArgs } from "./src/call-card.js";
 import { classifyTool } from "./src/policy.js";
 import { fetchRegistryServers, normalizeRegistryServer, OFFICIAL_REGISTRY, type RegistryServerSummary } from "./src/registry.js";
@@ -653,7 +653,7 @@ export default async function plugin(bb: BbPluginApi) {
   bb.agents.registerTool({
     name: "mcps_servers",
     description: "List installed MCPs with stable IDs, handles, status and known tool counts. Paginated; details opt-in.",
-    instructions: "Use mcps_servers to see what is installed and enabled. Search tools with mcps_search.",
+    instructions: "Use only to inspect installed servers, status, or handles. mcps_search does not require this first.",
     presentation: { label: { pending: "Listing MCP servers", completed: "Listed MCP servers" } },
     parameters: z.object({
       query: z.string().max(200).optional(),
@@ -674,12 +674,16 @@ export default async function plugin(bb: BbPluginApi) {
   });
   bb.agents.registerTool({
     name: "mcps_search",
-    description: "Search MCP tools; returns id, server handle, description and input fields (? optional, dots nested). Filter by server ID or handle.",
-    instructions: "Call by id. Input uses dotted paths; ? means optional. Request mcps_schema for constraints, full descriptions, or schemaRequired results.",
+    description: "Search MCP tools directly; returns id, server handle, description and input fields (? optional, dots nested). Default 5 results; optional limit is capped at 12.",
+    instructions: "Do not list servers first. Search a short capability phrase, optionally filtering by a known server ID or handle. Usually omit limit; oversized values are capped. Call by id. Request mcps_schema only for missing constraints or schemaRequired results.",
     presentation: { label: { pending: "Searching MCP tools", completed: "Searched MCP tools" } },
-    parameters: z.object({ query: z.string().trim().min(1).max(200), server: z.string().max(128).optional(), limit: z.number().int().min(1).max(12).optional() }).strict(),
+    parameters: z.object({
+      query: z.string().trim().min(1).max(200),
+      server: z.string().max(128).optional(),
+      limit: z.number().int().min(1).optional().describe("Desired result count; values above 12 are capped. Usually omit."),
+    }).strict(),
     async execute({ query, limit, server }) {
-      const result = await gateway.searchTools(query, limit ?? SEARCH_LIMIT, server);
+      const result = await gateway.searchTools(query, Math.min(limit ?? SEARCH_LIMIT, SEARCH_MAX), server);
       return agentData({ tools: toolRows(result.tools), ...(result.unavailable.length ? { unavailable: result.unavailable } : {}) }, "search");
     },
   });

@@ -158,6 +158,8 @@ it("uses one input map and preserves full schemas on demand", async () => {
     const result = unpack(await harness.behavior.callAgentTool("mcps_search", { query: "search" }));
     expect(result.tools[0]).toEqual({ id: tool.opaqueId, server: "Fixture", name: "search", description: "Find things", input: { query: "string (minLength=1)", "limit?": "integer (minimum=1)" } });
     expect(result.unavailable).toBeUndefined();
+    await expect(harness.behavior.callAgentTool("mcps_search", { query: "search", limit: 50 })).resolves.toBeDefined();
+    expect(McpGateway.prototype.searchTools).toHaveBeenLastCalledWith("search", 12, undefined);
     const full = unpack(await harness.behavior.callAgentTool("mcps_schema", { id: tool.opaqueId }));
     expect(full.inputSchema).toEqual(schema);
     expect(full.card).toBeUndefined();

@@ -6,6 +6,7 @@ import { callCard } from "./call-card.js";
 import { classifyTool } from "./policy.js";
 
 export const SEARCH_LIMIT = 5;
+export const SEARCH_MAX = 12;
 export const INDEX_LIMIT = 64;
 export const DESCRIPTION_CHARS = 180;
 export const AGENT_OUTPUT_CHARS = 12_000;
