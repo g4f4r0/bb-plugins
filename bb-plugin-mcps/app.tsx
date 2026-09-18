@@ -43,7 +43,7 @@ import { toast } from "sonner";
 
 type ServerRow = {
   id: string;
-  serverId: string;
+  handle: string;
   name: string;
   description: string | null;
   type: string;
@@ -947,7 +947,7 @@ function DetailPage({
   onRemove: (server: ServerRow) => void;
   onAuth: (id: string) => void;
 }) {
-  const server = servers?.find((item) => item.id === id) ?? null;
+  const server = servers?.find((item) => (item.id === id || item.handle === id)) ?? null;
   const [tools, setTools] = useState<CompactTool[] | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [toolPage, setToolPage] = useState(0);
@@ -1004,6 +1004,7 @@ function DetailPage({
               <Icon name={typeIcon(server.type)} className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             </span>
             <h1 className="min-w-0 truncate text-base font-semibold">{server.name}</h1>
+            <span className="text-xs text-muted-foreground" title={server.id}>@{server.handle}</span>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2 pt-0.5">
@@ -1116,7 +1117,7 @@ function McpsPage({ subPath }: { subPath: string }) {
       publishDetailLabel(null);
       return;
     }
-    publishDetailLabel(servers?.find((server) => server.id === route.detailId)?.name ?? null);
+    publishDetailLabel(servers?.find((server) => (server.id === route.detailId || server.handle === route.detailId))?.name ?? null);
   }, [route.detailId, servers]);
 
   const run = async (label: string, work: () => Promise<unknown>) => {

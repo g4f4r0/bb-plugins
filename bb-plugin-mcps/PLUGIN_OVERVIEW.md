@@ -19,4 +19,4 @@ catalog dump.
 
 ## For agents
 
-Use `mcps_search`, then `mcps_call` with the hit's call card. Use `mcps_schema` only when that card is missing a field. Prefer these over `agent_plugins_list_tools`.
+Use `mcps_search`, then `mcps_call` with the hit's `id` and input arguments. Use `mcps_schema` when full descriptions or constraints are needed. Prefer these over `agent_plugins_list_tools`.

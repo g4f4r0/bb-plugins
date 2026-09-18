@@ -15,6 +15,7 @@ const MAX_MERGE_DEPTH = 8;
 // Schema validator if live tools start depending on those keywords.
 
 export type CallCard = {
+  truncated?: boolean;
   shape: string;
   fields: Array<{ name: string; type: string; required: boolean; enum?: string[] }>;
   example: JsonRecord;
@@ -113,7 +114,7 @@ function clipShape(text: string): string {
   return `${text.slice(0, Math.max(0, MAX_SHAPE_CHARS - 1))}…`;
 }
 
-function typeName(schema: JsonRecord): string {
+function baseTypeName(schema: JsonRecord): string {
   const record = normalize(schema);
   if (record.const !== undefined) return JSON.stringify(record.const);
   if (Array.isArray(record.enum) && record.enum.length > 0) {
@@ -124,6 +125,13 @@ function typeName(schema: JsonRecord): string {
   if (typeof record.type === "string") return record.type;
   if (Object.keys(propertiesOf(record)).length > 0) return "object";
   return "any";
+}
+
+function typeName(schema: JsonRecord): string {
+  const record = normalize(schema);
+  const constraints = ["format", "pattern", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "minLength", "maxLength", "minItems", "maxItems"]
+    .filter(key => record[key] !== undefined).map(key => `${key}=${JSON.stringify(record[key])}`);
+  return baseTypeName(record) + (constraints.length ? ` (${constraints.join(", ")})` : "");
 }
 
 function stringEnums(schema: JsonRecord): string[] {
@@ -298,7 +306,7 @@ function boundCard(card: CallCard): CallCard {
       break;
     }
   }
-  return { shape, fields, example };
+  return { shape, fields, example, ...(fields.length < card.fields.length || card.fields.length >= MAX_FIELDS ? { truncated: true } : {}) };
 }
 
 export function callCard(schema: unknown): CallCard {

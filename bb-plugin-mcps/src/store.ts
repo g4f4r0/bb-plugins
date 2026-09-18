@@ -1,7 +1,9 @@
+import { randomInt } from "node:crypto";
 import type Database from "better-sqlite3";
 import type { McpServerRecord, McpSourceRecord } from "./types.js";
 
 export class McpsStore {
+  private readonly identities = new Map<string, { id: string; handle: string }>();
   constructor(
     readonly db: Database.Database,
     migrate: (db: Database.Database, statements: string[]) => void,
@@ -44,7 +46,35 @@ export class McpsStore {
         FOREIGN KEY (pluginId, serverId) REFERENCES mcp_servers(pluginId, serverId) ON DELETE CASCADE
       )`,
       `UPDATE mcp_servers SET approved = 1, status = CASE WHEN status = 'needs-approval' THEN 'idle' ELSE status END WHERE approved != 1`,
+      `CREATE TABLE IF NOT EXISTS source_identities (
+        sourceKey TEXT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+        id TEXT NOT NULL UNIQUE,
+        handle TEXT NOT NULL UNIQUE
+      )`,
     ]);
+    this.transaction(() => {
+      for (const source of this.listSources()) this.ensureIdentity(source.id);
+    });
+  }
+
+  /** Public identity is independent of legacy storage and OAuth keys. */
+  identity(sourceKey: string): { id: string; handle: string } {
+    const cached = this.identities.get(sourceKey);
+    if (cached) return cached;
+    const value = this.db.prepare("SELECT id, handle FROM source_identities WHERE sourceKey = ?").get(sourceKey);
+    if (!value) throw new Error(`MCP identity missing: ${sourceKey}`);
+    const identity = Object.freeze(value as { id: string; handle: string });
+    this.identities.set(sourceKey, identity);
+    return identity;
+  }
+
+  private ensureIdentity(sourceKey: string): void {
+    if (this.db.prepare("SELECT 1 FROM source_identities WHERE sourceKey = ?").get(sourceKey)) return;
+    const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+    let id: string;
+    do { id = "mcp_" + Array.from({ length: 10 }, () => chars[randomInt(chars.length)]).join(""); }
+    while (this.db.prepare("SELECT 1 FROM source_identities WHERE id = ?").get(id) || this.getPlugin(id));
+    this.db.prepare("INSERT INTO source_identities(sourceKey, id, handle) VALUES (?, ?, ?)").run(sourceKey, id, sourceKey);
   }
 
   listSources(): McpSourceRecord[] {
@@ -72,9 +102,11 @@ export class McpsStore {
          sourceRef=excluded.sourceRef, registryName=excluded.registryName, registryVersion=excluded.registryVersion,
          pluginRoot=excluded.pluginRoot, pluginData=excluded.pluginData, updatedAt=excluded.updatedAt`,
     ).run(record as unknown as Record<string, unknown>);
+    this.ensureIdentity(record.id);
   }
 
   deleteSource(id: string): boolean {
+    this.identities.delete(id);
     return this.db.prepare(`DELETE FROM sources WHERE id = ?`).run(id).changes > 0;
   }
 
@@ -90,7 +122,8 @@ export class McpsStore {
   }
 
   resolveSource(idOrName: string): McpSourceRecord | undefined {
-    return this.getPlugin(idOrName) ?? this.getSourceByName(idOrName);
+    const identity = this.db.prepare("SELECT sourceKey FROM source_identities WHERE id = ? OR handle = ?").get(idOrName, idOrName) as { sourceKey: string } | undefined;
+    return (identity ? this.getPlugin(identity.sourceKey) : undefined) ?? this.getPlugin(idOrName) ?? this.getSourceByName(idOrName);
   }
 
   deleteMcpServer(pluginId: string, serverId: string): boolean {

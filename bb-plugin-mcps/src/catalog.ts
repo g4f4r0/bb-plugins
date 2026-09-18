@@ -39,21 +39,26 @@ export function compactToolFromCatalog(tool: {
   opaqueId: string;
   serverId: string;
   pluginName: string;
+  pluginId?: string;
   name: string;
   description: string;
   annotations?: JsonRecord;
   enabled?: boolean;
   inputSchema?: JsonRecord;
 }, options?: { card?: boolean }): CompactTool {
+  const schema = tool.inputSchema ?? { type: "object" };
+  const card = options?.card ? callCard(schema) : undefined;
+  const schemaRequired = /"(?:oneOf|anyOf|allOf|\$ref|if|dependentRequired)"\s*:/.test(JSON.stringify(schema));
   return {
     opaqueId: tool.opaqueId,
+    ...(tool.pluginId ? { pluginId: tool.pluginId } : {}),
     serverId: tool.serverId,
     serverName: tool.pluginName,
     name: tool.name,
     description: clip(tool.description),
     risk: classifyTool(tool.annotations),
     enabled: tool.enabled !== false,
-    ...(options?.card ? { card: callCard(tool.inputSchema ?? { type: "object" }) } : {}),
+    ...(card ? { card, ...(schemaRequired ? { schemaRequired: true } : {}) } : {}),
   };
 }
 
@@ -61,18 +66,18 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-export function prettyIfJson(text: string): string {
+export function compactIfJson(text: string): string {
   const trimmed = text.trim();
   if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return text;
   try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2);
+    return JSON.stringify(JSON.parse(trimmed));
   } catch {
     return text;
   }
 }
 
 function formatContentBlock(block: Record<string, unknown>): string {
-  if (block.type === "text" && typeof block.text === "string") return prettyIfJson(block.text);
+  if (block.type === "text" && typeof block.text === "string") return compactIfJson(block.text);
   if (block.type === "image" || block.type === "audio" || block.type === "blob") {
     const mime = typeof block.mimeType === "string" ? ` ${block.mimeType}` : "";
     return `[${block.type}${mime} omitted]`;
@@ -93,7 +98,7 @@ function sameJson(left: unknown, right: unknown): boolean {
 
 export function formatMcpResult(value: unknown): { text: string; isError: boolean } {
   if (value == null) return { text: "null", isError: false };
-  if (typeof value === "string") return { text: prettyIfJson(value), isError: false };
+  if (typeof value === "string") return { text: compactIfJson(value), isError: false };
   if (typeof value !== "object") return { text: String(value), isError: false };
   const record = value as Record<string, unknown>;
   const isError = record.isError === true;
@@ -118,10 +123,10 @@ export function formatMcpResult(value: unknown): { text: string; isError: boolea
         return false;
       }
     });
-    if (!duplicate) chunks.push(JSON.stringify(record.structuredContent, null, 2));
+    if (!duplicate) chunks.push(JSON.stringify(record.structuredContent));
   }
   if (chunks.length > 0) return { text: chunks.join("\n\n"), isError };
-  const pretty = JSON.stringify(value, null, 2);
+  const pretty = JSON.stringify(value);
   if (pretty.length <= AGENT_OUTPUT_CHARS) return { text: pretty, isError };
   return { text: JSON.stringify(value), isError };
 }

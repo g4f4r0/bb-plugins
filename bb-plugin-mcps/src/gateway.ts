@@ -45,14 +45,14 @@ import { optionalMcpCall } from "./mcp-compat.js";
 export interface McpRuntime {
   listTools(): Promise<CatalogTool[]>;
   getTool(opaqueId: string): Promise<CatalogTool>;
-  searchTools(query: string, limit?: number): Promise<ToolSearchHits>;
+  searchTools(query: string, limit?: number, server?: string): Promise<ToolSearchHits>;
   compactServers(): Promise<CompactServer[]>;
   inspectServer(pluginId: string): Promise<{ tools: CompactTool[]; error: string | null }>;
   call(opaqueId: string, args: JsonRecord, signal?: AbortSignal): Promise<McpCallResult>;
-  listPrompts(): Promise<CatalogPrompt[]>;
+  listPrompts(server?: string): Promise<CatalogPrompt[]>;
   getPrompt(opaqueId: string, args?: JsonRecord, signal?: AbortSignal): Promise<JsonRecord>;
-  listResources(): Promise<CatalogResource[]>;
-  listResourceTemplates(): Promise<CatalogResourceTemplate[]>;
+  listResources(server?: string): Promise<CatalogResource[]>;
+  listResourceTemplates(server?: string): Promise<CatalogResourceTemplate[]>;
   readResource(opaqueId: string, signal?: AbortSignal): Promise<JsonRecord>;
   complete(ref: JsonRecord, argument: JsonRecord, signal?: AbortSignal): Promise<JsonRecord>;
   subscribeResource(opaqueId: string, signal?: AbortSignal): Promise<void>;
@@ -140,12 +140,18 @@ export function slug(v: string): string { return v.toLowerCase().replace(/[^a-z0
 function shortHash(v: string): string { return crypto.createHash("sha256").update(v).digest("hex").slice(0, 10); }
 function keyOf(pluginId: string, serverId: string): string { return `${pluginId}:${serverId}`; }
 
-function exposedId(kind: string, pluginId: string, serverId: string, name: string): string {
+function legacyExposedId(kind: string, pluginId: string, serverId: string, name: string): string {
   // Keep the original tool-ID hash stable for clients that cached a catalog
   // entry before prompts/resources were added. New capability kinds are
   // namespaced in their hash so identical names cannot collide across views.
   const hashInput = kind === "tool" ? [pluginId, serverId, name] : [kind, pluginId, serverId, name];
   return `${slug(pluginId)}__${slug(serverId)}__${slug(name)}_${shortHash(JSON.stringify(hashInput))}`;
+}
+
+function exposedId(kind: string, pluginId: string, serverId: string, name: string): string {
+  const prefix = { tool: "mcpt", prompt: "mcpp", resource: "mcpr", "resource-template": "mcprt" }[kind] ?? "mcp";
+  const hash = crypto.createHash("sha256").update(JSON.stringify([kind, pluginId, serverId, name])).digest("hex");
+  return `${prefix}_${BigInt("0x" + hash).toString(36).slice(0, 10)}`;
 }
 
 function asRecord(value: unknown): JsonRecord | undefined {
@@ -737,22 +743,22 @@ export class McpGateway implements McpRuntime {
     this.serverIndex.set(key, ids);
     const index = (id: string, ref: CatalogRef) => { ids.add(id); this.catalogIndex.set(id, ref); };
     for (const tool of catalog.tools) {
-      index(exposedId("tool", record.pluginId, record.serverId, tool.name), {
+      index(this.exposedId("tool", record.pluginId, record.serverId, tool.name), {
         kind: "tool", pluginId: record.pluginId, serverId: record.serverId, name: tool.name,
       });
     }
     for (const prompt of catalog.prompts) {
-      index(exposedId("prompt", record.pluginId, record.serverId, prompt.name), {
+      index(this.exposedId("prompt", record.pluginId, record.serverId, prompt.name), {
         kind: "prompt", pluginId: record.pluginId, serverId: record.serverId, name: prompt.name,
       });
     }
     for (const resource of catalog.resources) {
-      index(exposedId("resource", record.pluginId, record.serverId, resource.uri), {
+      index(this.exposedId("resource", record.pluginId, record.serverId, resource.uri), {
         kind: "resource", pluginId: record.pluginId, serverId: record.serverId, name: resource.uri,
       });
     }
     for (const template of catalog.resourceTemplates) {
-      index(exposedId("resource-template", record.pluginId, record.serverId, template.uriTemplate), {
+      index(this.exposedId("resource-template", record.pluginId, record.serverId, template.uriTemplate), {
         kind: "resource-template", pluginId: record.pluginId, serverId: record.serverId, name: template.uriTemplate,
       });
     }
@@ -770,7 +776,7 @@ export class McpGateway implements McpRuntime {
           : kind === "prompt" ? catalog.prompts.map(item => item.name)
           : kind === "resource" ? catalog.resources.map(item => item.uri)
           : catalog.resourceTemplates.map(item => item.uriTemplate);
-        const name = names.find(name => exposedId(kind, record.pluginId, record.serverId, name) === opaqueId);
+        const name = names.find(name => (this.exposedId(kind, record.pluginId, record.serverId, name) === opaqueId || legacyExposedId(kind, record.pluginId, record.serverId, name) === opaqueId));
         if (name === undefined) throw new Error("No match");
         return {kind, pluginId: record.pluginId, serverId: record.serverId, name};
       }));
@@ -936,10 +942,10 @@ export class McpGateway implements McpRuntime {
     }
   }
 
-  async searchTools(query: string, limit = SEARCH_LIMIT): Promise<ToolSearchHits> {
+  async searchTools(query: string, limit = SEARCH_LIMIT, server?: string): Promise<ToolSearchHits> {
     const q = query.trim();
     if (!q) return { tools: [], unavailable: [] };
-    const servers = this.enabledApprovedServers();
+    const servers = this.selectedServers(server);
     const waitMs = this.options.searchWaitMs ?? SEARCH_WAIT_MS;
     const loaded = new Map<string, { catalog: CatalogCache; generation: object | undefined }>();
     const loads = servers.map((record) => this.getCatalog(record).then(
@@ -960,6 +966,7 @@ export class McpGateway implements McpRuntime {
     const tokens = tokenize(q);
     const normalizedQuery = q.toLowerCase();
     const exactRef = this.catalogIndex.get(q);
+    const idQuery = /^mcpt_[a-z0-9]{10}$/.test(q) || q.includes("__");
     const ranked: Array<{ score: number; tool: Tool; record: typeof servers[number]; cfg: ServerConfig; pluginName: string }> = [];
     for (const record of servers) {
       const name = this.store.getPlugin(record.pluginId)?.name ?? record.serverId;
@@ -980,7 +987,7 @@ export class McpGateway implements McpRuntime {
       }
       const pluginName = this.store.getPlugin(record.pluginId)?.name ?? record.pluginId;
       for (const tool of cached.tools) {
-        const exact = tool.name.toLowerCase() === normalizedQuery || (exactRef?.kind === "tool" && exactRef.pluginId === record.pluginId && exactRef.serverId === record.serverId && exactRef.name === tool.name) || (!exactRef && q.includes("__") && exposedId("tool", record.pluginId, record.serverId, tool.name) === q);
+        const exact = tool.name.toLowerCase() === normalizedQuery || (exactRef?.kind === "tool" && exactRef.pluginId === record.pluginId && exactRef.serverId === record.serverId && exactRef.name === tool.name) || (!exactRef && idQuery && (this.exposedId("tool", record.pluginId, record.serverId, tool.name) === q || legacyExposedId("tool", record.pluginId, record.serverId, tool.name) === q));
         const searchText = cached.toolSearchText.get(tool.name) ?? tool.name;
         let score = scoreTokens(tokens, tool.name.toLowerCase(), `${pluginName.toLowerCase()}\n${record.serverId.toLowerCase()}\n${searchText}`);
         if (exact) score += 50;
@@ -1008,9 +1015,9 @@ export class McpGateway implements McpRuntime {
     return contentResult(result);
   }
 
-  async listPrompts(): Promise<CatalogPrompt[]> {
+  async listPrompts(server?: string): Promise<CatalogPrompt[]> {
     const result: CatalogPrompt[] = [];
-    for (const record of this.enabledApprovedServers()) {
+    for (const record of this.selectedServers(server)) {
       const cfg = parseServerConfig(record.configJson);
       if (!cfg) continue;
       try {
@@ -1035,9 +1042,9 @@ export class McpGateway implements McpRuntime {
     return responseRecord(await this.withAuthState(definition.pluginId, definition.serverId, () => this.callPrompt(conn, definition.name, argumentsMap, signal)));
   }
 
-  async listResources(): Promise<CatalogResource[]> {
+  async listResources(server?: string): Promise<CatalogResource[]> {
     const result: CatalogResource[] = [];
-    for (const record of this.enabledApprovedServers()) {
+    for (const record of this.selectedServers(server)) {
       const cfg = parseServerConfig(record.configJson);
       if (!cfg) continue;
       try {
@@ -1049,9 +1056,9 @@ export class McpGateway implements McpRuntime {
     return result;
   }
 
-  async listResourceTemplates(): Promise<CatalogResourceTemplate[]> {
+  async listResourceTemplates(server?: string): Promise<CatalogResourceTemplate[]> {
     const result: CatalogResourceTemplate[] = [];
-    for (const record of this.enabledApprovedServers()) {
+    for (const record of this.selectedServers(server)) {
       const cfg = parseServerConfig(record.configJson);
       if (!cfg) continue;
       try {
@@ -1467,6 +1474,12 @@ export class McpGateway implements McpRuntime {
     return cfg;
   }
 
+  private selectedServers(server?: string) {
+    const source = server ? this.store.resolveSource(server) : undefined;
+    if (server && !source) throw new Error(`MCP server not found: ${server}`);
+    return this.enabledApprovedServers().filter(record => !source || record.pluginId === source.id);
+  }
+
   private enabledApprovedServers() {
     return this.store.listMcpServers().filter((record) => record.enabled === 1 && record.approved === 1);
   }
@@ -1597,10 +1610,14 @@ export class McpGateway implements McpRuntime {
     }
   }
 
+  private exposedId(kind: string, pluginId: string, serverId: string, name: string): string {
+    return exposedId(kind, this.store.identity(pluginId).id, serverId, name);
+  }
+
   private catalogTool(record: ReturnType<McpGateway["serverRecord"]>, cfg: ServerConfig, pluginName: string, tool: Tool): CatalogTool {
     const raw = tool as unknown as JsonRecord;
     return omitUndefined({
-      opaqueId: exposedId("tool", record.pluginId, record.serverId, tool.name),
+      opaqueId: this.exposedId("tool", record.pluginId, record.serverId, tool.name),
       pluginId: record.pluginId,
       pluginName,
       serverId: record.serverId,
@@ -1620,7 +1637,7 @@ export class McpGateway implements McpRuntime {
   private toolError(record: ReturnType<McpGateway["serverRecord"]>, cfg: ServerConfig, error: unknown): CatalogTool {
     const message = errorText(error);
     return {
-      opaqueId: exposedId("tool", record.pluginId, record.serverId, "__error__"),
+      opaqueId: this.exposedId("tool", record.pluginId, record.serverId, "__error__"),
       pluginId: record.pluginId,
       pluginName: this.store.getPlugin(record.pluginId)?.name ?? record.pluginId,
       serverId: record.serverId,
@@ -1636,7 +1653,7 @@ export class McpGateway implements McpRuntime {
   private catalogPrompt(record: ReturnType<McpGateway["serverRecord"]>, cfg: ServerConfig, pluginName: string, prompt: Prompt): CatalogPrompt {
     const raw = prompt as unknown as JsonRecord;
     return omitUndefined({
-      opaqueId: exposedId("prompt", record.pluginId, record.serverId, prompt.name),
+      opaqueId: this.exposedId("prompt", record.pluginId, record.serverId, prompt.name),
       pluginId: record.pluginId,
       pluginName,
       serverId: record.serverId,
@@ -1654,7 +1671,7 @@ export class McpGateway implements McpRuntime {
   private catalogResource(record: ReturnType<McpGateway["serverRecord"]>, cfg: ServerConfig, pluginName: string, resource: Resource): CatalogResource {
     const raw = resource as unknown as JsonRecord;
     return omitUndefined({
-      opaqueId: exposedId("resource", record.pluginId, record.serverId, resource.uri),
+      opaqueId: this.exposedId("resource", record.pluginId, record.serverId, resource.uri),
       pluginId: record.pluginId,
       pluginName,
       serverId: record.serverId,
@@ -1673,7 +1690,7 @@ export class McpGateway implements McpRuntime {
   private catalogResourceTemplate(record: ReturnType<McpGateway["serverRecord"]>, cfg: ServerConfig, pluginName: string, template: ResourceTemplateType): CatalogResourceTemplate {
     const raw = template as unknown as JsonRecord;
     return omitUndefined({
-      opaqueId: exposedId("resource-template", record.pluginId, record.serverId, template.uriTemplate),
+      opaqueId: this.exposedId("resource-template", record.pluginId, record.serverId, template.uriTemplate),
       pluginId: record.pluginId,
       pluginName,
       serverId: record.serverId,

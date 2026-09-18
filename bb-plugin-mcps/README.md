@@ -2,7 +2,7 @@
 
 BB plugin that is the MCP registry for every provider: official registry plus
 manual stdio/HTTP servers, exposed as a small lazy catalog (`mcps_search` with
-call cards, then `mcps_call`; `mcps_schema` only when the card is not enough)
+compact input maps, then `mcps_call`; `mcps_schema` when more detail is needed)
 instead of dumping every schema into context.
 
 Permanent source: `/home/g4f4r0/projects/bb-plugins/bb-plugin-mcps`.
@@ -38,3 +38,27 @@ not automatically replayed after session or network errors.
 
 Providers can still revoke authorization or require renewed consent. Stress
 fixtures do not expire real account tokens or simulate every provider policy.
+
+## IDs and context
+
+MCP installations expose a stable `mcp_` ID and a separate readable `handle`.
+Tools, prompts, resources and resource templates use `mcpt_`, `mcpp_`, `mcpr_`
+and `mcprt_` IDs. Agent results and calls consistently use `id`. Existing handles,
+old capability IDs and previous `toolId`/`promptId`/`resourceId`/`opaqueId` inputs
+remain accepted. Existing storage and OAuth keys are retained internally so this
+migration does not invalidate credentials; `serverId: "mcp"` was the old internal
+connection name, not a global identity.
+
+`mcps_servers` returns 20 entries by default, with a cursor for more. Known zero
+tool counts are retained; unknown counts are omitted. Installation metadata,
+empty descriptions and prompt/resource counts are available via `details:true`.
+The management UI and `bb mcps show <id-or-handle>` retain full diagnostics.
+`bb mcps list --json` is compact; `--details` adds diagnostic metadata.
+
+Search emits one input map instead of overlapping shape/field/example objects.
+`?` marks optional fields; dots represent nested argument objects. Common value
+constraints remain visible, and complex or truncated schemas are explicitly
+marked `schemaRequired`. Use the `server` filter on tool, prompt and resource
+discovery to avoid unrelated connections. JSON responses are compact, empty
+availability lists are omitted, and oversized discovery responses remain valid
+JSON with a full-data artifact link. Agent output defaults to 8,000 characters.

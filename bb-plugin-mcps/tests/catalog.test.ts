@@ -85,13 +85,13 @@ describe("official MCP registry", () => {
 });
 
 describe("formatMcpResult", () => {
-  it("unwraps MCP text content and pretty-prints nested JSON", () => {
+  it("unwraps MCP text content and compacts nested JSON", () => {
     const formatted = formatMcpResult({
       content: [{ type: "text", text: "{\"results\":[{\"title\":\"Tasks\"}]}" }],
       isError: false,
     });
     expect(formatted.isError).toBe(false);
-    expect(formatted.text).toContain('"title": "Tasks"');
+    expect(formatted.text).toContain('"title":"Tasks"');
     expect(formatted.text).not.toContain('"content"');
   });
 
@@ -111,7 +111,7 @@ describe("formatMcpResult", () => {
       ],
       structuredContent: payload,
     });
-    expect(formatted.text).toContain('"title": "Tasks"');
+    expect(formatted.text).toContain('"title":"Tasks"');
     expect(formatted.text).toContain("[image image/png omitted]");
     expect(formatted.text.split("Tasks").length).toBe(2);
   });

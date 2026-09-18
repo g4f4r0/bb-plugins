@@ -10,8 +10,8 @@ import { DeferredOAuthCredentialStore, McpOAuthProvider, type OAuthCredentialRec
 import { oauthRedirectBase, serverAccessPublicUrl, serverAppUrl } from "./src/oauth-redirect.js";
 import { parseHeaderLines, validateMcpServer } from "./src/loader.js";
 import { ensureDir, rimraf } from "./src/safe-fs.js";
-import { boundText, formatMcpResult, packSearchResult, SCHEMA_INLINE_CHARS, scoreMatch, SEARCH_LIMIT, writeArtifact } from "./src/catalog.js";
-import { callCard, validateCallArgs } from "./src/call-card.js";
+import { boundText, boundJson, formatMcpResult, SCHEMA_INLINE_CHARS, scoreMatch, SEARCH_LIMIT, writeArtifact } from "./src/catalog.js";
+import { validateCallArgs } from "./src/call-card.js";
 import { classifyTool } from "./src/policy.js";
 import { fetchRegistryServers, normalizeRegistryServer, OFFICIAL_REGISTRY, type RegistryServerSummary } from "./src/registry.js";
 import type { JsonRecord, McpServerType, McpSourceKind } from "./src/types.js";
@@ -21,7 +21,7 @@ const sourceIdSchema = z.string().min(1).max(128);
 
 const compactServerSchema = z.object({
   id: z.string(),
-  serverId: z.string(),
+  handle: z.string(),
   name: z.string(),
   description: z.string().nullable(),
   type: z.string(),
@@ -53,6 +53,8 @@ const registryHitSchema = z.object({
 }).strict();
 
 const compactToolSchema = z.object({
+  schemaRequired: z.boolean().optional(),
+  pluginId: z.string().optional(),
   opaqueId: z.string(),
   serverId: z.string(),
   serverName: z.string(),
@@ -61,6 +63,7 @@ const compactToolSchema = z.object({
   risk: z.enum(["read", "write", "destructive"]),
   enabled: z.boolean(),
   card: z.object({
+    truncated: z.boolean().optional(),
     shape: z.string(),
     fields: z.array(z.object({
       name: z.string(),
@@ -89,7 +92,7 @@ export const rpcContract = defineRpcContract({
       headers: z.record(z.string(), z.string()).optional(),
       headerLines: z.array(z.string().max(4096)).max(32).optional(),
     }).strict(),
-    output: z.object({ id: z.string(), serverId: z.string(), name: z.string() }).strict(),
+    output: z.object({ id: z.string(), handle: z.string(), name: z.string() }).strict(),
   },
   addManual: {
     input: z.object({
@@ -102,7 +105,7 @@ export const rpcContract = defineRpcContract({
       headers: z.record(z.string(), z.string()).optional(),
       headerLines: z.array(z.string().max(4096)).max(32).optional(),
     }).strict(),
-    output: z.object({ id: z.string(), serverId: z.string(), name: z.string() }).strict(),
+    output: z.object({ id: z.string(), handle: z.string(), name: z.string() }).strict(),
   },
   remove: { input: z.object({ id: sourceIdSchema }).strict(), output: z.object({ deleted: z.boolean() }).strict() },
   approve: { input: z.object({ id: sourceIdSchema }).strict(), output: z.object({ approved: z.boolean() }).strict() },
@@ -316,10 +319,15 @@ export default async function plugin(bb: BbPluginApi) {
     await ensureDir(dir);
     return dir;
   }
-  async function agentReply(value: unknown, name: string) {
+  async function agentReply(value: unknown, name: string, maxChars = 8_000) {
     const formatted = formatMcpResult(value);
-    const text = await boundText(formatted.text, { artifactDir: await artifactDir(), name });
+    const text = await boundText(formatted.text, { artifactDir: await artifactDir(), name, maxChars });
     return { content: [{ type: "text" as const, text }], ...(formatted.isError ? { isError: true as const } : {}) };
+  }
+
+  async function agentData(value: unknown, name: string) {
+    const result = await boundJson(value, { artifactDir: await artifactDir(), name, maxChars: 8_000 });
+    return { content: [{ type: "text" as const, text: result.json }] };
   }
 
   function sourceDirs(id: string, dd: string) {
@@ -344,7 +352,7 @@ export default async function plugin(bb: BbPluginApi) {
     const dd = await getDataDir();
     const base = slug(input.name).slice(0, 40);
     let id = base;
-    while (store.getPlugin(id) || reservedSourceIds.has(id)) id = `${base}_${crypto.randomBytes(3).toString("hex")}`;
+    while (store.resolveSource(id) || reservedSourceIds.has(id)) id = `${base}_${crypto.randomBytes(3).toString("hex")}`;
     const dirs = sourceDirs(id, dd);
     // Reserve the ID synchronously before the first filesystem await.
     reservedSourceIds.add(id);
@@ -379,7 +387,7 @@ export default async function plugin(bb: BbPluginApi) {
       });
     } finally { reservedSourceIds.delete(id); }
     await publishChanged({ kind: "add", id });
-    return { id, serverId: "mcp", name: input.name };
+    return { ...store.identity(id), name: input.name };
   }
 
   async function requireSource(id: string) {
@@ -401,7 +409,9 @@ export default async function plugin(bb: BbPluginApi) {
         catch { authStatus = "unknown"; }
       }
       return {
-        ...item,
+        ...store.identity(item.id),
+        name: item.name, description: item.description, type: item.type, status: item.status,
+        sourceKind: item.sourceKind, toolCount: item.toolCount, promptCount: item.promptCount, resourceCount: item.resourceCount,
         approved: server?.approved === 1,
         enabled: server?.enabled === 1,
         authStatus,
@@ -597,49 +607,96 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
-  // Preserve older sessions' inputs while exposing descriptive IDs in new output.
-  const legacyId = z.string().min(1).optional().describe("Legacy alias; prefer the named ID field.");
-  const toolIdFields = { toolId: z.string().min(1).optional().describe("Tool ID from mcps_search."), opaqueId: legacyId };
-  const promptIdFields = { promptId: z.string().min(1).optional().describe("Prompt ID from mcps_prompts."), opaqueId: legacyId };
-  const resourceIdFields = { resourceId: z.string().min(1).optional().describe("Resource ID from mcps_resources."), opaqueId: legacyId };
-  const toolIds = <T extends { opaqueId: string }>(tools: T[]) => tools.map(({ opaqueId, ...tool }) => ({ toolId: opaqueId, ...tool }));
+  // Old sessions can still send the previously advertised argument names.
+  const idField = z.string().min(1).optional().describe("ID from discovery.");
+  const idFields = { id: idField };
+  function readId(input: Record<string, unknown>, legacy: string): string {
+    const id = input.id ?? input[legacy] ?? input.opaqueId;
+    if (typeof id !== "string" || !id.trim()) throw new Error("id is required");
+    return id;
+  }
+  function hasId(input: Record<string, unknown>, legacy: string): boolean {
+    try { readId(input, legacy); return true; } catch { return false; }
+  }
+
+  function toolRows(tools: Awaited<ReturnType<McpGateway["searchTools"]>>["tools"]) {
+    return tools.map(tool => ({
+      id: tool.opaqueId,
+      server: tool.pluginId && store.getPlugin(tool.pluginId) ? store.identity(tool.pluginId).handle : tool.serverName,
+      name: tool.name,
+      description: tool.description,
+      ...(tool.risk !== "read" ? { risk: tool.risk } : {}),
+      ...(tool.card ? { input: Object.fromEntries(tool.card.fields.map(field => [field.name + (field.required ? "" : "?"), field.type])) } : { schemaRequired: true }),
+      ...(tool.schemaRequired || tool.card?.truncated || tool.card?.shape.includes("…") || tool.card?.fields.length === 0 && tool.card.shape !== "{}" ? { schemaRequired: true } : {}),
+    }));
+  }
+
+  async function serverRows(details = false) {
+    const servers = await gateway.compactServers();
+    return servers.map(item => ({
+      ...store.identity(item.id),
+      type: item.type,
+      status: item.status,
+      ...(item.toolCount !== null ? { tools: item.toolCount } : {}),
+      ...(details ? {
+        name: item.name,
+        ...(item.description ? { description: item.description } : {}),
+        sourceKind: item.sourceKind,
+        ...(item.promptCount !== null ? { prompts: item.promptCount } : {}),
+        ...(item.resourceCount !== null ? { resources: item.resourceCount } : {}),
+        ...(store.getServer(item.id, item.serverId)?.lastError ? { error: store.getServer(item.id, item.serverId)!.lastError } : {}),
+      } : {}),
+    }));
+  }
 
   const toolNames = ["mcps_servers", "mcps_search", "mcps_schema", "mcps_call", "mcps_prompts", "mcps_get_prompt", "mcps_resources", "mcps_read_resource"] as const;
   bb.agents.registerTool({
     name: "mcps_servers",
-    description: "List MCP servers in the BB registry. Compact status only; does not dump tool schemas.",
+    description: "List installed MCPs with stable IDs, handles, status and known tool counts. Paginated; details opt-in.",
     instructions: "Use mcps_servers to see what is installed and enabled. Search tools with mcps_search.",
     presentation: { label: { pending: "Listing MCP servers", completed: "Listed MCP servers" } },
-    parameters: z.object({}).strict(),
-    async execute() { return agentReply(await gateway.compactServers(), "servers"); },
+    parameters: z.object({
+      query: z.string().max(200).optional(),
+      limit: z.number().int().min(1).max(50).default(20),
+      cursor: z.number().int().min(0).default(0),
+      details: z.boolean().default(false),
+    }).strict(),
+    async execute({ query, limit, cursor, details }) {
+      let rows = await serverRows(details);
+      if (query) {
+        const q = query.toLowerCase();
+        rows = rows.filter(row => row.id === query || row.handle.toLowerCase().includes(q) || store.resolveSource(row.id)?.name.toLowerCase().includes(q));
+      }
+      rows.sort((a, b) => a.handle.localeCompare(b.handle));
+      const servers = rows.slice(cursor, cursor + limit);
+      return agentData({ servers, ...(cursor + limit < rows.length ? { nextCursor: cursor + limit } : {}) }, "servers");
+    },
   });
   bb.agents.registerTool({
     name: "mcps_search",
-    description: "Search enabled MCP tools. Returns a small ranked list with tool IDs (toolId) and a call card (shape, required fields, example). Do not dump catalogs.",
-    instructions: "Search, then mcps_call with the card's example as a template. Use mcps_schema only when the card is missing a field you need.",
+    description: "Search MCP tools; returns id, server handle, description and input fields (? optional, dots nested). Filter by server ID or handle.",
+    instructions: "Call by id. Input uses dotted paths; ? means optional. Request mcps_schema for constraints, full descriptions, or schemaRequired results.",
     presentation: { label: { pending: "Searching MCP tools", completed: "Searched MCP tools" } },
-    parameters: z.object({ query: z.string().trim().min(1).max(200), limit: z.number().int().min(1).max(12).optional() }).strict(),
-    async execute({ query, limit }) {
-      const result = packSearchResult(await gateway.searchTools(query, limit ?? SEARCH_LIMIT));
-      return agentReply({ ...result, tools: toolIds(result.tools) }, "search");
+    parameters: z.object({ query: z.string().trim().min(1).max(200), server: z.string().max(128).optional(), limit: z.number().int().min(1).max(12).optional() }).strict(),
+    async execute({ query, limit, server }) {
+      const result = await gateway.searchTools(query, limit ?? SEARCH_LIMIT, server);
+      return agentData({ tools: toolRows(result.tools), ...(result.unavailable.length ? { unavailable: result.unavailable } : {}) }, "search");
     },
   });
   bb.agents.registerTool({
     name: "mcps_schema",
-    description: "Fetch the full input schema for one MCP tool by tool ID. Prefer the call card from mcps_search; use this only when that card is not enough.",
-    instructions: "Call mcps_schema for a single toolId after search, and only if the call card omitted a field you need. Never list every schema.",
+    description: "Get one tool's full description and input schema by id. Large schemas are saved as artifacts.",
+    instructions: "Use when search input is insufficient. Read artifactPath for schemas too large to inline.",
     presentation: { label: { pending: "Loading MCP schema", completed: "Loaded MCP schema" } },
-    parameters: z.object(toolIdFields).strict().refine(v => Boolean(v.toolId ?? v.opaqueId), "toolId is required"),
+    parameters: z.object(idFields).passthrough().refine(v => hasId(v, "toolId"), "id is required"),
     async execute(input) {
-      const tool = await gateway.getTool(input.toolId ?? input.opaqueId!);
-      const card = callCard(tool.inputSchema);
+      const tool = await gateway.getTool(readId(input, "toolId"));
       const schemaJson = JSON.stringify(tool.inputSchema);
       const payload: JsonRecord = {
-        toolId: tool.opaqueId,
+        id: tool.opaqueId,
         name: tool.name,
         description: tool.description,
         risk: classifyTool(tool.annotations),
-        card,
       };
       if (schemaJson.length <= SCHEMA_INLINE_CHARS) payload.inputSchema = tool.inputSchema;
       else {
@@ -649,74 +706,74 @@ export default async function plugin(bb: BbPluginApi) {
           name: "schema",
         });
       }
-      return agentReply(payload, "schema");
+      return agentData(payload, "schema");
     },
   });
   bb.agents.registerTool({
     name: "mcps_call",
     description: "Call one MCP tool by tool ID. Does not re-list the catalog.",
-    instructions: "Use the toolId from mcps_search. Repeat the returned tool text in your reply; the chat card may only show a success envelope.",
+    instructions: "Use id from mcps_search. Report the result to the user; the UI may show only a success envelope.",
     presentation: { label: { pending: "Calling MCP tool", completed: "Called MCP tool" } },
     parameters: z.object({
-      ...toolIdFields,
+      ...idFields,
       args: jsonRecordSchema.default({}),
-    }).strict().refine(v => Boolean(v.toolId ?? v.opaqueId), "toolId is required"),
+    }).passthrough().refine(v => hasId(v, "toolId"), "id is required"),
     async execute(input, ctx) {
-      return agentReply(await invokeTool(input.toolId ?? input.opaqueId!, input.args as JsonRecord, ctx.signal), "call");
+      return agentReply(await invokeTool(readId(input, "toolId"), input.args as JsonRecord, ctx.signal), "call");
     },
   });
   bb.agents.registerTool({
     name: "mcps_prompts",
     description: "Search compact MCP prompts. Pass query; default 5 hits.",
     presentation: { label: { pending: "Searching MCP prompts", completed: "Searched MCP prompts" } },
-    parameters: z.object({ query: z.string().trim().max(200).optional() }).strict(),
-    async execute({ query }) {
-      const prompts = await gateway.listPrompts();
+    parameters: z.object({ query: z.string().trim().max(200).optional(), server: z.string().max(128).optional() }).strict(),
+    async execute({ query, server }) {
+      const prompts = await gateway.listPrompts(server);
       const q = query?.trim() ?? "";
       const rows = prompts.map((item) => ({
-        promptId: item.opaqueId,
-        serverId: item.serverId,
+        id: item.opaqueId,
+        server: store.getPlugin(item.pluginId) ? store.identity(item.pluginId).handle : item.pluginName,
         name: item.name,
         description: item.description ?? "",
-        score: q ? scoreMatch(q, [item.name, item.description ?? "", item.serverId]) : 1,
+        score: q ? scoreMatch(q, [item.name, item.description ?? "", item.pluginName, item.pluginId]) : 1,
       })).filter((item) => item.score > 0);
       rows.sort((a, b) => b.score - a.score);
-      return agentReply({ prompts: rows.slice(0, SEARCH_LIMIT).map(({ score: _, ...item }) => item) }, "prompts");
+      return agentData({ prompts: rows.slice(0, SEARCH_LIMIT).map(({ score: _, ...item }) => item) }, "prompts");
     },
   });
   bb.agents.registerTool({
     name: "mcps_get_prompt",
     description: "Get one MCP prompt by prompt ID.",
-    instructions: "Use promptId from mcps_prompts.",
+    instructions: "Use id from mcps_prompts.",
     presentation: { label: { pending: "Getting MCP prompt", completed: "Got MCP prompt" } },
-    parameters: z.object({ ...promptIdFields, args: jsonRecordSchema.default({}) }).strict().refine(v => Boolean(v.promptId ?? v.opaqueId), "promptId is required"),
+    parameters: z.object({ ...idFields, args: jsonRecordSchema.default({}) }).passthrough().refine(v => hasId(v, "promptId"), "id is required"),
     async execute(input, ctx) {
-      return agentReply(await gateway.getPrompt(input.promptId ?? input.opaqueId!, input.args as JsonRecord, ctx.signal), "prompt");
+      return agentReply(await gateway.getPrompt(readId(input, "promptId"), input.args as JsonRecord, ctx.signal), "prompt");
     },
   });
   bb.agents.registerTool({
     name: "mcps_resources",
     description: "Search compact MCP resources. Pass query; default 5 hits.",
     presentation: { label: { pending: "Searching MCP resources", completed: "Searched MCP resources" } },
-    parameters: z.object({ query: z.string().trim().max(200).optional() }).strict(),
-    async execute({ query }) {
-      const [resources, resourceTemplates] = await Promise.all([gateway.listResources(), gateway.listResourceTemplates()]);
+    parameters: z.object({ query: z.string().trim().max(200).optional(), server: z.string().max(128).optional() }).strict(),
+    async execute({ query, server }) {
+      const [resources, resourceTemplates] = await Promise.all([gateway.listResources(server), gateway.listResourceTemplates(server)]);
       const q = query?.trim() ?? "";
       const rows = [
-        ...resources.map((item) => ({ resourceId: item.opaqueId, serverId: item.serverId, uri: item.uri, name: item.name, score: q ? scoreMatch(q, [item.name, item.uri, item.serverId]) : 1 })),
-        ...resourceTemplates.map((item) => ({ resourceId: item.opaqueId, serverId: item.serverId, uri: item.uriTemplate, name: item.name, score: q ? scoreMatch(q, [item.name, item.uriTemplate, item.serverId]) : 1 })),
+        ...resources.map((item) => ({ id: item.opaqueId, server: store.getPlugin(item.pluginId) ? store.identity(item.pluginId).handle : item.pluginName, uri: item.uri, name: item.name, score: q ? scoreMatch(q, [item.name, item.uri, item.pluginName, item.pluginId]) : 1 })),
+        ...resourceTemplates.map((item) => ({ id: item.opaqueId, server: store.getPlugin(item.pluginId) ? store.identity(item.pluginId).handle : item.pluginName, uri: item.uriTemplate, name: item.name, score: q ? scoreMatch(q, [item.name, item.uriTemplate, item.pluginName, item.pluginId]) : 1 })),
       ].filter((item) => item.score > 0);
       rows.sort((a, b) => b.score - a.score);
-      return agentReply({ resources: rows.slice(0, SEARCH_LIMIT).map(({ score: _, ...item }) => item) }, "resources");
+      return agentData({ resources: rows.slice(0, SEARCH_LIMIT).map(({ score: _, ...item }) => item) }, "resources");
     },
   });
   bb.agents.registerTool({
     name: "mcps_read_resource",
     description: "Read one MCP resource by resource ID.",
-    instructions: "Use resourceId from mcps_resources.",
+    instructions: "Use id from mcps_resources.",
     presentation: { label: { pending: "Reading MCP resource", completed: "Read MCP resource" } },
-    parameters: z.object(resourceIdFields).strict().refine(v => Boolean(v.resourceId ?? v.opaqueId), "resourceId is required"),
-    async execute(input, ctx) { return agentReply(await gateway.readResource(input.resourceId ?? input.opaqueId!, ctx.signal), "resource"); },
+    parameters: z.object(idFields).passthrough().refine(v => hasId(v, "resourceId"), "id is required"),
+    async execute(input, ctx) { return agentReply(await gateway.readResource(readId(input, "resourceId"), ctx.signal), "resource"); },
   });
   bb.agents.configure(() => ({
     tools: [...toolNames],
@@ -770,7 +827,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   const usage = [
     "Usage:",
-    "  bb mcps list [--json]",
+    "  bb mcps list [--details] [--json]",
     "  bb mcps show <id> [--json]",
     "  bb mcps add <name> <url> [--header 'Name: value'] [--sse] [--json]",
     "  bb mcps add <name> <registry-id> [--header 'Name: value'] [--json]",
@@ -782,14 +839,14 @@ export default async function plugin(bb: BbPluginApi) {
     "  bb mcps enable <id> [--json]",
     "  bb mcps disable <id> [--json]",
     "  bb mcps remove <id> [--json]",
-    "  bb mcps call <toolId> [json-args] [--json]",
+    "  bb mcps call <id> [json-args] [--json]",
   ].join("\n");
 
   bb.cli.register({
     name: "mcps",
     summary: "Manage MCP servers for every provider",
     commands: [
-      { name: "list", summary: "List installed MCP servers", usage: "bb mcps list [--json]" },
+      { name: "list", summary: "List installed MCP servers", usage: "bb mcps list [--details] [--json]" },
       { name: "show", summary: "Show one MCP server", usage: "bb mcps show <id> [--json]" },
       { name: "add", summary: "Add an HTTP URL, registry id, or local command", usage: "bb mcps add <name> <url|registry-id>  |  bb mcps add <name> -- <command> [args...]" },
       { name: "registry", summary: "Search the official MCP Registry", usage: "bb mcps registry <query> [--http] [--json]" },
@@ -799,13 +856,13 @@ export default async function plugin(bb: BbPluginApi) {
       { name: "enable", summary: "Enable a server", usage: "bb mcps enable <id> [--json]" },
       { name: "disable", summary: "Disable a server", usage: "bb mcps disable <id> [--json]" },
       { name: "remove", summary: "Remove a server", usage: "bb mcps remove <id> [--json]" },
-      { name: "call", summary: "Call one MCP tool by tool ID", usage: "bb mcps call <toolId> [json-args] [--json]" },
+      { name: "call", summary: "Call one MCP tool by tool ID", usage: "bb mcps call <id> [json-args] [--json]" },
     ],
     async run(argv) {
       const asJson = argv.includes("--json");
       const args = argv.filter((item) => item !== "--json");
       const [command, ...rest] = args;
-      const reply = (value: unknown, text: string) => ({ exitCode: 0, stdout: (asJson ? JSON.stringify(value, null, 2) : text) + "\n" });
+      const reply = (value: unknown, text: string) => ({ exitCode: 0, stdout: (asJson ? JSON.stringify(value) : text) + "\n" });
       const takeOptions = (argv: string[]) => {
         const positional: string[] = [];
         const headerLines: string[] = [];
@@ -842,18 +899,19 @@ export default async function plugin(bb: BbPluginApi) {
             return { exitCode: 0, stdout: usage + "\n" };
           case "list":
           case "ls": {
-            const snap = await buildSnapshot();
-            return reply(snap.servers, snap.servers.length === 0
+            const rows = await serverRows(rest.includes("--details"));
+            return reply(rows, rows.length === 0
               ? "No MCP servers. Try: bb mcps registry notion"
-              : snap.servers.map((item) => `${item.id}  ${item.name}  ${item.type}  ${item.status}`).join("\n"));
+              : rows.map((item) => `${item.id}  ${item.handle}  ${item.type}  ${item.status}`).join("\n"));
           }
           case "show": {
             if (!rest[0]) break;
             const snap = await buildSnapshot();
-            const item = snap.servers.find((row) => row.id === rest[0] || row.name === rest[0]);
+            const item = snap.servers.find((row) => row.id === rest[0] || row.handle === rest[0] || row.name === rest[0]);
             if (!item) return { exitCode: 1, stderr: `not found: ${rest[0]}\n` };
             return reply(item, [
               `id: ${item.id}`,
+              `handle: ${item.handle}`,
               `name: ${item.name}`,
               `type: ${item.type}`,
               `status: ${item.status}`,
@@ -919,7 +977,7 @@ export default async function plugin(bb: BbPluginApi) {
             store.deleteSource(source.id);
             await rimraf(path.dirname(source.pluginRoot)).catch(() => {});
             await publishChanged({ kind: "remove", id: source.id });
-            return reply({ deleted: true, id: source.id }, `Removed ${source.name}`);
+            return reply({ deleted: true, id: rest[0] }, `Removed ${source.name}`);
           }
           case "auth": {
             if (!rest[0]) break;
@@ -934,7 +992,7 @@ export default async function plugin(bb: BbPluginApi) {
             const { tools, unavailable } = await gateway.searchTools(query);
             const lines = tools.map((tool) => `${tool.opaqueId}  ${tool.name}  ${tool.description}`);
             if (unavailable.length > 0) lines.push(`unavailable: ${unavailable.join("; ")}`);
-            return reply({ tools: toolIds(tools), unavailable }, lines.length === 0 ? "No matching tools." : lines.join("\n"));
+            return reply({ tools: toolRows(tools), ...(unavailable.length ? { unavailable } : {}) }, lines.length === 0 ? "No matching tools." : lines.join("\n"));
           }
           case "call": {
             const opaqueId = rest[0];

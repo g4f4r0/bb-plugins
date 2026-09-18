@@ -118,6 +118,8 @@ export interface CompactServer {
 }
 
 export interface CompactTool {
+  schemaRequired?: boolean;
+  pluginId?: string;
   opaqueId: string;
   serverId: string;
   serverName: string;
@@ -126,6 +128,7 @@ export interface CompactTool {
   risk: ToolRisk;
   enabled: boolean;
   card?: {
+    truncated?: boolean;
     shape: string;
     fields: Array<{ name: string; type: string; required: boolean; enum?: string[] }>;
     example: JsonRecord;

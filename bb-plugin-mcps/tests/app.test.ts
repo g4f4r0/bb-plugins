@@ -6,7 +6,7 @@ import { loadPluginApp, renderSlot } from '@get-bb/plugin-sdk/testing/app';
 
 const app = await loadPluginApp(() => import('../app'));
 const panel = app.navPanels[0]!;
-const rows = ['alpha', 'beta'].map(id => ({ id, serverId: 'mcp', name: id, type: 'stdio', enabled: true, approved: true, status: 'ready', authStatus: 'not-applicable', configJson: '{}', sourceKind: 'manual' }));
+const rows = ['alpha', 'beta'].map(id => ({ id, handle: id, name: id, type: 'stdio', enabled: true, approved: true, status: 'ready', authStatus: 'not-applicable', configJson: '{}', sourceKind: 'manual' }));
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; }
 const catalog = (name: string, count = 1) => ({ tools: Array.from({length: count}, (_, i) => ({ opaqueId: `${name}-${i}`, name: `${name}-${i}`, risk: 'read', description: '' })), error: null });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -68,4 +68,14 @@ it('paginates 60 installed servers without hiding matches on later pages', async
   expect(slot.queryByText('server-59')).not.toBeNull();
   fireEvent.change(slot.getByRole('textbox', {name: 'Search MCPs'}), {target: {value: 'server-59'}});
   expect(slot.queryByText('server-59')).not.toBeNull();
+});
+
+it('opens existing handle links after stable IDs are introduced', async () => {
+  const server = {...rows[0], id: 'mcp_1234567890', handle: 'alpha'};
+  const slot = mount('installed/alpha', {snapshot: () => ({servers: [server]}), inspectServer: () => catalog('echo')});
+  await slot.findByText('echo-0');
+  expect(slot.getByText('@alpha').getAttribute('title')).toBe('mcp_1234567890');
+  slot.lifecycle.rerender(createElement(panel.component, {subPath: 'installed/mcp_1234567890'}));
+  await slot.findByText('echo-0');
+  expect(slot.queryByText('That MCP is gone.')).toBeNull();
 });
