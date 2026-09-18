@@ -20,7 +20,7 @@ function mount(subPath: string, handlers: Record<string, (input: any) => any>) {
 it('does not replace beta tools with a late alpha inspection', async () => {
   const slow = deferred<ReturnType<typeof catalog>>();
   const slot = mount('installed/alpha', { snapshot: () => ({servers: rows}), inspectServer: ({id}) => id === 'alpha' ? slow.promise : catalog('beta') });
-  await slot.findByText('alpha');
+  await slot.findByRole('heading', {name: 'alpha'});
   slot.lifecycle.rerender(createElement(panel.component, {subPath: 'installed/beta'}));
   await slot.findByText('beta-0');
   await act(async () => { slow.resolve(catalog('alpha')); });
@@ -74,7 +74,7 @@ it('opens existing handle links after stable IDs are introduced', async () => {
   const server = {...rows[0], id: 'mcp_1234567890', handle: 'alpha'};
   const slot = mount('installed/alpha', {snapshot: () => ({servers: [server]}), inspectServer: () => catalog('echo')});
   await slot.findByText('echo-0');
-  expect(slot.getByText('@alpha').getAttribute('title')).toBe('mcp_1234567890');
+  expect(slot.container.querySelector('[title="mcp_1234567890"]')?.textContent).toBe('alpha');
   slot.lifecycle.rerender(createElement(panel.component, {subPath: 'installed/mcp_1234567890'}));
   await slot.findByText('echo-0');
   expect(slot.queryByText('That MCP is gone.')).toBeNull();

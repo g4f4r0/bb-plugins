@@ -998,13 +998,27 @@ function DetailPage({
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">
       <div className="flex min-w-0 items-start justify-between gap-4">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 space-y-2">
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <span className="flex size-4 shrink-0 items-center justify-center">
               <Icon name={typeIcon(server.type)} className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             </span>
             <h1 className="min-w-0 truncate text-base font-semibold">{server.name}</h1>
-            <span className="text-xs text-muted-foreground" title={server.id}>@{server.handle}</span>
+          </div>
+          <div className="text-xs text-subtle-foreground">
+            <span className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+              <span className="inline-flex h-4 min-w-0 items-center gap-1.5 whitespace-nowrap leading-4">
+                <Icon name="Code" className="size-3.5 shrink-0" aria-label="Handle" />
+                <span className="min-w-0 truncate" title={server.id}>{server.handle}</span>
+              </span>
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                <span aria-hidden="true">·</span>
+                <span className="inline-flex h-4 min-w-0 items-center gap-1.5 whitespace-nowrap leading-4">
+                  <Icon name={typeIcon(server.type)} className="size-3.5 shrink-0" aria-label="Connection type" />
+                  <span>{server.type === "stdio" ? "Local (stdio)" : typeLabel(server.type)}</span>
+                </span>
+              </span>
+            </span>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2 pt-0.5">
