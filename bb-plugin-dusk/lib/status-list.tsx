@@ -181,6 +181,8 @@ type RowActions = {
   unsnooze(id: string): void;
   custom(id: string): void;
   onNavigate(): void;
+  suppressCard(id: string): void;
+  cardSuppressed(id: string): boolean;
 };
 
 function SnoozeItems({ family, now, actions, afterClose }: { family: Family; now: number; actions: RowActions; afterClose(action: () => void): void }) {
@@ -279,14 +281,28 @@ const StatusRow = memo(function StatusRow({ thread, project, family, child, acti
   // Radix keeps the portalled content mounted for its exit animation. Keep
   // the trigger visible until that animation is gone so Popper never loses
   // its anchor and falls back to the viewport origin.
-  const onMenuOpenChange = useCallback((open: boolean) => { if (open) setMenuOpen(true); }, []);
+  const onMenuOpenChange = useCallback((open: boolean) => {
+    if (!open) return;
+    setCardOpen(false);
+    setMenuOpen(true);
+  }, []);
   const runPendingMenuAction = useCallback(() => {
     const action = pendingMenuAction.current;
     pendingMenuAction.current = null;
+    actions.suppressCard(thread.id);
+    setCardOpen(false);
     setMenuOpen(false);
     action?.();
-  }, []);
-  return <HoverCard open={cardOpen && !menuOpen} onOpenChange={open => { setCardOpen(open); if (open) setWanted(true); }} openDelay={400} closeDelay={60}>
+  }, [actions, thread.id]);
+  const onCardOpenChange = useCallback((open: boolean) => {
+    if (open && (menuOpen || actions.cardSuppressed(thread.id))) {
+      setCardOpen(false);
+      return;
+    }
+    setCardOpen(open);
+    if (open) setWanted(true);
+  }, [actions, menuOpen, thread.id]);
+  return <HoverCard open={cardOpen && !menuOpen} onOpenChange={onCardOpenChange} openDelay={400} closeDelay={60}>
   <HoverCardTrigger asChild>
   <div className="dusk-status-row" data-child={child || undefined} data-active={active || undefined} data-menu-open={menuOpen || undefined} data-has-state={hasState || undefined} data-hints={hint !== null || undefined}
     onPointerEnter={() => setInteractive(true)}
@@ -448,6 +464,19 @@ export function StatusThreadList({ activeThreadId, onNavigate, Original }: Plugi
   const now = useNow(snoozes);
   const [collapsed, toggle] = useCollapsed();
   const [customFor, setCustomFor] = useState<string | null>(null);
+  const pointer = useRef<{ x: number; y: number } | null>(null);
+  const cardSuppressions = useRef(new Map<string, { x: number; y: number } | null>());
+  useEffect(() => {
+    const releaseMovedCards = (event: PointerEvent) => {
+      const next = { x: event.clientX, y: event.clientY };
+      pointer.current = next;
+      for (const [id, start] of cardSuppressions.current) {
+        if (start === null || Math.hypot(next.x - start.x, next.y - start.y) >= 4) cardSuppressions.current.delete(id);
+      }
+    };
+    window.addEventListener('pointermove', releaseMovedCards, { passive: true });
+    return () => window.removeEventListener('pointermove', releaseMovedCards);
+  }, []);
   const snoozeMap = useMemo(() => new Map(snoozes.map(s => [s.threadId, s])), [snoozes]);
   const sections = useMemo(() => buildFamilies(threads, snoozeMap, pinKeys, now), [threads, snoozeMap, pinKeys, now]);
   const showHints = useShortcutHints();
@@ -475,6 +504,8 @@ export function StatusThreadList({ activeThreadId, onNavigate, Original }: Plugi
     unsnooze: threadId => { rpc.call('unsnooze', { threadId }).then(setSnoozes, () => toast.error('Could not unsnooze the thread.')); },
     custom: setCustomFor,
     onNavigate,
+    suppressCard: threadId => { cardSuppressions.current.set(threadId, pointer.current); },
+    cardSuppressed: threadId => cardSuppressions.current.has(threadId),
   }), [rpc, setSnoozes, onNavigate]);
 
   // Snoozes that woke from new activity are finished; drop them so they

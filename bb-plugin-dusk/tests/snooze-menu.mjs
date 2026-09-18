@@ -106,6 +106,8 @@ try {
   await page.getByRole('menuitem', { name: /In 1 hour/ }).click();
   await page.locator('.dusk-status-heading[data-section="snoozed"]').waitFor();
   assertAnchored(await snoozeClose(), 'snooze');
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator('.dusk-card-popover[data-state="open"]').count(), 0, 'snooze must not open the informational hover card');
 
   await row().hover();
   await row().getByRole('button', { name: 'Snoozed thread' }).click();
@@ -113,6 +115,8 @@ try {
   await page.getByRole('menuitem', { name: 'Unsnooze' }).click();
   await page.locator('.dusk-status-heading[data-section="snoozed"]').waitFor({ state: 'detached' });
   assertAnchored(await unsnoozeClose(), 'unsnooze');
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator('.dusk-card-popover[data-state="open"]').count(), 0, 'unsnooze must not open the informational hover card');
   await row().hover();
   await row().getByRole('button', { name: 'Snooze thread' }).waitFor();
 
