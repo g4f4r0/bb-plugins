@@ -160,7 +160,7 @@ function StatusPopover({ snapshot, onReload, reloading }: { snapshot: ServerSnap
       </Section>
       <Section label="Uptime">
         <Row label="Server" value={formatDuration(host.uptimeSeconds)} />
-        <Row label="BB" value={formatDuration(runtime.processUptimeSeconds)} />
+        <Row label="bb" value={formatDuration(runtime.processUptimeSeconds)} />
       </Section>
       <Section ariaLabel="Snapshot update" label={<time dateTime={snapshot.timestamp}>{formatUpdatedAt(snapshot.timestamp)}</time>} value={<ReloadButton onReload={onReload} reloading={reloading} />} />
     </>
