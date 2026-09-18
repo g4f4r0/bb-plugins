@@ -3,6 +3,9 @@
 /* Dusk: neutral surfaces with a Notion-inspired blue accent. */
 :root {
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  /* Pierre renders diffs and file previews inside shadow roots with its own
+     font token, so bridge Dusk's mono stack into those code surfaces. */
+  --diffs-font-family: var(--font-mono);
   --dusk-stop: #dc454b;
   --dusk-draft: #c46e2c;
   --dusk-draft-fill: color-mix(in srgb, var(--dusk-draft) 10%, transparent);
@@ -37,6 +40,13 @@
   --sidebar-border: #e9e9e7;
   --sidebar-ring: var(--primary);
 }
+
+/* BB sets Pierre's size on a wrapper, so apply Dusk's code size directly to
+   the shadow host where inherited wrapper values cannot override it. */
+diffs-container {
+  --diffs-font-size: 13px;
+}
+
 .dark {
   --dusk-stop: var(--destructive);
   --dusk-draft: #e08a3a;
@@ -188,6 +198,14 @@ div[class~="@container/page"]:has(#root-compose-prompt) > div:has(> [data-prompt
 
 /* Transcription is busy, not unavailable: retain the confirm action color. */
 button[aria-label="Transcribing voice input"]:disabled { opacity: 1; }
+
+.font-mono,
+code,
+samp,
+pre,
+.cm-scroller {
+  font-family: var(--font-mono);
+}
 
 .font-mono,
 code,
