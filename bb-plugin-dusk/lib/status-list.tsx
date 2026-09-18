@@ -183,17 +183,17 @@ type RowActions = {
   onNavigate(): void;
 };
 
-function SnoozeItems({ family, now, actions }: { family: Family; now: number; actions: RowActions }) {
+function SnoozeItems({ family, now, actions, afterClose }: { family: Family; now: number; actions: RowActions; afterClose(action: () => void): void }) {
   const id = family.root.id;
-  if (family.snooze) return <DropdownMenuItem onSelect={() => actions.unsnooze(id)}><Icon name="Clock" className="size-4" aria-hidden />Unsnooze</DropdownMenuItem>;
+  if (family.snooze) return <DropdownMenuItem onSelect={() => afterClose(() => actions.unsnooze(id))}><Icon name="Clock" className="size-4" aria-hidden />Unsnooze</DropdownMenuItem>;
   if (!canSnooze([family.root, ...family.children])) return <DropdownMenuItem disabled>Can't snooze while it's working or asking</DropdownMenuItem>;
   return <>
-    {snoozePresets(new Date(now)).map(p => <DropdownMenuItem key={p.id} className="gap-6" onSelect={() => actions.snooze(id, p.until)}>
+    {snoozePresets(new Date(now)).map(p => <DropdownMenuItem key={p.id} className="gap-6" onSelect={() => afterClose(() => actions.snooze(id, p.until))}>
       {p.label}
       <DropdownMenuShortcut className="dusk-snooze-time">{new Date(p.until).toLocaleString([], { ...(p.showDay ? { weekday: 'short' } : {}), hour: 'numeric', minute: '2-digit' })}</DropdownMenuShortcut>
     </DropdownMenuItem>)}
     <DropdownMenuSeparator />
-    <DropdownMenuItem onSelect={() => actions.custom(id)}>Custom</DropdownMenuItem>
+    <DropdownMenuItem onSelect={() => afterClose(() => actions.custom(id))}>Custom</DropdownMenuItem>
   </>;
 }
 
@@ -252,6 +252,7 @@ const StatusRow = memo(function StatusRow({ thread, project, family, child, acti
   const threadActions = experimental_useSidebarThreadActions();
   const split = experimental_useSidebarThreadSplit(thread.id);
   const [menuOpen, setMenuOpen] = useState(false);
+  const pendingMenuAction = useRef<(() => void) | null>(null);
   const [cardOpen, setCardOpen] = useState(false);
   const [interactive, setInteractive] = useState(false);
   // Stays true after the first open so the card keeps its content while it
@@ -274,6 +275,12 @@ const StatusRow = memo(function StatusRow({ thread, project, family, child, acti
   };
   const label = title(thread);
   const hasState = thread.indicator !== 'none' && !!thread.indicatorLabel;
+  const afterMenuClose = useCallback((action: () => void) => { pendingMenuAction.current = action; }, []);
+  const runPendingMenuAction = useCallback(() => {
+    const action = pendingMenuAction.current;
+    pendingMenuAction.current = null;
+    action?.();
+  }, []);
   return <HoverCard open={cardOpen && !menuOpen} onOpenChange={open => { setCardOpen(open); if (open) setWanted(true); }} openDelay={400} closeDelay={60}>
   <HoverCardTrigger asChild>
   <div className="dusk-status-row" data-child={child || undefined} data-active={active || undefined} data-menu-open={menuOpen || undefined} data-has-state={hasState || undefined} data-hints={hint !== null || undefined}
@@ -315,7 +322,7 @@ const StatusRow = memo(function StatusRow({ thread, project, family, child, acti
             </TooltipTrigger>
             <TooltipContent side="bottom">{snooze ? 'Unsnooze' : 'Snooze'}</TooltipContent>
           </Tooltip>
-          <DropdownMenuContent align="end" side="bottom"><SnoozeItems family={family} now={now} actions={actions} /></DropdownMenuContent>
+          <DropdownMenuContent align="end" side="bottom" onAfterClose={runPendingMenuAction}><SnoozeItems family={family} now={now} actions={actions} afterClose={afterMenuClose} /></DropdownMenuContent>
         </DropdownMenu>}
         <Tooltip disableHoverableContent open={menuOpen ? false : undefined}>
           <TooltipTrigger asChild>
@@ -334,16 +341,16 @@ const StatusRow = memo(function StatusRow({ thread, project, family, child, acti
             </TooltipTrigger>
             <TooltipContent side="bottom">Thread actions</TooltipContent>
           </Tooltip>
-          <DropdownMenuContent align="end" side="bottom">
-            {split.isAvailable && <DropdownMenuItem onSelect={() => threadActions.open(thread.id, { split: true })}><Icon name="Columns2" className="size-4" aria-hidden />Open in split</DropdownMenuItem>}
-            <DropdownMenuItem onSelect={() => void threadActions.setRead(thread.id, thread.isUnread).catch(() => toast.error('Could not update the thread.'))}><Icon name={thread.isUnread ? 'MailOpen' : 'Mail'} className="size-4" aria-hidden />{thread.isUnread ? 'Mark as read' : 'Mark as unread'}</DropdownMenuItem>
+          <DropdownMenuContent align="end" side="bottom" onAfterClose={runPendingMenuAction}>
+            {split.isAvailable && <DropdownMenuItem onSelect={() => afterMenuClose(() => threadActions.open(thread.id, { split: true }))}><Icon name="Columns2" className="size-4" aria-hidden />Open in split</DropdownMenuItem>}
+            <DropdownMenuItem onSelect={() => afterMenuClose(() => void threadActions.setRead(thread.id, thread.isUnread).catch(() => toast.error('Could not update the thread.')))}><Icon name={thread.isUnread ? 'MailOpen' : 'Mail'} className="size-4" aria-hidden />{thread.isUnread ? 'Mark as read' : 'Mark as unread'}</DropdownMenuItem>
             {!child && <DropdownMenuSub>
               <DropdownMenuSubTrigger><Icon name="Clock" className="size-4" aria-hidden />{snooze ? `Snoozed · ${wakeLabel(snooze.until, now)}` : 'Snooze'}</DropdownMenuSubTrigger>
-              <DropdownMenuSubContent><SnoozeItems family={family} now={now} actions={actions} /></DropdownMenuSubContent>
+              <DropdownMenuSubContent><SnoozeItems family={family} now={now} actions={actions} afterClose={afterMenuClose} /></DropdownMenuSubContent>
             </DropdownMenuSub>}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => threadActions.archive(thread.id)}><Icon name="Archive" className="size-4" aria-hidden />Archive</DropdownMenuItem>
-            <DropdownMenuItem variant="destructive" onSelect={() => threadActions.requestDelete(thread.id)}><Icon name="Trash2" className="size-4" aria-hidden />Delete</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => afterMenuClose(() => threadActions.archive(thread.id))}><Icon name="Archive" className="size-4" aria-hidden />Archive</DropdownMenuItem>
+            <DropdownMenuItem variant="destructive" onSelect={() => afterMenuClose(() => threadActions.requestDelete(thread.id))}><Icon name="Trash2" className="size-4" aria-hidden />Delete</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </TooltipProvider>}
