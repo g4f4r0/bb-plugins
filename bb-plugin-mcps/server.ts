@@ -781,7 +781,7 @@ export default async function plugin(bb: BbPluginApi) {
   });
   bb.agents.configure(() => ({
     tools: [...toolNames],
-    skills: ["mcps"],
+    skills: [],
   }));
 
   function looksLikeUrl(value: string): boolean {
