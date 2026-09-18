@@ -1008,14 +1008,14 @@ function DetailPage({
           <div className="text-xs text-subtle-foreground">
             <span className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
               <span className="inline-flex h-4 min-w-0 items-center gap-1.5 whitespace-nowrap leading-4">
-                <Icon name="Code" className="size-3.5 shrink-0" aria-label="Handle" />
+                <Icon name="At" className="size-3.5 shrink-0" aria-label="Handle" />
                 <span className="min-w-0 truncate" title={server.id}>{server.handle}</span>
               </span>
               <span className="inline-flex min-w-0 items-center gap-1.5">
                 <span aria-hidden="true">·</span>
                 <span className="inline-flex h-4 min-w-0 items-center gap-1.5 whitespace-nowrap leading-4">
                   <Icon name={typeIcon(server.type)} className="size-3.5 shrink-0" aria-label="Connection type" />
-                  <span>{server.type === "stdio" ? "Local (stdio)" : typeLabel(server.type)}</span>
+                  <span>{server.type === "stdio" ? "stdio" : typeLabel(server.type)}</span>
                 </span>
               </span>
             </span>
