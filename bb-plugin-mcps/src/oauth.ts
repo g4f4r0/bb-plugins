@@ -1,4 +1,5 @@
 import * as crypto from "node:crypto";
+import { auth, extractWWWAuthenticateParams, UnauthorizedError } from "@modelcontextprotocol/client";
 import type {
   OAuthClientMetadata,
   OAuthClientProvider,
@@ -41,6 +42,9 @@ export class DeferredOAuthCredentialStore implements OAuthCredentialStore {
   private dirty = false;
   private callbackDepth = 0;
   private writeChain: Promise<void> = Promise.resolve();
+  private persistFailures = 0;
+  private disposed = false;
+  private loading: Promise<Record<string, OAuthCredentialRecord>> | undefined;
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
@@ -91,28 +95,41 @@ export class DeferredOAuthCredentialStore implements OAuthCredentialStore {
   }
 
   private async readAll(): Promise<Record<string, OAuthCredentialRecord>> {
-    if (!this.cached) this.cached = cloneRecords(await this.backend.load());
+    if (!this.cached) {
+      this.loading ??= this.backend.load().then(cloneRecords);
+      try { this.cached ??= await this.loading; }
+      finally { this.loading = undefined; }
+    }
     return cloneRecords(this.cached);
   }
 
   private async persistIfSafe(): Promise<void> {
-    if (this.callbackDepth > 0 || !this.dirty || !this.cached) return;
+    if (this.disposed || this.callbackDepth > 0 || !this.dirty || !this.cached) return;
     const snapshot = cloneRecords(this.cached);
     this.dirty = false;
     try {
       await this.backend.save(snapshot);
+      this.persistFailures = 0;
     } catch (error) {
       this.dirty = true;
+      if (++this.persistFailures <= 5) this.scheduleFlush(Math.min(1000 * 2 ** (this.persistFailures - 1), 16000));
       throw error;
     }
   }
 
-  private scheduleFlush(): void {
-    if (this.flushTimer) return;
+  dispose(): void {
+    this.disposed = true;
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = undefined;
+  }
+
+  private scheduleFlush(delayMs = 0): void {
+    if (this.disposed || this.flushTimer) return;
     this.flushTimer = setTimeout(() => {
       this.flushTimer = undefined;
       void this.flush().catch((error) => this.onPersistError(error));
-    }, 0);
+    }, delayMs);
+    this.flushTimer.unref?.();
   }
 }
 
@@ -123,6 +140,8 @@ function cloneRecord(value: OAuthCredentialRecord): OAuthCredentialRecord {
 function cloneRecords(value: Record<string, OAuthCredentialRecord>): Record<string, OAuthCredentialRecord> {
   return JSON.parse(JSON.stringify(value)) as Record<string, OAuthCredentialRecord>;
 }
+
+const credentialWrites = new WeakMap<OAuthCredentialStore, Map<string, Promise<unknown>>>();
 
 export type OAuthStatus = "unauthenticated" | "authorizing" | "authenticated";
 
@@ -146,6 +165,7 @@ function sameString(a: string | undefined, b: string | undefined): boolean {
  */
 export class McpOAuthProvider implements OAuthClientProvider {
   private authorizationUrl: string | undefined;
+  private authorization: Promise<void> | undefined;
 
   constructor(
     private readonly key: string,
@@ -175,64 +195,76 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * vs the public BB URL). Reusing that client_id keeps Notion on 127.0.0.1.
    */
   async alignWithRedirect(): Promise<void> {
-    const record = await this.read();
-    const current = this.redirectUrlValue.toString();
-    const known = record.redirectUri ?? firstClientRedirect(record.clientInformation);
-    if (known === current) {
-      if (record.redirectUri !== current) await this.write({ ...record, redirectUri: current });
-      return;
-    }
-    const currentHost = hostnameOf(current);
-    const stale =
-      Boolean(known && known !== current) ||
-      Boolean(!known && (record.clientInformation || record.tokens) && !isLoopbackHost(currentHost));
-    if (stale) {
-      await this.write({ redirectUri: current });
-      this.authorizationUrl = undefined;
-      return;
-    }
-    if (Object.keys(record).length === 0) return;
-    await this.write({ ...record, redirectUri: current });
+    return this.mutate(async () => {
+      const record = await this.read();
+      const current = this.redirectUrlValue.toString();
+      const known = record.redirectUri ?? firstClientRedirect(record.clientInformation);
+      if (known === current) {
+        if (record.redirectUri !== current) await this.write({ ...record, redirectUri: current });
+        return;
+      }
+      const currentHost = hostnameOf(current);
+      const stale =
+        Boolean(known && known !== current) ||
+        Boolean(!known && (record.clientInformation || record.tokens) && !isLoopbackHost(currentHost));
+      if (stale) {
+        await this.write({ redirectUri: current });
+        this.authorizationUrl = undefined;
+        return;
+      }
+      if (Object.keys(record).length === 0) return;
+      await this.write({ ...record, redirectUri: current });
+    });
   }
 
   async state(): Promise<string> {
-    const record = await this.read();
-    const value = randomState();
-    await this.write({ ...record, state: value });
-    return value;
+    return this.mutate(async () => {
+      const record = await this.read();
+      const value = randomState();
+      await this.write({ ...record, state: value });
+      return value;
+    });
   }
 
   async clientInformation(ctx?: { issuer: string }): Promise<StoredOAuthClientInformation | undefined> {
     const value = (await this.read()).clientInformation;
-    if (ctx?.issuer && value?.issuer && value.issuer !== ctx.issuer) return undefined;
+    if (ctx?.issuer && value?.issuer && value.issuer.replace(/\/$/, "") !== ctx.issuer.replace(/\/$/, "")) return undefined;
     return value;
   }
 
   async saveClientInformation(value: StoredOAuthClientInformation): Promise<void> {
-    const record = await this.read();
-    await this.write({ ...record, clientInformation: value });
+    return this.mutate(async () => {
+      const record = await this.read();
+      await this.write({ ...record, clientInformation: value });
+    });
   }
 
   async tokens(ctx?: { issuer: string }): Promise<StoredOAuthTokens | undefined> {
     const value = (await this.read()).tokens;
-    if (ctx?.issuer && value?.issuer && value.issuer !== ctx.issuer) return undefined;
+    if (ctx?.issuer && value?.issuer && value.issuer.replace(/\/$/, "") !== ctx.issuer.replace(/\/$/, "")) return undefined;
     return value;
   }
 
   async saveTokens(value: StoredOAuthTokens): Promise<void> {
-    const record = await this.read();
-    await this.write({ ...record, tokens: value });
+    return this.mutate(async () => {
+      const record = await this.read();
+      await this.write({ ...record, tokens: value });
+    });
   }
 
   async redirectToAuthorization(url: URL): Promise<void> {
-    this.authorizationUrl = url.toString();
-    const record = await this.read();
-    await this.write({ ...record, authorizationUrl: this.authorizationUrl });
+    return this.mutate(async () => {
+      this.authorizationUrl = url.toString();
+      const record = await this.read();
+      await this.write({ ...record, authorizationUrl: this.authorizationUrl });
+    });
   }
 
   async saveCodeVerifier(codeVerifier: string): Promise<void> {
-    const record = await this.read();
-    await this.write({ ...record, codeVerifier });
+    return this.mutate(async () => {
+      const record = await this.read();
+      await this.write({ ...record, codeVerifier });
+    });
   }
 
   async codeVerifier(): Promise<string> {
@@ -242,8 +274,10 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   async saveAuthorizationServerUrl(value: string): Promise<void> {
-    const record = await this.read();
-    await this.write({ ...record, authorizationServerUrl: value });
+    return this.mutate(async () => {
+      const record = await this.read();
+      await this.write({ ...record, authorizationServerUrl: value });
+    });
   }
 
   async authorizationServerUrl(): Promise<string | undefined> {
@@ -251,8 +285,10 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   async saveResourceUrl(value: string): Promise<void> {
-    const record = await this.read();
-    await this.write({ ...record, resourceUrl: value });
+    return this.mutate(async () => {
+      const record = await this.read();
+      await this.write({ ...record, resourceUrl: value });
+    });
   }
 
   async resourceUrl(): Promise<string | undefined> {
@@ -260,8 +296,10 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   async saveDiscoveryState(value: OAuthDiscoveryState): Promise<void> {
-    const record = await this.read();
-    await this.write({ ...record, discoveryState: value });
+    return this.mutate(async () => {
+      const record = await this.read();
+      await this.write({ ...record, discoveryState: value });
+    });
   }
 
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
@@ -269,25 +307,27 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery"): Promise<void> {
-    const record = await this.read();
-    if (scope === "all") {
-      await this.store.delete(this.key);
-      this.authorizationUrl = undefined;
-      return;
-    }
-    const next = { ...record };
-    if (scope === "client") delete next.clientInformation;
-    if (scope === "tokens") delete next.tokens;
-    if (scope === "verifier") {
-      delete next.codeVerifier;
-      delete next.state;
-    }
-    if (scope === "discovery") {
-      delete next.discoveryState;
-      delete next.authorizationServerUrl;
-      delete next.resourceUrl;
-    }
-    await this.write(next);
+    return this.mutate(async () => {
+      const record = await this.read();
+      if (scope === "all") {
+        await this.store.delete(this.key);
+        this.authorizationUrl = undefined;
+        return;
+      }
+      const next = { ...record };
+      if (scope === "client") delete next.clientInformation;
+      if (scope === "tokens") delete next.tokens;
+      if (scope === "verifier") {
+        delete next.codeVerifier;
+        delete next.state;
+      }
+      if (scope === "discovery") {
+        delete next.discoveryState;
+        delete next.authorizationServerUrl;
+        delete next.resourceUrl;
+      }
+      await this.write(next);
+    });
   }
 
   getAuthorizationUrl(): string | undefined { return this.authorizationUrl; }
@@ -308,12 +348,66 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   async clearPending(): Promise<void> {
-    this.authorizationUrl = undefined;
-    const record = await this.read();
-    delete record.state;
-    delete record.codeVerifier;
-    delete record.authorizationUrl;
-    await this.write(record);
+    return this.mutate(async () => {
+      this.authorizationUrl = undefined;
+      const record = await this.read();
+      delete record.state;
+      delete record.codeVerifier;
+      delete record.authorizationUrl;
+      await this.write(record);
+    });
+  }
+
+  private async mutate<T>(operation: () => Promise<T>): Promise<T> {
+    let queues = credentialWrites.get(this.store);
+    if (!queues) credentialWrites.set(this.store, queues = new Map());
+    const work = (queues.get(this.key) ?? Promise.resolve()).catch(() => {}).then(operation);
+    queues.set(this.key, work);
+    try { return await work; }
+    finally { if (queues.get(this.key) === work) queues.delete(this.key); }
+  }
+
+  /** One OAuth exchange per server, including rotating refresh tokens. */
+  async reauthorize(response: Response, fetchFn: typeof fetch): Promise<void> {
+    if (this.authorization) return this.authorization;
+    const work = (async () => {
+      let transientError: Error | undefined;
+      const guardedFetch: typeof fetch = async (input, init) => {
+        try {
+          const result = await fetchFn(input, init);
+          if (result.status >= 500 || result.status === 429) {
+            transientError = new Error(`OAuth service temporarily unavailable (HTTP ${result.status})`);
+          }
+          return result;
+        } catch (error) {
+          transientError = error instanceof Error ? error : new Error(String(error));
+          throw error;
+        }
+      };
+      // The SDK falls back to consent after transient refresh failures. Keep
+      // the durable refresh token and let the next request retry instead.
+      const provider = new Proxy(this, {
+        get: (target, property) => {
+          if (property === "state") return async () => {
+            if (transientError) throw transientError;
+            return target.state();
+          };
+          if (property === "redirectToAuthorization") return async (url: URL) => {
+            if (transientError) throw transientError;
+            await target.redirectToAuthorization(url);
+          };
+          const value = Reflect.get(target, property);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      const challenge = extractWWWAuthenticateParams(response);
+      const result = await auth(provider, { serverUrl: this.serverUrl, ...challenge, fetchFn: guardedFetch });
+      if (result !== "AUTHORIZED") throw new UnauthorizedError();
+      await this.clearPending();
+    })();
+    this.authorization = work;
+    try { await work; }
+    finally { if (this.authorization === work) this.authorization = undefined; }
   }
 
   private async read(): Promise<OAuthCredentialRecord> {

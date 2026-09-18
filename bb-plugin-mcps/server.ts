@@ -957,6 +957,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   bb.onDispose(async () => {
     await gateway.close().catch(() => {});
+    oauthCredentialStore.dispose();
     bb.log.info("[mcps] disposed");
   });
 }

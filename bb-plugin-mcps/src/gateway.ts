@@ -11,6 +11,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import {
   Client,
+  UnauthorizedError,
   SSEClientTransport,
   StreamableHTTPClientTransport,
   type ClientCapabilities,
@@ -222,6 +223,8 @@ interface ServerConfig {
   headers?: Record<string, string>;
 }
 
+class SessionExpiredError extends Error {}
+
 class AuthenticationRequiredError extends Error {
   constructor(readonly authorizationUrl: string) {
     super("MCP authorization is required");
@@ -336,6 +339,7 @@ export class McpGateway implements McpRuntime {
   private readonly pending = new Map<string, Promise<Connected>>();
   private readonly connectControllers = new Map<string, AbortController>();
   private readonly oauthPending = new Map<string, PendingAuth>();
+  private readonly providerLoads = new Map<string, Promise<McpOAuthProvider>>();
   private readonly providers = new Map<string, McpOAuthProvider>();
   private readonly failures = new Map<string, Failure>();
   private readonly catalogCache = new LruMap<string, CatalogCache>(128, (key) => this.dropIndex(key));
@@ -393,6 +397,7 @@ export class McpGateway implements McpRuntime {
     this.catalogLoads.clear();
     this.catalogControllers.clear();
     this.providers.clear();
+    this.providerLoads.clear();
     this.serverEpochs.clear();
     this.hostExitUnsubscribe?.();
     this.hostCatalogUnsubscribe?.();
@@ -489,6 +494,7 @@ export class McpGateway implements McpRuntime {
     await this.closeServer(pluginId, serverId);
     if (provider) await provider.clearPending().catch((error) => this.log.warn(`clear MCP OAuth state ${key}: ${errorText(error)}`));
     this.providers.delete(key);
+    this.providerLoads.delete(key);
   }
 
   async startServer(pluginId: string, serverId: string): Promise<void> { await this.ensureServer(pluginId, serverId); }
@@ -806,10 +812,22 @@ export class McpGateway implements McpRuntime {
         if (this.catalogGenerations.get(key) !== generation) throw new Error(`MCP catalog invalidated for ${record.serverId}`);
         const connectedCache = this.catalogCache.get(key);
         if (!cached && connectedCache && connectedCache.tools === connection.tools) return connectedCache;
-        return this.cacheCatalog(key, record.configJson, connection);
+        this.persistStatus(record.pluginId, record.serverId, "ready", null);
+        const catalog = this.cacheCatalog(key, record.configJson, connection);
+        void this.notifyChanged();
+        return catalog;
       } catch (error) {
-        if (!this.closed && !controller.signal.aborted && this.catalogGenerations.get(key) === generation) {
+        if (!this.closed && this.catalogGenerations.get(key) === generation) {
           const message = errorText(error);
+          if (error instanceof SessionExpiredError) {
+            const connection = this.conns.get(key);
+            this.conns.delete(key);
+            if (connection) await this.closeConnected(key, connection);
+          }
+          const provider = this.providers.get(key);
+          const needsAuth = provider && await provider.authorizationUrlValue();
+          if (this.closed || this.catalogGenerations.get(key) !== generation) throw error;
+          this.persistStatus(record.pluginId, record.serverId, needsAuth ? "needs-auth" : "error", needsAuth ? "Authentication required" : message);
           const empty: Connected = {
             kind: "local",
             tools: [],
@@ -819,6 +837,7 @@ export class McpGateway implements McpRuntime {
             expectedClose: false,
           };
           this.cacheCatalog(key, record.configJson, empty, message);
+          void this.notifyChanged();
         }
         throw error;
       }
@@ -1457,17 +1476,52 @@ export class McpGateway implements McpRuntime {
     const existing = this.providers.get(key);
     if (existing) return existing;
     if (!this.options.oauth) throw new Error("OAuth storage is not configured");
-    const provider = await this.options.oauth.getProvider(pluginId, serverId, serverUrl);
-    await provider.alignWithRedirect();
-    this.providers.set(key, provider);
-    return provider;
+    const loading = this.providerLoads.get(key);
+    if (loading) return loading;
+    const work = Promise.resolve().then(async () => {
+      const provider = await this.options.oauth!.getProvider(pluginId, serverId, serverUrl);
+      await provider.alignWithRedirect();
+      if (this.closed || this.providerLoads.get(key) !== work) throw new Error("MCP OAuth provider invalidated");
+      this.providers.set(key, provider);
+      return provider;
+    });
+    this.providerLoads.set(key, work);
+    try { return await work; }
+    finally { if (this.providerLoads.get(key) === work) this.providerLoads.delete(key); }
   }
 
   private createHttpTransport(cfg: ServerConfig, provider: McpOAuthProvider): StreamableHTTPClientTransport | SSEClientTransport {
     const serverUrl = new URL(cfg.url!);
     const requestTimeout = this.options.requestTimeoutMs
       ?? (this.options.oauthTimeoutMs === undefined ? OAUTH_TIMEOUT_MS + FETCH_TIMEOUT_GRACE_MS : this.options.oauthTimeoutMs + FETCH_TIMEOUT_GRACE_MS);
-    const fetchWithGuard = redirectGuardFetch(serverUrl, cfg.headers, requestTimeout);
+    const guardedFetch = redirectGuardFetch(serverUrl, cfg.headers, requestTimeout);
+    const fetchWithGuard: typeof fetch = async (input, init) => {
+      const response = await guardedFetch(input, init);
+      const sentHeaders = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+      if (response.status === 404 && sentHeaders.has("mcp-session-id")) {
+        await response.body?.cancel();
+        throw new SessionExpiredError("MCP session expired; the next request will reconnect");
+      }
+      const requestUrl = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      if (response.status !== 401 || !isMcpRequest(requestUrl, serverUrl, input, init)) return response;
+      const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+      const rejectedToken = headers.get("authorization");
+      const currentToken = (await provider.tokens())?.access_token;
+      // A delayed 401 for the old token must not rotate the new token again.
+      try {
+        if (!currentToken || rejectedToken === `Bearer ${currentToken}`) {
+          await provider.reauthorize(response, guardedFetch);
+        }
+      } finally { await response.body?.cancel(); }
+      const token = (await provider.tokens())?.access_token;
+      if (token) headers.set("authorization", `Bearer ${token}`);
+      const retry = await guardedFetch(input, { ...init, headers });
+      if (retry.status === 401) {
+        await retry.body?.cancel();
+        throw new UnauthorizedError("Server rejected refreshed MCP credentials");
+      }
+      return retry;
+    };
     if (cfg.type === "streamable-http") {
       return new StreamableHTTPClientTransport(serverUrl, {
         authProvider: provider as OAuthClientProvider,
@@ -1492,9 +1546,15 @@ export class McpGateway implements McpRuntime {
   }
 
   private async withAuthState<T>(pluginId: string, serverId: string, operation: () => Promise<T>): Promise<T> {
+    const connection = this.conns.get(keyOf(pluginId, serverId));
     try {
       return await operation();
     } catch (error) {
+      if (error instanceof SessionExpiredError && this.conns.get(keyOf(pluginId, serverId)) === connection) {
+        await this.closeServer(pluginId, serverId);
+        this.persistStatus(pluginId, serverId, "idle", error.message);
+        await this.notifyChanged();
+      }
       const provider = this.providers.get(keyOf(pluginId, serverId));
       if (provider && await provider.authorizationUrlValue()) {
         this.persistStatus(pluginId, serverId, "needs-auth", "Authentication required");

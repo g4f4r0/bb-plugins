@@ -82,3 +82,16 @@ describe("McpOAuthProvider", () => {
     });
   });
 });
+
+describe("OAuth issuer identity", () => {
+  it("accepts a trailing slash difference while rejecting another issuer", async () => {
+    const secrets = new MemorySecrets();
+    const provider = new McpOAuthProvider("issuer:test", new URL("https://mcp.example/mcp"), new URL("https://bb.example/callback"), secrets);
+    await provider.saveTokens({ access_token: "token", token_type: "Bearer", issuer: "https://auth.example" });
+    expect(await provider.tokens({ issuer: "https://auth.example/" })).toBeDefined();
+    expect(await provider.tokens({ issuer: "https://other.example" })).toBeUndefined();
+    await provider.saveClientInformation({ client_id: "client", issuer: "https://auth.example/" });
+    expect(await provider.clientInformation({ issuer: "https://auth.example" })).toBeDefined();
+    expect(await provider.clientInformation({ issuer: "https://other.example" })).toBeUndefined();
+  });
+});
