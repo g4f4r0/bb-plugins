@@ -30,6 +30,13 @@ test("simultaneous viewers share one in-flight collection and one cached result"
   t.mock.timers.tick(5000);
   assert.equal((await s.sample()).id, 2);
 });
+test("a forced sample bypasses a fresh cached result", async (t) => {
+  const s = sampler(t);
+  assert.equal((await s.sample()).id, 1);
+  assert.equal((await s.sample()).id, 1);
+  assert.equal((await s.sample(true)).id, 2);
+  assert.equal(s.calls(), 2);
+});
 test("idle expiry releases cache and baselines without collecting again", async (t) => {
   const s = sampler(t); await s.sample();
   t.mock.timers.tick(14_999); assert.equal(s.resets(), 0);
@@ -132,6 +139,11 @@ test("server-supplied polling intervals are bounded", async (t) => {
   t.mock.timers.tick(1999); await flush(); assert.equal(p.calls(), 1);
   t.mock.timers.tick(1); await flush(); assert.equal(p.calls(), 2);
 });
+test("manual refresh runs immediately only while the poller is active", async (t) => {
+  const p = poller(t); p.setActive(true); await flush();
+  assert.equal(p.calls(), 1); assert.equal(p.refresh(), true); await flush(); assert.equal(p.calls(), 2);
+  p.setActive(false); assert.equal(p.refresh(), false); await flush(); assert.equal(p.calls(), 2);
+});
 
 
 test("rapid reopening preserves the sampling cadence and offline backoff", async (t) => {
@@ -190,4 +202,12 @@ test("disclosure remounts share one request and preserve snapshot and offline ba
   t.mock.timers.tick(9999); await assert.rejects(source.load(offline)); assert.equal(calls, 3);
   t.mock.timers.tick(600_000); await flush(); assert.equal(calls, 3);
   assert.equal(await source.load(async () => "recovered"), "recovered");
+});
+test("a forced snapshot load bypasses the frontend cadence", async (t) => {
+  clock(t);
+  const source = createSnapshotSource(() => 60_000); let calls = 0;
+  const collect = async () => ++calls;
+  assert.equal(await source.load(collect), 1);
+  assert.equal(await source.load(collect), 1);
+  assert.equal(await source.load(collect, true), 2);
 });

@@ -25,10 +25,10 @@ export function createDemandSampler<T>(options: {
     expiry.unref();
   }
 
-  function sample(): Promise<T> {
+  function sample(force = false): Promise<T> {
     if (lifecycle.signal.aborted) return Promise.reject(new Error("Beacon has been disposed"));
     if (pending) return pending;
-    if (cached !== null && now() - sampledAt < options.intervalMs()) {
+    if (!force && cached !== null && now() - sampledAt < options.intervalMs()) {
       expireLater();
       return Promise.resolve(cached);
     }

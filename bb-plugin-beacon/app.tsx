@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
-import { definePluginApp, type ExperimentalSidebarFooterDisclosureProps } from "@get-bb/plugin-sdk/app";
+import { definePluginApp, experimental_Icon as Icon, type ExperimentalSidebarFooterDisclosureProps } from "@get-bb/plugin-sdk/app";
 import type { ServerSnapshot } from "./server";
 import { useServerSnapshot } from "./hooks/use-server-snapshot";
 import { PressureNotifications, bindStatusOpener } from "./components/pressure-notifications";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { ServerIcon } from "@hugeicons/core-free-icons";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const GREEN = "#22c55e";
@@ -40,6 +41,12 @@ function formatDuration(seconds: number): string {
   return `${minutes}m`;
 }
 
+function formatUpdatedAt(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Updated recently";
+  return `Updated at ${new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date)}`;
+}
+
 function formatPercent(value: number | null): ReactNode {
   return value === null ? <Sampling /> : `${value.toFixed(1)}%`;
 }
@@ -73,12 +80,12 @@ function Bars({ values }: { values: Array<number | null> }) {
 }
 
 // Every section shares one header shape: name left, headline value right.
-function Section({ label, value, children }: { label: string; value?: ReactNode; children: ReactNode }) {
+function Section({ label, value, children, ariaLabel }: { label: ReactNode; value?: ReactNode; children?: ReactNode; ariaLabel?: string }) {
   return (
-    <section className={SECTION} aria-label={label}>
-      <div className="flex items-baseline justify-between gap-3 text-xs">
+    <section className={SECTION} aria-label={ariaLabel ?? (typeof label === "string" ? label : undefined)}>
+      <div className="flex items-center justify-between gap-3 text-xs">
         <span className="font-medium text-sidebar-foreground">{label}</span>
-        {value === undefined ? null : <span className="truncate tabular-nums text-sidebar-foreground">{value}</span>}
+        {value === undefined ? null : <span className="shrink-0 tabular-nums text-sidebar-foreground">{value}</span>}
       </div>
       {children}
     </section>
@@ -94,7 +101,27 @@ function Row({ label, value, title }: { label: string; value: ReactNode; title?:
   );
 }
 
-function StatusPopover({ snapshot }: { snapshot: ServerSnapshot }) {
+function ReloadButton({ onReload, reloading }: { onReload: () => void; reloading: boolean }) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="size-8"
+      aria-label="Reload server status"
+      aria-busy={reloading}
+      disabled={reloading}
+      onClick={onReload}
+    >
+      <Icon
+        name={reloading ? "Loading" : "ArrowReloadHorizontal"}
+        className={reloading ? "size-4 animate-spin motion-reduce:animate-none" : "size-4"}
+        aria-hidden
+      />
+    </Button>
+  );
+}
+
+function StatusPopover({ snapshot, onReload, reloading }: { snapshot: ServerSnapshot; onReload: () => void; reloading: boolean }) {
   const { cpu, memory, disk, network, processes, runtime, host, history } = snapshot;
   return (
     <>
@@ -134,19 +161,24 @@ function StatusPopover({ snapshot }: { snapshot: ServerSnapshot }) {
       <Section label="Uptime">
         <Row label="Server" value={formatDuration(host.uptimeSeconds)} />
         <Row label="BB" value={formatDuration(runtime.processUptimeSeconds)} />
-        <Row label="Last sample" value={<time dateTime={snapshot.timestamp}>{new Date(snapshot.timestamp).toLocaleTimeString()}</time>} />
       </Section>
+      <Section ariaLabel="Snapshot update" label={<time dateTime={snapshot.timestamp}>{formatUpdatedAt(snapshot.timestamp)}</time>} value={<ReloadButton onReload={onReload} reloading={reloading} />} />
     </>
   );
 }
 
 // Initial placeholders only. Core count and optional rows are unknown until loaded.
-const LOADING_SECTIONS = [["CPU", "h-24"], ["Memory", "h-8"], ["Disk", "h-8"], ["Network", "h-10"], ["Top processes", "h-16"], ["Uptime", "h-16"]] as const;
+const LOADING_SECTIONS = [["CPU", "h-24"], ["Memory", "h-8"], ["Disk", "h-8"], ["Network", "h-10"], ["Top processes", "h-16"], ["Uptime", "h-10"]] as const;
 
 function LoadingPopover() {
-  return LOADING_SECTIONS.map(([label, height]) => (
-    <Section key={label} label={label}><Skeleton className={`${height} w-full`} /></Section>
-  ));
+  return (
+    <>
+      {LOADING_SECTIONS.map(([label, height]) => (
+        <Section key={label} label={label}><Skeleton className={`${height} w-full`} /></Section>
+      ))}
+      <Section label={<Skeleton className="h-3 w-24" />} value={<Skeleton className="size-8 rounded-md" />} />
+    </>
+  );
 }
 
 function ServerMark({ className }: { className?: string }) {
@@ -154,12 +186,12 @@ function ServerMark({ className }: { className?: string }) {
 }
 
 function StatusDisclosure(_props: ExperimentalSidebarFooterDisclosureProps) {
-  const { container, active, snapshot, error } = useServerSnapshot();
+  const { container, active, snapshot, error, reload, reloading } = useServerSnapshot();
   return (
-    <div ref={container} data-beacon-shell aria-busy={active && !snapshot && !error} className="w-full min-w-0 divide-y divide-sidebar-border">
+    <div ref={container} data-beacon-shell aria-busy={(active && !snapshot && !error) || reloading} className="w-full min-w-0 divide-y divide-sidebar-border">
       {error ? <div role="alert" className="px-3 py-2 text-xs text-destructive">Could not refresh: {error}</div> : null}
       {/* The skeleton gives the shell height so the visibility observer can activate polling. */}
-      {snapshot ? <StatusPopover snapshot={snapshot} /> : (
+      {snapshot ? <StatusPopover snapshot={snapshot} onReload={reload} reloading={reloading} /> : (
         error ? <div className="p-3 text-xs text-muted-foreground">Server data unavailable. Retrying while visible.</div> : <LoadingPopover />
       )}
     </div>

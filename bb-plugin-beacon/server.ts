@@ -444,7 +444,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   bb.rpc.register(rpcContract, {
     metrics_snapshot: () => sample(),
-    metrics_refresh: () => sample(),
+    metrics_refresh: () => sampler.sample(true),
     monitor_status: () => monitor.status(),
   });
 

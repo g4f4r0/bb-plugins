@@ -7,9 +7,9 @@ export function createSnapshotSource<T>(intervalMs: (value: T) => number) {
   let error: unknown;
   return {
     snapshot: () => snapshot,
-    load(collect: () => Promise<T>): Promise<T> {
+    load(collect: () => Promise<T>, force = false): Promise<T> {
       if (pending) return pending;
-      if (Date.now() < nextAttemptAt) {
+      if (!force && Date.now() < nextAttemptAt) {
         if (failures) return Promise.reject(error);
         if (snapshot !== null) return Promise.resolve(snapshot);
       }

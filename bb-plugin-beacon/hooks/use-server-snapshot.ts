@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract, ServerSnapshot } from "../server";
 import { createSnapshotSource } from "../lib/snapshot-source.ts";
@@ -11,9 +11,12 @@ const source = createSnapshotSource<ServerSnapshot>((value) => value.refreshInte
 export function useServerSnapshot() {
   const rpc = useRpc<typeof rpcContract>();
   const container = useRef<HTMLDivElement>(null);
+  const pollerRef = useRef<ReturnType<typeof createVisiblePoller<ServerSnapshot>> | null>(null);
+  const forceRefresh = useRef(false);
   const [active, setActive] = useState(false);
   const [snapshot, setSnapshot] = useState<ServerSnapshot | null>(source.snapshot);
   const [error, setError] = useState<string | null>(null);
+  const [reloading, setReloading] = useState(false);
 
   useEffect(() => {
     const element = container.current;
@@ -21,11 +24,16 @@ export function useServerSnapshot() {
     let intersecting = false;
     let pageHidden = false;
     const poller = createVisiblePoller({
-      load: () => source.load(() => rpc.call("metrics_snapshot")),
-      receive(next) { setSnapshot(next); setError(null); },
-      error(cause) { setError(cause instanceof Error ? cause.message : String(cause)); },
+      load: () => {
+        const force = forceRefresh.current;
+        forceRefresh.current = false;
+        return source.load(() => rpc.call(force ? "metrics_refresh" : "metrics_snapshot", null), force);
+      },
+      receive(next) { setSnapshot(next); setError(null); setReloading(false); },
+      error(cause) { setError(cause instanceof Error ? cause.message : String(cause)); setReloading(false); },
       intervalMs: (next) => next.refreshIntervalMs,
     });
+    pollerRef.current = poller;
     const update = () => {
       const visible = intersecting && !pageHidden && document.visibilityState === "visible" && element.getClientRects().length > 0;
       poller.setActive(visible);
@@ -49,8 +57,14 @@ export function useServerSnapshot() {
       window.removeEventListener("pagehide", hide);
       window.removeEventListener("pageshow", show);
       poller.dispose();
+      pollerRef.current = null;
     };
   }, [rpc]);
 
-  return { container, active, snapshot, error };
+  const reload = useCallback(() => {
+    forceRefresh.current = true;
+    if (pollerRef.current?.refresh()) setReloading(true);
+  }, []);
+
+  return { container, active, snapshot, error, reload, reloading };
 }

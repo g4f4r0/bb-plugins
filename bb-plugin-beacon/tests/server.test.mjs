@@ -61,6 +61,14 @@ test("settings changes reach clients even while the previous snapshot is cached"
   assert.equal(changed.timestamp, initial.timestamp); assert.equal(changed.refreshIntervalMs, 60_000);
 });
 
+test("manual refresh bypasses the shared snapshot cache", async (t) => {
+  const { bb, harness } = createFakePluginHost({ pluginId: "beacon" });
+  t.after(() => harness.lifecycle.dispose()); await plugin(bb);
+  const initial = await harness.behavior.callRpc("metrics_snapshot", null);
+  const refreshed = await harness.behavior.callRpc("metrics_refresh", null);
+  assert.equal(initial.history.length, 1); assert.equal(refreshed.history.length, 2);
+});
+
 test("reload clears old history and does not introduce duplicate services or signals", async (t) => {
   const { bb, harness } = createFakePluginHost({ pluginId: "beacon" });
   t.after(() => harness.lifecycle.dispose()); await plugin(bb);

@@ -57,6 +57,15 @@ export function createVisiblePoller<T>(options: {
         else void poll();
       }
     },
+    refresh() {
+      if (disposed || !active) return false;
+      generation++;
+      clearTimeout(timer);
+      timer = undefined;
+      nextPollAt = 0;
+      if (!pending) void poll();
+      return true;
+    },
     dispose() {
       disposed = true;
       active = false;
