@@ -276,9 +276,14 @@ const StatusRow = memo(function StatusRow({ thread, project, family, child, acti
   const label = title(thread);
   const hasState = thread.indicator !== 'none' && !!thread.indicatorLabel;
   const afterMenuClose = useCallback((action: () => void) => { pendingMenuAction.current = action; }, []);
+  // Radix keeps the portalled content mounted for its exit animation. Keep
+  // the trigger visible until that animation is gone so Popper never loses
+  // its anchor and falls back to the viewport origin.
+  const onMenuOpenChange = useCallback((open: boolean) => { if (open) setMenuOpen(true); }, []);
   const runPendingMenuAction = useCallback(() => {
     const action = pendingMenuAction.current;
     pendingMenuAction.current = null;
+    setMenuOpen(false);
     action?.();
   }, []);
   return <HoverCard open={cardOpen && !menuOpen} onOpenChange={open => { setCardOpen(open); if (open) setWanted(true); }} openDelay={400} closeDelay={60}>
@@ -313,7 +318,7 @@ const StatusRow = memo(function StatusRow({ thread, project, family, child, acti
           </TooltipTrigger>
           <TooltipContent side="bottom">{thread.isPinned ? 'Unpin' : 'Pin'}</TooltipContent>
         </Tooltip>
-        {!child && <DropdownMenu onOpenChange={setMenuOpen}>
+        {!child && <DropdownMenu onOpenChange={onMenuOpenChange}>
           <Tooltip disableHoverableContent open={menuOpen ? false : undefined}>
             <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild><button type="button" className="dusk-status-action" aria-label={snooze ? 'Snoozed thread' : 'Snooze thread'} onPointerDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
@@ -332,7 +337,7 @@ const StatusRow = memo(function StatusRow({ thread, project, family, child, acti
           </TooltipTrigger>
           <TooltipContent side="bottom">Archive</TooltipContent>
         </Tooltip>
-        <DropdownMenu onOpenChange={setMenuOpen}>
+        <DropdownMenu onOpenChange={onMenuOpenChange}>
           <Tooltip disableHoverableContent open={menuOpen ? false : undefined}>
             <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild><button type="button" className="dusk-status-action" aria-label="Thread actions" onPointerDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>

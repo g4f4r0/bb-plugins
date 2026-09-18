@@ -65,16 +65,54 @@ try {
   await threadReady;
 
   const row = () => page.locator(`.dusk-status-row:has([data-sidebar-thread-id="${threadId}"])`);
+  const watchMenuClose = async () => {
+    const initial = await page.evaluate(() => {
+      const menu = document.querySelector('[role="menu"][data-state="open"]');
+      if (!(menu instanceof HTMLElement)) throw new Error('Expected an open menu');
+      const start = menu.getBoundingClientRect().toJSON();
+      const frames = [];
+      window.duskMenuCloseFrames = frames;
+      window.duskMenuCloseWatch = new Promise(resolve => {
+        const deadline = performance.now() + 500;
+        const sample = () => {
+          const current = document.querySelector('[role="menu"]');
+          if (current instanceof HTMLElement) frames.push({
+            state: current.dataset.state,
+            text: current.textContent,
+            rect: current.getBoundingClientRect().toJSON(),
+          });
+          if (performance.now() < deadline && current) requestAnimationFrame(sample);
+          else resolve(frames);
+        };
+        requestAnimationFrame(sample);
+      });
+      return { rect: start, text: menu.textContent };
+    });
+    return async () => ({ initial, frames: await page.evaluate(() => window.duskMenuCloseWatch) });
+  };
+  const assertAnchored = ({ initial, frames }, operation) => {
+    assert(frames.length > 0, `${operation} must observe the closing menu`);
+    for (const frame of frames) {
+      assert.equal(frame.text, initial.text, `${operation} menu contents must stay stable while closing`);
+      const drift = Math.hypot(frame.rect.left - initial.rect.left, frame.rect.top - initial.rect.top);
+      assert(drift < 40, `${operation} menu moved ${Math.round(drift)}px while closing: ${JSON.stringify(frame)}`);
+    }
+  };
+
   await row().waitFor();
   await row().hover();
   await row().getByRole('button', { name: 'Snooze thread' }).click();
+  const snoozeClose = await watchMenuClose();
   await page.getByRole('menuitem', { name: /In 1 hour/ }).click();
   await page.locator('.dusk-status-heading[data-section="snoozed"]').waitFor();
+  assertAnchored(await snoozeClose(), 'snooze');
 
   await row().hover();
   await row().getByRole('button', { name: 'Snoozed thread' }).click();
+  const unsnoozeClose = await watchMenuClose();
   await page.getByRole('menuitem', { name: 'Unsnooze' }).click();
   await page.locator('.dusk-status-heading[data-section="snoozed"]').waitFor({ state: 'detached' });
+  assertAnchored(await unsnoozeClose(), 'unsnooze');
   await row().hover();
   await row().getByRole('button', { name: 'Snooze thread' }).waitFor();
 
