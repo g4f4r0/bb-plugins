@@ -31,7 +31,7 @@ bb plugin build bb-plugin-beacon
 bb plugin reload beacon
 ```
 
-A Community listing uses a `beacon/vX.Y.Z` tag and an entry in [get-bb/marketplace](https://github.com/get-bb/marketplace) with `subdir` `bb-plugin-beacon` and `tagPrefix` `beacon/`. The open entry is [PR 279](https://github.com/get-bb/marketplace/pull/279).
+The [BB Community listing](https://getbb.app/marketplace) tracks `beacon/vX.Y.Z` tags with `subdir` `bb-plugin-beacon` and `tagPrefix` `beacon/`. It was added in [get-bb/marketplace PR 279](https://github.com/get-bb/marketplace/pull/279). Publish a new tag within its `^0.1.0` range to make a compatible release available without changing the listing.
 
 ## Settings
 
