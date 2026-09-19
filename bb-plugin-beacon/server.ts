@@ -13,7 +13,7 @@ const percentageSchema = z.number().min(0).max(100);
 const metricPointSchema = z.object({
   timestamp: z.number(),
   cpuPercent: percentageSchema.nullable(),
-  memoryPercent: percentageSchema,
+  memoryPercent: percentageSchema.nullable(),
   networkRxBytesPerSecond: z.number().nullable(),
   networkTxBytesPerSecond: z.number().nullable(),
 });
@@ -49,14 +49,14 @@ const snapshotSchema = z.object({
   }),
   memory: z.object({
     totalBytes: z.number(),
-    usedBytes: z.number(),
+    usedBytes: z.number().nullable(),
     freeBytes: z.number(),
-    availableBytes: z.number(),
+    availableBytes: z.number().nullable(),
     cachedBytes: z.number(),
     buffersBytes: z.number(),
     swapTotalBytes: z.number(),
     swapUsedBytes: z.number(),
-    usagePercent: percentageSchema,
+    usagePercent: percentageSchema.nullable(),
   }),
   disk: z.object({
     mount: z.string(),
@@ -151,16 +151,59 @@ function readCpuTimes(cpuList: ReturnType<typeof cpus>): CpuTimes {
   );
 }
 
-async function readMemoryDetails(signal: AbortSignal): Promise<MemoryDetails> {
-  const fallbackAvailable = freemem();
-  const fallback: MemoryDetails = {
-    availableBytes: fallbackAvailable,
-    cachedBytes: 0,
-    buffersBytes: 0,
-    swapTotalBytes: 0,
-    swapUsedBytes: 0,
+// macOS has no MemAvailable. Reclaimable memory is free plus inactive, speculative
+// and purgeable pages; Apple's Memory Used is app, wired and compressed memory
+// instead. Counting only free pages (os.freemem) reports cache as used memory.
+export function parseVmStatMemory(source: string): Pick<MemoryDetails, "availableBytes" | "cachedBytes"> | null {
+  const pageSize = Number(/page size of (\d+) bytes/.exec(source)?.[1]);
+  if (!Number.isSafeInteger(pageSize) || pageSize <= 0) return null;
+  const counts = new Map<string, number>();
+  for (const line of source.split("\n")) {
+    const match = /^"?([^:"]+?)"?:\s+(\d+)\.?$/.exec(line.trim());
+    if (match) counts.set(match[1], Number(match[2]));
+  }
+  const freePages = counts.get("Pages free");
+  const inactivePages = counts.get("Pages inactive");
+  const speculativePages = counts.get("Pages speculative");
+  const purgeablePages = counts.get("Pages purgeable");
+  // Truncated vm_stat output would silently drop reclaimable and cache pages, so
+  // require every counter that decides availability and let the caller report memory
+  // as unknown instead. Only the informational cache counter may be missing.
+  if (freePages === undefined || inactivePages === undefined || speculativePages === undefined || purgeablePages === undefined) return null;
+  const reclaimablePages = freePages + inactivePages + speculativePages + purgeablePages;
+  return { availableBytes: reclaimablePages * pageSize, cachedBytes: (counts.get("File-backed pages") ?? 0) * pageSize };
+}
+
+// `sysctl -n vm.swapusage` prints e.g. `total = 2048.00M  used = 512.00M  free = 1536.00M  (encrypted)`.
+export function parseSwapUsage(source: string): { swapTotalBytes: number; swapUsedBytes: number } {
+  const units: Record<string, number> = { K: 1024, M: 1024 ** 2, G: 1024 ** 3 };
+  const readField = (name: string) => {
+    const match = new RegExp(`${name}\\s*=\\s*([\\d.]+)\\s*([KMG])?`).exec(source);
+    const value = Number(match?.[1]);
+    return Number.isFinite(value) ? value * (units[match?.[2] ?? ""] ?? 1) : 0;
   };
-  if (platform() !== "linux") return fallback;
+  const swapTotalBytes = Math.round(readField("total"));
+  return { swapTotalBytes, swapUsedBytes: Math.min(swapTotalBytes, Math.round(readField("used"))) };
+}
+
+// Returns null when the platform's memory counters cannot be read. Callers must
+// not substitute os.freemem() for a precise counter on Linux or macOS: free pages
+// alone read as used memory and would raise false pressure alerts.
+async function readMemoryDetails(signal: AbortSignal): Promise<MemoryDetails | null> {
+  if (platform() === "darwin") {
+    try {
+      const [vmStat, swapUsage] = await Promise.all([
+        execFileAsync("vm_stat", [], { timeout: 1500, maxBuffer: 64 * 1024, signal }),
+        execFileAsync("sysctl", ["-n", "vm.swapusage"], { timeout: 1500, maxBuffer: 64 * 1024, signal }).catch(() => ({ stdout: "" })),
+      ]);
+      const parsed = parseVmStatMemory(vmStat.stdout);
+      return parsed === null ? null : { ...parsed, buffersBytes: 0, ...parseSwapUsage(swapUsage.stdout) };
+    } catch {
+      return null;
+    }
+  }
+  // Other platforms only expose a free-memory counter, which is already net of cache there.
+  if (platform() !== "linux") return { availableBytes: freemem(), cachedBytes: 0, buffersBytes: 0, swapTotalBytes: 0, swapUsedBytes: 0 };
   try {
     const source = await readFile("/proc/meminfo", { encoding: "utf8", signal });
     const values = new Map<string, number>();
@@ -168,17 +211,19 @@ async function readMemoryDetails(signal: AbortSignal): Promise<MemoryDetails> {
       const match = /^(\w+):\s+(\d+)\s+kB$/.exec(line.trim());
       if (match) values.set(match[1], Number(match[2]) * 1024);
     }
+    const availableBytes = values.get("MemAvailable");
+    if (availableBytes === undefined) return null;
     const swapTotalBytes = values.get("SwapTotal") ?? 0;
     const swapFreeBytes = values.get("SwapFree") ?? 0;
     return {
-      availableBytes: values.get("MemAvailable") ?? fallbackAvailable,
+      availableBytes,
       cachedBytes: (values.get("Cached") ?? 0) + (values.get("SReclaimable") ?? 0),
       buffersBytes: values.get("Buffers") ?? 0,
       swapTotalBytes,
       swapUsedBytes: Math.max(0, swapTotalBytes - swapFreeBytes),
     };
   } catch {
-    return fallback;
+    return null;
   }
 }
 
@@ -200,7 +245,33 @@ async function readDisk() {
   }
 }
 
+export function parseNetstatInterfaces(source: string): NetworkTotals[] {
+  // macOS `netstat -ibn`: one <Link row per interface. Address may be empty,
+  // so counters are read from the end (Ibytes = last-4, Obytes = last-2).
+  const rows: NetworkTotals[] = [];
+  for (const line of source.split("\n")) {
+    if (!line.includes("<Link")) continue;
+    const tokens = line.trim().split(/\s+/);
+    if (tokens.length < 6) continue;
+    const name = tokens[0];
+    if (name.startsWith("lo") || name.includes("*")) continue;
+    const rxBytes = Number(tokens[tokens.length - 5]);
+    const txBytes = Number(tokens[tokens.length - 2]);
+    if (![rxBytes, txBytes].every((value) => Number.isFinite(value) && value >= 0)) continue;
+    rows.push({ interface: name, rxBytes, txBytes });
+  }
+  return rows.sort((left, right) => right.rxBytes + right.txBytes - (left.rxBytes + left.txBytes));
+}
+
 async function readNetworkTotals(signal: AbortSignal): Promise<NetworkTotals | null> {
+  if (platform() === "darwin") {
+    try {
+      const { stdout } = await execFileAsync("netstat", ["-ibn"], { timeout: 1500, maxBuffer: 512 * 1024, signal });
+      return parseNetstatInterfaces(stdout)[0] ?? null;
+    } catch {
+      return null;
+    }
+  }
   if (platform() !== "linux") return null;
   try {
     const source = await readFile("/proc/net/dev", { encoding: "utf8", signal });
@@ -261,7 +332,7 @@ async function readProcesses(signal: AbortSignal): Promise<Processes> {
 
 function assessHealth(
   cpuPercent: number | null,
-  memoryPercent: number,
+  memoryPercent: number | null,
   diskPercent: number | null,
   fiveMinuteLoad: number,
   coreCount: number,
@@ -272,7 +343,7 @@ function assessHealth(
     else if (value >= 85) issues.push({ severity: "warning", label, message: `${label} is at ${value.toFixed(1)}%.` });
   };
   if (cpuPercent !== null) addThresholdIssue("CPU", cpuPercent);
-  addThresholdIssue("Memory", memoryPercent);
+  if (memoryPercent !== null) addThresholdIssue("Memory", memoryPercent);
   if (diskPercent !== null) addThresholdIssue("Disk", diskPercent);
   const normalizedLoad = fiveMinuteLoad / coreCount;
   if (normalizedLoad >= 1.5) {
@@ -302,28 +373,26 @@ export default async function plugin(bb: BbPluginApi) {
   let monitorCpu: CpuTimes | null = null;
   const monitor = createPressureMonitor(bb, async (signal) => {
     let current: CpuTimes;
-    let availableBytes: number;
+    let availableBytes: number | null;
     if (platform() === "linux") {
-      const [stat, meminfo] = await Promise.all([
+      const [stat, memory] = await Promise.all([
         readFile("/proc/stat", { encoding: "utf8", signal }),
-        readFile("/proc/meminfo", { encoding: "utf8", signal }),
+        readMemoryDetails(signal),
       ]);
       const times = stat.split("\n", 1)[0].trim().split(/\s+/).slice(1, 9).map(Number);
       if (times.length < 8 || !times.every(Number.isFinite)) throw new Error("CPU counters unavailable");
       current = { idle: times[3] + times[4], total: times.reduce((sum, value) => sum + value, 0) };
-      const available = /^MemAvailable:\s+(\d+)\s+kB$/m.exec(meminfo);
-      if (!available) throw new Error("Available memory counter unavailable");
-      availableBytes = Number(available[1]) * 1024;
+      availableBytes = memory?.availableBytes ?? null;
     } else {
       current = readCpuTimes(cpus());
-      availableBytes = freemem();
+      availableBytes = (await readMemoryDetails(signal))?.availableBytes ?? null;
     }
     signal.throwIfAborted();
     const cpu = calculateCpuUsage(monitorCpu, current);
     monitorCpu = current;
     const totalBytes = totalmem();
     const runtime = process.memoryUsage();
-    return { cpu, memory: totalBytes > 0 ? clampPercentage((1 - availableBytes / totalBytes) * 100) : null, load1: loadavg()[0] ?? 0, rssBytes: runtime.rss, heapUsedBytes: runtime.heapUsed, availableBytes, totalBytes };
+    return { cpu, memory: availableBytes === null || totalBytes === 0 ? null : clampPercentage((1 - availableBytes / totalBytes) * 100), load1: loadavg()[0] ?? 0, rssBytes: runtime.rss, heapUsedBytes: runtime.heapUsed, availableBytes, totalBytes };
   }, () => { monitorCpu = null; });
   monitor.configure(initialSettings.backgroundMonitoring, initialSettings.pressureNotifications);
   settings.onChange((next) => {
@@ -357,9 +426,11 @@ export default async function plugin(bb: BbPluginApi) {
     signal.throwIfAborted();
     const totalBytes = totalmem();
     const freeBytes = freemem();
-    const availableBytes = Math.min(totalBytes, Math.max(0, memoryDetails.availableBytes));
-    const usedBytes = totalBytes - availableBytes;
-    const memoryPercent = totalBytes === 0 ? 0 : clampPercentage((usedBytes / totalBytes) * 100);
+    // Unreadable counters stay unknown. A free-page guess would count the file cache
+    // as used memory, which is the reading that raised false pressure alerts here.
+    const availableBytes = memoryDetails === null ? null : Math.min(totalBytes, Math.max(0, memoryDetails.availableBytes));
+    const usedBytes = availableBytes === null ? null : totalBytes - availableBytes;
+    const memoryPercent = usedBytes === null || totalBytes === 0 ? null : clampPercentage((usedBytes / totalBytes) * 100);
     const loads = loadavg();
     const coreCount = Math.max(1, cpuList.length);
     const memoryUsage = process.memoryUsage();
@@ -401,10 +472,10 @@ export default async function plugin(bb: BbPluginApi) {
         usedBytes,
         freeBytes,
         availableBytes,
-        cachedBytes: memoryDetails.cachedBytes,
-        buffersBytes: memoryDetails.buffersBytes,
-        swapTotalBytes: memoryDetails.swapTotalBytes,
-        swapUsedBytes: memoryDetails.swapUsedBytes,
+        cachedBytes: memoryDetails?.cachedBytes ?? 0,
+        buffersBytes: memoryDetails?.buffersBytes ?? 0,
+        swapTotalBytes: memoryDetails?.swapTotalBytes ?? 0,
+        swapUsedBytes: memoryDetails?.swapUsedBytes ?? 0,
         usagePercent: memoryPercent,
       },
       disk,
@@ -493,7 +564,7 @@ export default async function plugin(bb: BbPluginApi) {
           stdout: [
             `CPU: ${snapshot.cpu.usagePercent === null ? "sampling" : `${snapshot.cpu.usagePercent.toFixed(1)}%`} (${snapshot.cpu.cores} cores)`,
             `Load: ${snapshot.cpu.loadAverage.map((value) => value.toFixed(2)).join(" / ")}`,
-            `Memory: ${snapshot.memory.usagePercent.toFixed(1)}% used`,
+            `Memory: ${snapshot.memory.usagePercent === null ? "unavailable" : `${snapshot.memory.usagePercent.toFixed(1)}% used`}`,
             `Disk: ${snapshot.disk ? `${snapshot.disk.usagePercent.toFixed(1)}% used` : "unavailable"}`,
             snapshot.processes.available ? `Processes: ${snapshot.processes.total} total, ${snapshot.processes.running} running` : "Processes: unavailable",
             `Updated: ${snapshot.timestamp}`,

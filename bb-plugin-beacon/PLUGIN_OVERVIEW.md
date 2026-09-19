@@ -14,6 +14,6 @@ Metrics stay on the BB server. Chart history is memory-only and expires when nob
 
 ## Requirements
 
-Needs BB 0.43 or newer. It inspects only the BB server host, not other enrolled machines or containers. Detailed network rates need Linux. A process can show more than 100% CPU because that figure is a lifetime average relative to one core.
+Needs BB 0.43 or newer. It inspects only the BB server host, not other enrolled machines or containers. Detailed network rates need Linux or macOS. Memory and swap counters need Linux or macOS. A process can show more than 100% CPU because that figure is a lifetime average relative to one core.
 
 No account, API key, or extra install.

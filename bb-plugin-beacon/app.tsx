@@ -136,15 +136,15 @@ function StatusPopover({ snapshot, onReload, reloading }: { snapshot: ServerSnap
           ))}
         </div>
       </Section>
-      <Section label="Memory" value={formatPercent(memory.usagePercent)}>
-        <Meter value={memory.usagePercent} label="Memory usage" />
-        <Row label="Used" value={`${formatBytes(memory.usedBytes)} of ${formatBytes(memory.totalBytes)}`} />
+      <Section label="Memory" value={memory.usagePercent === null ? "Unavailable" : formatPercent(memory.usagePercent)}>
+        {memory.usagePercent === null ? null : <Meter value={memory.usagePercent} label="Memory usage" />}
+        {memory.usedBytes === null ? null : <Row label="Used" value={`${formatBytes(memory.usedBytes)} of ${formatBytes(memory.totalBytes)}`} />}
         {memory.swapTotalBytes > 0 ? <Row label="Swap" value={`${formatBytes(memory.swapUsedBytes)} of ${formatBytes(memory.swapTotalBytes)}`} /> : null}
       </Section>
       <Section label="Disk" value={disk ? formatPercent(disk.usagePercent) : "Unavailable"}>
         {disk ? <>
           <Meter value={disk.usagePercent} label="Disk usage" />
-          <Row label="Free" value={`${formatBytes(disk.freeBytes)} of ${formatBytes(disk.totalBytes)}`} />
+          <Row label="Used" value={`${formatBytes(disk.usedBytes)} of ${formatBytes(disk.totalBytes)}`} />
         </> : null}
       </Section>
       <Section label="Network" value={network ? undefined : "Unavailable"}>

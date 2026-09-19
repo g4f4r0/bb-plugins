@@ -8,7 +8,7 @@ Status sits in the sidebar footer. Open it while you work. An optional backgroun
 
 Beacon reads system counters. It does not change server settings, enable swap, kill processes, or call a monitoring service. It watches the BB server host only, not other enrolled machines or a container's cgroup limit.
 
-Needs BB 0.43 and Plugin SDK 0.4.87. Network rates are Linux-only.
+Needs BB 0.43 and Plugin SDK 0.4.87. Network rates need Linux or macOS.
 
 ## Install
 
@@ -72,13 +72,13 @@ CPU percent is the change between samples. The first sample has no percent. Per-
 
 Load averages are 1, 5, and 15 minutes. They are not CPU percents.
 
-Memory used is total minus available. On Linux, available is `MemAvailable`. Cache includes `Cached` and `SReclaimable`. Cache and buffers are supporting counters, not extra used memory.
+Memory used is total minus available. On Linux, available is `MemAvailable`. On macOS, available is free plus inactive, speculative and purgeable pages, so cached files are not counted as used; cache is the file-backed page count. Apple's Memory Used is app, wired and compressed memory instead, so the two figures may differ; Beacon is not calibrated against Activity Monitor. Cache and buffers are supporting counters, not extra used memory. If those counters cannot be read, memory shows as unavailable and is left out of health and alerts.
 
 Swap appears only when a swap total greater than zero is readable. Beacon never creates it.
 
-Disk is `/`. Used space is allocated blocks. Available excludes reserved blocks, so used plus available may not equal total.
+Disk is `/`. The row shows used space on the filesystem mounted at `/`, the meter's basis: total minus free blocks. On Linux that excludes separate mounts and partitions. On macOS, where `/` is one volume of an APFS container whose volumes share space, the same call reports container-wide usage and matches `diskutil info /`; `df` on `/` reports only the read-only system volume, and the volume that fills is `/System/Volumes/Data`. Reserved blocks can make used plus writable free space add up to less than total.
 
-Network is received and sent bytes per second on the non-loopback interface with the most cumulative traffic. Not a sum of interfaces. Rates go unavailable when the interface changes or counters reset. Linux only.
+Network is received and sent bytes per second on the non-loopback interface with the most cumulative traffic. Not a sum of interfaces. Rates go unavailable when the interface changes or counters reset. Linux and macOS; other platforms report no interface.
 
 Snapshots list six PIDs by lifetime-average CPU, PID as tie-break. The popover shows the first three. Process CPU is relative to one core and can exceed 100%. That is not the sampled host CPU.
 
@@ -131,11 +131,15 @@ Charts reset after the server history expires. CPU and network then show a dash 
 
 Memory is amber with no toast. Amber starts at 75%. Memory alerts need 90% for a full minute of samples.
 
+Memory may differ from Activity Monitor. Beacon treats inactive and purgeable pages as available; Apple's Memory Used is app, wired and compressed memory. Neither counts cached files as used.
+
+Memory says unavailable. The counters could not be read. Health and alerts skip memory in that state.
+
 No toast appeared. Check both settings, keep BB visible, try `test-alert`. Real alerts also wait on confirmation and cooldown.
 
 Logs are empty. Monitoring is off by default.
 
-Network says unavailable. Needs Linux and a readable non-loopback interface, then two samples.
+Network says unavailable. Needs Linux or macOS and a readable non-loopback interface, then two samples.
 
 A process shows more than 100% CPU. Lifetime average on more than one core.
 
