@@ -1,701 +1,195 @@
-# Wayfinder implementation plan
+# Wayfinder: implementation and release plan
 
-Status: reviewed planning document; not implemented or runtime-verified. Only this plan exists in the Wayfinder package directory, and `wayfinder` is not installed in BB.
+Status: implementation authorized. This document supersedes the earlier Python/browser-only proposal. No feature is complete until its tests and live checks pass. Favor a small working vertical slice over speculative frameworks.
 
-## Review decisions
+## Product
 
-- Wayfinder must work without Cua Driver, Browse, or BB Browser Automation. Their BB installations have been removed at the user's request; do not reinstall them for a baseline or fallback.
-- First milestone: a single-host, single-run, unauthenticated Fortress/CDP compatibility spike against local fixtures. No native desktop automation, reusable authenticated profiles, or automatic visual fallback.
-- Unsupported controls produce a bounded `blocked` result and evidence for human review. A reasoning model can diagnose but cannot bypass policy.
-- Published timings and dependency versions below are research inputs from the original plan, not independently reproduced facts. Verify their source, availability, license, and exact revisions before installing dependencies.
-- Build the complete plugin only after the spike passes. This review does not establish browser compatibility, model availability, speed, or end-to-end correctness.
+Wayfinder tests browser flows, desktop apps, and their filesystem outputs on one shared server computer. A BB agent supplies a goal, typed checkpoints, and allowed actions. A local worker executes routine steps without returning to the main model after every click. Deterministic assertions establish success; Jev's completion score does not.
 
-## Product statement
+Required user experience:
 
-Wayfinder is an ultrafast browser-testing plugin for BB. A user or agent supplies a natural-language goal plus explicit assertions and safety boundaries. A persistent local worker executes routine browser actions through Fortress and CDP, uses Jev for fast bounded operation and target decisions, verifies outcomes independently, and returns a structured diagnostic trace with customer-ready evidence.
+- A **Computer** sidebar tab shows the shared computer, active thread/run, queue, and private live app/browser view.
+- Screenshots, clips, reports, and trails appear inline in the originating thread with **Copy**, **Download**, and **Share** controls. Copy image where supported, otherwise offer copy link with a clear label.
+- Selected artifacts can be shared online through an explicitly approved, expiring and revocable export.
+- One computer for all threads, not a VM per thread. One active controller initially; multiple authorized read-only viewers. Browser profiles, artifact ownership, and filesystem scopes remain isolated.
 
-The main BB model should plan, diagnose, and handle ambiguity. It should not spend a full model turn on every click.
+## Chosen stack
 
-Proposed tagline:
+| Layer | Choice |
+| --- | --- |
+| BB integration | TypeScript and the installed BB Plugin SDK; stable plugin ID `wayfinder` |
+| UI | React and BB frontend SDK slots/components |
+| Worker | TypeScript on Node, supervised outside bb-server; Effect for scoped resources, cancellation, bounded queues, and typed failures where useful |
+| Browser | Fortress, direct CDP; a narrow Playwright-over-CDP adapter is acceptable if the compatibility spike justifies it |
+| Decisions | Jev through TypeSafe; bounded operation/target choices over structured observations |
+| Desktop | Direct Cua Driver runtime integration, not the removed BB Cua plugin |
+| Desktop perception | Accessibility first, cropped/incremental OCR as needed; explicit visual-model escalation only when structured targets are insufficient |
+| Filesystem | Code-owned scoped reads/writes and output verification; no arbitrary shell tool exposed through model actions |
+| State | BB plugin storage for metadata, private host files for bounded durable artifacts |
+| Secrets | Infisical, verified project/environment/folder scope and process injection |
+| Media | Bounded live frames, optimized images, H.264/yuv420p MP4 with byte-range playback; hardware encoder when supported |
 
-> Wayfinder: ultrafast browser testing for agents.
+Python is not a required Wayfinder sidecar. A native dependency may have its own runtime, but do not port the reference Python app wholesale. Bun is deferred unless a measured benefit warrants an additional runtime. Effect is a library, not a runtime or excuse to build a framework.
 
-## Why build it
+Read the repository README and installed SDK declarations before implementation. Resolve `bb plugin source wayfinder --json` before editing an installed copy; initially it is not installed. Build and install only from `/home/g4f4r0/projects/bb-plugins/bb-plugin-wayfinder`. Preserve the original Browse source as reference but do not install it. Cua Driver, Browse, and BB Browser Automation BB plugins remain uninstalled. Direct Cua runtime integration is now explicitly in scope; installing a separate BB computer-use plugin is not.
 
-The previous CUA workflow incurred a BB model/tool round trip for every observe-decide-act cycle. The original plan reported approximately 380 seconds for a Jackfir checkout test; the underlying timing artifacts still need verification.
+## Reference code to audit
 
-The reference implementation in [`browser-use/jev-ultrafast`](https://github.com/browser-use/jev-ultrafast) demonstrates a different control loop:
+MIT-licensed references, pinned for inspection:
 
-```text
-DOM snapshot -> Jev operation + target -> direct CDP action -> repeat
-```
+- `awlevin/typesafe-computer-use` at `cc7b5066ae1a07b5e3182e8f87a9b5b6dfdcffc1`: accessibility/OCR target fusion, mutually exclusive choices, changed-region OCR, no-progress detection, per-phase timing. Its native implementation is Python/macOS, not a verified Linux backend.
+- `Ying-Kai-Liao/jev-browser` at `578cff6e701a131733d03256078bb559a45ad188`: JavaScript local loop, page diffs, grouped target selection, bounded statuses. Uses Playwright Chromium by default; Fortress support is not established. Do not inherit model-only irreversible-action gating or pass model checks off as deterministic verification.
+- `browser-use/jev-ultrafast` at `1231850a0bf1a0c0341fe408ef1668dbbfdfac46`: atomic DOM extraction and low-latency decision/action loop; treat this older pin as requiring verification.
 
-Its published Google Flights run completed 10 interactions, one wait, 17 Jev requests, and two generated text values in 7.073 seconds. The reported median Jev latency was 178 ms. The evidence is narrow and supports investigating the architecture, not assuming it works in Fortress or meets Wayfinder's safety requirements.
+Research files for the first two are under `/home/g4f4r0/.bb/thread-storage/thr_ev9k2b6rf7/research`. Re-read upstream files relevant to any adaptation; preserve license/attribution. Upstream benchmarks are author-reported, not Wayfinder results. Pin actual dependencies and commit lockfiles. Do not execute upstream installation scripts blindly.
 
-Wayfinder should make routine DOM-based browser testing substantially faster while reducing expensive general-model usage. The capable model should usually be called once to prepare a test, only on exceptional states during execution, and once to diagnose a failure.
+## Architecture and ownership
 
-## Product vocabulary
+BB backend -> typed start/status/cancel/approval API -> host supervisor -> local TypeScript worker.
 
-- **Route**: a complete test specification.
-- **Checkpoint**: a deterministic assertion.
-- **Run**: one execution of a route.
-- **Trail**: the structured action and evidence trace.
-- **Detour**: a stopped run handed to a human or reasoning model for diagnosis; not an automatic desktop-control fallback.
-- **Arrival**: independently verified completion.
+Worker adapters:
 
-## Goals
+1. Browser: Fortress/CDP -> compact DOM -> Jev -> validated browser action.
+2. Desktop: Cua -> app/window accessibility + optional OCR -> Jev -> validated native action.
+3. Files: scoped operations -> deterministic filesystem assertions.
 
-1. Execute ordinary browser flows 5-20 times faster than the current model-per-action CUA loop.
-2. Keep the capable BB model out of successful routine execution loops.
-3. Use Fortress as the controlled browser.
-4. Use Jev for bounded operation and target selection over compact structured state.
-5. Use deterministic code for execution, policy, arithmetic, waits, assertions, and verification.
-6. Stop safely on visual-only browser states and native dialogs; require no external computer-use plugin.
-7. Produce useful failure diagnoses without asking an agent to watch an entire video.
-8. Produce clean screenshots and recordings suitable for customer delivery.
-9. Support safe parallel execution in isolated temporary browser profiles.
-10. Keep secrets out of model context, traces, recordings, logs, and source control.
+All adapters share policy, run state, a single host control lease, evidence capture, and checkpoint evaluation. Browser-to-desktop transitions must transfer the same lease and bind the intended app/window, not silently control whatever has focus. Only one active controller across threads in v1. Queue fairly; show owner and wait state. External human activity can invalidate an observation: pause/reobserve instead of blindly sending input.
 
-## Non-goals for the first release
+Use code-owned identities: run, host, thread, project, environment, document/frame or app/window generation, snapshot, and observed target. Revalidate immediately before input. Never turn a model answer into an arbitrary selector, coordinate, executable JavaScript, filesystem path, or shell command. Coordinates derived from a validated observed target are permitted for native input; reject stale geometry.
 
-- General autonomous desktop operation.
-- Solving or bypassing CAPTCHAs.
-- Circumventing access controls, rate limits, or site policies.
-- Executing orders, payments, external communications, deletions, permission changes, or other consequential actions in v1, even with confirmation.
-- Full compatibility with every browser widget in the first version.
-- Training or fine-tuning Jev.
-- Treating Jev's `DONE` decision as proof of success.
+The browser, native runtime, capture, and filesystem operations run on the selected host. Start with this server only. Reject a mismatched host rather than executing on the wrong computer. Future remote-host dispatch uses public SDK host RPC, not public CDP or worker sockets.
 
-## Core design principles
+## Routes, lifecycle, and safety
 
-### Keep the hot loop local
+Use one versioned strict schema for goals, allowed apps/origins/paths/actions, typed checkpoints, data references, capture policy, and limits. Compile natural-language assertions outside the action loop and show the resolved predicates. Reject unknown fields, unsupported assertions, and empty required-checkpoint sets.
 
-A persistent worker owns the browser session and runs multiple observe-decide-act cycles from one BB tool invocation. It must not return to the main chat model after each browser action.
+Checkpoints distinguish historical step results from final state. Initial predicates cover URL, visible text/control state, field value, structured row/cart values, selected network outcomes, and scoped filesystem existence/content/hash. Unknown is never pass. Trusted verifier code is separately tested; never execute verifier code supplied by a model.
 
-### Prefer structured browser state
+Run states: queued, running, awaiting_confirmation, verifying; terminal passed, failed, blocked, cancelled, timed_out, interrupted. Cleanup has its own outcome.
 
-The default observation is one atomic DOM snapshot containing visible text, visible supported controls, names, values, states, and code-owned node identities. Screenshots stay out of the Jev loop.
+- Start returns promptly with a run ID. Status polls do not drive actions.
+- Deduplicate starts by caller-scoped idempotency key and route hash.
+- Journal intent before dispatch and outcome after. A crash between them means uncertain mutation, never automatic replay.
+- Bound runtime, decisions, tokens/spend, no-progress loops, request retries, queue length, artifacts, and capture buffers.
+- Lease/heartbeat expiry, cancellation, process death, thread/environment disposal, reload, disable, and uninstall close only owned resources. Startup reconciles orphaned runs. Report incomplete cleanup.
+- Use BB lifecycle and host-worker leases correctly; don't depend solely on a dispose hook or a long RPC staying alive.
+- Approval requires authenticated user provenance, scoped to one action, target, state, route/policy hash, and expiry; single-use and revalidated. An agent boolean is not user consent.
+- V1 stops before purchases, payments, external messages, destructive deletion, permission/account changes, and other consequential actions. Testing uses local fixtures, synthetic data, and approved read-only/live-cart scope.
+- Define exact navigation versus resource origins. Guard redirects, popups, frames, downloads, workers, and non-HTTP URLs; private/metadata addresses denied except explicit fixtures. CDP interception alone is not proof against all website side effects or DNS rebinding.
+- Native actions enforce app/window allowlists and visible target identity. No arbitrary desktop wandering, CAPTCHA bypass, or access-control circumvention.
+- Filesystem operations stay within explicit run roots, handle symlinks/path traversal safely, and distinguish fixtures from outputs. Do not expose arbitrary home-directory access; destructive fixture cleanup affects only owned paths.
+- Unsupported native APIs, missing OCR, ambiguous targets, low confidence, or unavailable providers return a bounded actionable blocked result. Never pretend a fallback succeeded.
 
-### Make the action space finite
+## Secrets and privacy
 
-Jev may choose only among operations and targets constructed from the current observation. Model output must never become a selector, coordinate, shell command, or executable JavaScript.
+Resolve provider and application credentials through Infisical with verified project, explicit environment, and narrow path. No secret values in prompts, BB settings, shell arguments, logs, URLs, traces, screenshots, or recordings. Do not use browser login to Infisical. If auth/scope is unavailable, name the prerequisite, not a guessed secret location.
 
-### Separate execution from verification
+Use synthetic data initially. Never send secret field values to Jev or a writer. Resolve a field first, then inject through a separate protected path. Password masks are insufficient; suspend all model-visible capture/live preview/recording through protected intervals until a verified safe state. Sanitize before serializing, hashing, or exporting. Queries, fragments, bodies, headers, console output, and OCR may contain sensitive data; retain only approved fields. Authenticated-profile reuse remains deferred until leak tests pass.
 
-Jev chooses actions. Independent deterministic checkpoints decide whether the route passed. A `DONE` choice triggers verification; it does not establish success.
+## Computer tab and media
 
-### Fail closed
+Required Computer tab: host readiness, active owner, run queue, selected run, action/checkpoint, elapsed time, cancel, connection state, frame age, and artifact links. The selected historical run must not be confused with the current host owner. Live viewing is read-only; no unreviewed keyboard/mouse takeover feature.
 
-Invalid model responses, stale targets, uncertain mutations, forbidden actions, low-confidence consequential decisions, and ambiguous completion must stop or escalate without retrying a potentially completed mutation.
+Capture only the selected browser viewport/app window, not unrelated desktop windows. Reconnect rechecks authorization and run ownership. Explicit paused/redacted/disconnected states replace stale images. Closing a viewer stops its subscription, not the run. Never publicly share the live computer view.
 
-### Capture evidence around events
+Performance rules:
 
-The diagnostic agent should receive the failing checkpoint, sanitized DOM diff, network and console events, and permitted keyframes/video ranges when available. Explicitly mark evidence withheld for privacy or unavailable due to capture failure; never fabricate it.
+- Reuse worker/provider connections; never reuse another run's cookies or profile.
+- Prefer event-driven settling, compact snapshots/diffs, grouped target selection, and accessibility over OCR. No forced sleep/model round trip per click.
+- Crop OCR and reuse unchanged regions, invalidating on app/window/geometry changes. Bound cache lifetime and size.
+- Capture one live feed per run and fan out to authorized viewers. Drop stale frames; never block execution on a slow client.
+- Adapt preview resolution/rate to visibility and network load. Stop preview-only capture with no viewers.
+- Images use compressed thumbnails and separately accessible full-resolution evidence; preserve text readability. Choose WebP/JPEG/PNG by measured size and fidelity, not a single lossy format for everything.
+- Video uses bounded independent capture and asynchronous encoding/export. Prefer hardware H.264 when supported; otherwise bounded software encoding. MP4 fast-start, yuv420p, timestamped events, short failure clips, and range requests. Never base64-embed full videos.
+- Preserve original diagnostic timestamps. Any trimmed/sped-up presentation copy is separately labeled; do not use it for timing claims.
+- Test 1280x720 customer exports, mobile playback, aspect ratio, cursor visibility, and redaction gaps. Synthetic wallpaper margins are optional export styling, not whole-desktop capture.
 
-## Reference implementation
+Inline thread cards must provide preview, filename/type/size, and accessible Copy/Download/Share icons with tooltips and error feedback. Clipboard API failure has a fallback. Use supported BB message/artifact rendering APIs, not private DOM patches; document any SDK limitation honestly.
 
-The initial compatibility spike should pin and audit:
+## Online artifacts
 
-- `browser-use/jev-ultrafast` commit `1231850a0bf1a0c0341fe408ef1668dbbfdfac46`
-- `browser-harness` version `0.1.13`
-- Jev `1.13` or the explicitly resolved tested model version
-
-Relevant upstream files:
-
-- `jev_ultrafast/agent.py`: bounded local execution loop
-- `jev_ultrafast/snapshot.js`: atomic visible-control extraction
-- `jev_ultrafast/browser.py`: persistent CDP session and guarded execution
-- `jev_ultrafast/model.py`: dynamic operation and target questions
-- `jev_ultrafast/questions.py`: execution policy
-
-The upstream project is MIT licensed. Preserve attribution and license notices if code is vendored or adapted.
+Tie artifacts to originating thread/run and persist them independently of temporary profiles. Internal links use authenticated remote BB/plugin routes. Sharing is an explicit selection/export action, never automatic publication of a thread transcript or arbitrary storage directory.
 
-For the spike, use a dependency pinned to an exact commit. If the approach passes acceptance testing, vendor the small audited core or maintain an explicit fork so upstream changes cannot silently alter browser behavior.
-
-## Proposed architecture
-
-```text
-BB agent or user
-      |
-      | computer_task(route)
-      v
-Wayfinder BB backend
-      |
-      +-- route compiler and policy validator
-      +-- run/session supervisor
-      +-- progress and confirmation events
-      +-- artifact index
-      |
-      v
-Persistent isolated worker
-      |
-      +-- Jev decision policy
-      |     operation + operation-specific target heads
-      |
-      +-- small text helper
-      |     field values only
-      |
-      +-- Fortress CDP adapter
-      |     DOM snapshots and direct browser input
-      |
-      +-- unsupported-state detector
-      |     bounded stop and diagnostic handoff
-      |
-      +-- assertion and verification engine
-      +-- CDP network/console/performance collector
-      +-- continuous recorder
-```
+Create sanitized immutable exports with a file manifest and approved audience. External read-only links expire, are revocable and unguessable; treat credentials as secrets and use Infisical-backed signing if required. Do not invent new secret storage. Default external expiry is 7 days; default local artifact retention is 30 days, configurable downwards and bounded by a documented disk quota. External sharing stays disabled until signing/auth prerequisites are verified.
 
-### BB plugin backend
+Use safe generated paths, MIME validation, per-run access checks, private/no-store and no-referrer behavior, bounded downloads/range responses, and expiry/deletion of export copies. HTML must be sandboxed or downloaded, never execute in BB's origin. Revocation stops future requests but cannot recall downloaded copies. Never expose CDP, native driver ports, sockets, raw filesystem, or the live stream for artifact sharing.
 
-The TypeScript plugin should own:
+## Ordered implementation steps
 
-- Agent-tool registration.
-- Input parsing and typed route validation.
-- Worker lifecycle and health checks.
-- Per-run resource limits and cancellation.
-- Confirmation pauses and resumes.
-- Realtime progress events.
-- Bounded tool output.
-- Artifact paths and cleanup.
-- Settings that do not contain secrets.
-- Run ownership bound to the originating thread, project, environment, host, and plugin generation; enforce it on status, confirmation, cancellation, and artifact reads.
+Each step records actual files, commands/tests, live evidence, and blockers in `IMPLEMENTATION.md`. Do not mark a step done solely because a mock passes.
 
-Start with one explicitly configured host. Refuse a request from a different host rather than silently launching on `bb-server`. The browser, sidecar, secret injection, and capture process must share the selected host. Later multi-host support uses the public `bb.hosts` contract and a `bb.host` entry, not an exposed Unix socket or CDP endpoint.
+### 1. Foundation and capability spike
 
-Before implementation, inspect the installed BB Plugin SDK declarations and read the plugin authoring references for backend tools, lifecycle, realtime events, testing, and optional frontend surfaces.
+Owner: GPT-5.6-Sol/high.
 
-### Persistent worker
+- Inspect host platform, installed Fortress/Cua/encoder/OCR availability and exact SDK contracts. No unapproved privileged/system installs.
+- Scaffold the real Wayfinder package, pinned dependencies/lockfile, typecheck/test/build commands, shared strict contracts, adapter interfaces, and run/error types.
+- Build local browser and desktop test fixtures as appropriate. Probe actual Fortress CDP and Cua readiness independently; record missing provider credentials without leaking values.
+- Establish boundaries and files for independent implementation tasks; publish contracts before parallel edits.
 
-Use a supervised Python sidecar for the initial implementation because the reference engine and Browser Harness are Python packages. The sidecar should remain alive across actions but isolate native or browser failures from `bb-server`.
+Gate: package checks work, contracts are explicit, actual prerequisites are recorded. A missing native/model prerequisite does not prevent offline implementation, but blocks claims of live completion.
 
-Communication should use a private Unix socket with a small typed protocol. The socket and parent directory must be owner-only, use a versioned protocol with bounded frames and request deadlines, and reject unknown or concurrent controllers for the same browser target. Check peer ownership where supported. This is a same-user boundary, not protection against hostile processes running under the same account.
+### 2. Execution engine and adapters
 
-The worker owns:
+Owner: GPT-5.6-Sol/high, after step 1.
 
-- Fortress launch and target binding.
-- Browser Harness/CDP connection.
-- The local decision loop.
-- Jev and text-helper calls.
-- Assertions and event capture.
-- Unsupported-state detection and diagnostic handoffs.
-- Run trace serialization.
+- Implement TypeScript worker, single-controller queue/lease, bounded local Jev loop, independent verification, cancellation, crash reconciliation, and policy.
+- Implement Fortress/browser, Cua/native, and filesystem adapters against the shared interfaces. Keep SDK/server wiring outside these modules.
+- Add local fixture and adversarial tests for stale targets, uncertain mutation, concurrent requests, spoofed approvals, path escape, unsupported states, and privacy.
+- Prove at least one real browser fixture and one real native-app fixture if prerequisites allow; expose clear setup-required otherwise.
 
-### Fortress session
+### 3. Computer UI and media/artifact components
 
-Each run should use:
+Owner: Claude Opus 5/high, parallel with step 2 only on disjoint files.
 
-- A dedicated temporary user-data directory by default.
-- An explicit loopback-only remote-debugging port.
-- An exact CDP browser and target identity.
-- A deterministic viewport and window frame.
-- Browser-only capture by default; optional synthetic wallpaper margins composed after capture, without reading unrelated desktop windows.
-- Isolated temporary state only in v1; reusable profiles are deferred.
-- Cleanup after success, failure, timeout, or cancellation.
+- Implement Computer panel and client components against shared contracts.
+- Implement bounded media capture/export and artifact services in their assigned directories, with inline cards and Copy/Download/Share behavior.
+- Test slow clients, disconnects, image copy fallback, range playback, cross-thread isolation, safe rendering, export expiry/revocation, and quota enforcement.
+- Do not edit worker/core, shared contracts, server entry, or package lock while the engine agent is active. Report integration needs instead.
 
-Browser Harness should connect through an explicit `BU_CDP_URL`. Do not depend on automatic Chrome profile discovery. Never attach to a user's existing browser or expose CDP via BB Connect. Resolve the actual executable, version, platform support, and license before launch; do not assume Fortress is installed or compatible.
+### 4. BB integration
 
-### Run lifecycle and recovery
+Owner: GPT-5.6-Sol/high, after both implementation branches return.
 
-Use explicit states: `queued`, `running`, `awaiting_confirmation`, `verifying`, and terminal `passed`, `failed`, `blocked`, `cancelled`, `timed_out`, `interrupted`. Record the last durable state and a separate cleanup result.
+- Merge actual contracts and dependencies, implement backend/host lifecycle, tools/CLI, settings, HTTP/RPC, progress, and UI wiring.
+- Resolve seams rather than leaving production mocks, placeholder buttons, or unimplemented adapters.
+- Run typecheck, unit/fixture tests, and full BB build. Preserve removed-plugin state.
+- Commit reviewed source and lockfiles, then build/install/reload from the permanent path only when checks pass and setup is safe. Verify actual plugin status and readiness.
 
-Starting a run returns a run ID promptly; the worker continues locally. An optional bounded wait may return a terminal result, but a tool/RPC timeout must not create a duplicate run. Deduplicate starts using a caller-scoped idempotency key and route hash. Status polls never drive browser actions.
+### 5. Independent release review
 
-Journal action intent before dispatch and result after dispatch. A crash between them is an uncertain mutation: mark the run `interrupted`, never replay it automatically. Lease expiry, thread/environment disposal, plugin reload/disable/uninstall, worker death, timeout, and cancellation must stop owned child process groups and close targets. Use heartbeat expiry and startup reconciliation for crashes where dispose hooks cannot run. Cancellation is idempotent, bounded, and reports incomplete cleanup; never kill an unrelated browser. Keep durable sanitized artifacts outside disposable profile and worker directories.
+Owner: Claude Opus 5/high, read-only review of the integrated result.
 
-The supervisor must account for BB's host RPC timeout and worker idle eviction; use bounded start/status calls and an explicit worker lease if using host RPC. Progress events are hints; persisted status is authoritative.
+- Inspect security, correctness, cleanup, hot-path performance, UI contracts, and actual evidence.
+- Run independent checks; distinguish offline coverage from real provider/browser/native/remote UI tests.
+- Return concrete blockers with file locations and reproduction, not a generic approval.
 
-### Jev policy
+### 6. Fix, recheck, and deliver
 
-Each decision request should include:
+Owner: GPT-5.6-Sol/high, incorporating the review.
 
-- The route goal.
-- Current URL and title.
-- Visible page text, bounded to a configured limit.
-- Indexed visible elements and their supported operations.
-- Current values and checked, selected, and expanded states.
-- Recent actions and whether they changed the page.
-- Only the operation and target questions needed for the current action space.
+- Fix verified defects; add regression tests and rerun all affected checks.
+- Verify remote Computer UI, inline artifact copy/download, approved sharing, expiry/revocation, browser route, native fixture, cancellation, and uninstall/reload cleanup where possible without disrupting unrelated work.
+- Record exact versions, results, performance, unresolved prerequisites, and release readiness. Commit scoped work; no push unless requested.
+- If a real prerequisite blocks release, leave a usable tested implementation and explicit setup-required state, not a false complete claim.
 
-One TypeSafe request should evaluate the operation and speculative operation-specific targets in parallel. The executor consumes only the target head corresponding to the selected operation.
+## Acceptance and measurements
 
-Initial operations:
+Release gates:
 
-- `CLICK`
-- `TYPE_TEXT`
-- `SELECT`
-- `SCROLL_UP`
-- `SCROLL_DOWN`
-- `WAIT`
-- `DONE`
-- `BLOCKED`
-- `UNSUPPORTED`
-- `REQUIRE_CONFIRMATION`
+- Real browser and native fixture results plus independent checkpoints; every pass has evidence.
+- One controller across threads; read-only viewers cannot send input or access another run without authorization.
+- No secret canaries in model requests, logs, artifacts, pixels, or exported media.
+- Bounded cancellation/restart/disposal and no replay of uncertain mutations; cleanup failures visible.
+- Computer tab and inline Copy/Download/Share work from a remote client with authenticated access checks.
+- Share expiry/revocation, file traversal, unsafe HTML, forbidden origins/apps/paths, and forged approvals tested.
+- No Cua Driver/Browse/Browser Automation BB plugin reinstallation.
+- Typecheck, focused tests, build, and live plugin checks pass; no placeholder execution path advertised as functional.
 
-Add confidence gates. The reference implementation validates response shape but generally executes the maximum-probability choice. Wayfinder must stop or escalate when operation or target confidence falls below route policy. Verify that the selected provider actually exposes these scores; missing scores must not become confidence 1.0. Calibrate thresholds on held-out fixtures. Confidence is not authorization and cannot make a forbidden action safe.
+Measure matched conditions with preview/recording off and on, multiple viewers, and export load. Initial targets, not claims: under 1 second p50 routine browser action, under 3 seconds p50 first meaningful action, below 1 second p95 live frame age on the declared connection, and at most 10% median execution overhead from preview. Desktop timings reported separately; OCR may dominate. Include startup, model latency/cost, waits, failures/timeouts, CPU/memory, bandwidth, and encoder cost.
 
-Every decision is bound to a run, document generation, frame, snapshot ID, and code-owned node identity. Immediately before dispatch, revalidate identity, supported operation, visibility, enabled/read-only state, hit target, and policy. A changed document invalidates the decision. Bound observation size, wait duration, provider retries, no-progress loops, token usage, and per-run spend.
+Before reliability claims, use a held-out supported suite with at least 10 routes and 20 attempts each; aim for 95% verified success, with per-route outcomes and uncertainty. Expected safety stops are separate, never arrivals. Any unauthorized consequential action or secret leak blocks release. Upstream speed numbers and the historical 380-second CUA run are not verified comparisons.
 
-### Text helper
+## Deferred work
 
-A small low-latency language model generates text only after Jev chooses `TYPE_TEXT` and a specific observed field.
-
-The helper receives:
-
-- Original route goal.
-- Selected field name, role, and current value.
-- Bounded visible context.
-- Recent relevant actions.
-
-It must return exactly one typed JSON value. It may not generate browser actions. It must never invent missing personal information. Credentials and secret values should bypass the model and be injected only after the field target is resolved.
-
-### Unsupported states and detours
-
-Canvas controls, visual-only interfaces, unsupported frames/shadow roots, native dialogs, complex drag-and-drop, and inaccessible DOM stop the run with `blocked` and a concrete reason. Do not invoke Cua Driver, Browse, BB Browser Automation, or another computer-use plugin.
-
-A human or reasoning model may inspect sanitized evidence and propose a separately approved route or adapter change. Manual completion is not an automated pass. Final visual review is optional human review, separate from deterministic checkpoint results. Any future visual adapter requires a new design review and must preserve the same target, policy, and confirmation boundaries.
-
-## Proposed agent tools
-
-Keep the public tool set small.
-
-### `computer_task`
-
-Validates and starts a route, returning a run ID and bounded initial status. The worker runs independently until arrival, failure, confirmation, timeout, cancellation, or a bounded escalation. Keep these names provisional; check collisions before registration and prefer a Wayfinder-specific prefix.
-
-Input should include:
-
-- Goal.
-- Start URL.
-- Checkpoints.
-- Forbidden actions.
-- Domain allowlist.
-- Maximum steps and runtime.
-- Profile policy.
-- Recording policy.
-- Confidence policy.
-
-### `computer_task_confirm`
-
-Resumes a paused run after explicit user confirmation. The confirmation must be scoped to one described action and one observed state. An agent-supplied `confirmed: true` is not user consent: use a BB user interaction with server-verifiable provenance. Bind a single-use, expiring approval to the run, route/policy hash, action payload, target, origin, and document fingerprint. Revalidate before dispatch and ask again if anything changes. Persisted policy always overrides approval; a forbidden action cannot be confirmed into permission. The first release stops at consequential boundaries instead of executing payments, orders, deletions, or account changes.
-
-### `computer_task_status`
-
-Returns bounded progress, current state, timings, and any pending confirmation or diagnostic summary.
-
-### `computer_task_cancel`
-
-Stops the run, closes owned resources, finalizes available evidence, and reports cleanup results.
-
-A future frontend panel may provide live progress, confirmations, preview frames, and artifact navigation. It is not required for the compatibility spike.
-
-## Route format
-
-Illustrative route:
-
-```yaml
-name: jackfir-classic-shave-checkout
-startUrl: https://jackfir.com
-
-goal: >
-  Add one Classic Shave Cream as a one-time purchase and continue through
-  checkout until payment is required. Do not submit payment or place an order.
-
-domains:
-  - jackfir.com
-
-checkpoints:
-  - product title is "The Classic Shave Cream"
-  - purchase type is "One-time purchase"
-  - cart contains "The Classic Shave Cream"
-  - cart quantity equals 1
-  - checkout contact section is visible
-  - payment section is visible
-
-forbid:
-  - click text matching "Pay now"
-  - click text matching "Place order"
-  - submit a payment form
-
-limits:
-  maxActions: 60
-  maxDecisionRequests: 120
-  timeoutSeconds: 120
-
-recording:
-  enabled: true
-  customerReady: true
-```
-
-This YAML is a human-readable sketch, not an executable or safety-complete route. Use a versioned strict JSON Schema, reject unknown fields, and validate URL schemes, origins, numeric limits, and assertion types. The illustrative single-domain list may not cover real checkout origins; do not infer or auto-allow additional domains.
-
-Compile natural-language checkpoints outside the hot loop. Show and approve the exact typed predicates and resolved policy before execution; reject unsupported or ambiguous assertions. Distinguish historical checkpoints (observed at a named step) from final-state checkpoints, so a product-page assertion does not have to remain visible at checkout. Require all mandatory checkpoints to pass; `unknown`, absent evidence, and an empty assertion list cannot produce `passed`.
-
-## Assertion and verification engine
-
-Supported deterministic checkpoints should begin with:
-
-- URL equals, contains, or matches a safe pattern.
-- Visible text exists or does not exist.
-- Element with role and accessible name exists.
-- Field value equals an expected value.
-- Checkbox, radio, switch, or option has an expected state.
-- Cart or table row contains expected structured values.
-- Network request completed with an allowed status.
-- Console contains no uncaught error matching policy.
-- Page reached a stable state within a time budget.
-- No policy violation was observed in the executor's audited action stream (not proof that the website produced no side effects).
-
-Routes may add site-specific verifiers as trusted code. Verifiers must be read-only, bounded, and separately tested.
-
-## Trace and diagnostics
-
-Every run should create a structured trail containing:
-
-- Route and resolved policy.
-- Environment and version metadata.
-- Model versions.
-- Browser and viewport information.
-- Every observation fingerprint.
-- Candidate operations and targets.
-- Jev probabilities and latency.
-- Selected action and exact observed target identity.
-- Execution timestamps and effects.
-- Relevant DOM changes.
-- Network failures and selected request metadata.
-- Console errors.
-- Checkpoint evaluations.
-- Detours and confirmation events.
-- Resource and model usage.
-- Artifact hashes.
-
-Do not store secret field values, authorization headers, cookies, tokens, or unsanitized sensitive responses. Sanitize before serialization, hashing, logging, or sending content to a provider. Hashing low-entropy sensitive values is not redaction. Strip URL queries/fragments by default and allowlist retained network fields; do not capture bodies by default.
-
-Artifacts require authenticated, run-scoped access, safe generated paths, retention and byte limits, and an explicit deletion policy. Customer delivery is a separate user-approved export, not a public URL by default. Artifact creation failure must be reported without masking the primary run result.
-
-### Failure packet
-
-The main BB model should receive a compact failure packet rather than the entire trail:
-
-```text
-Failure category
-Failed checkpoint
-Expected state
-Observed state
-Relevant actions
-Operation and target confidence
-Relevant DOM diff
-Relevant network and console events
-Before and after keyframes
-Short video range
-Links to the full trail and recording
-```
-
-### Failure categories
-
-- **Product defect**: correct interaction, incorrect application outcome.
-- **Automation failure**: wrong target, unsupported control, stale state, or execution error.
-- **Route-definition problem**: ambiguous goal or invalid/outdated checkpoint.
-- **Environment failure**: network, browser, provider, or infrastructure problem.
-- **Safety stop**: policy or confirmation boundary prevented continuation.
-
-The diagnostic model may propose an application fix, route update, or executor improvement. It must not silently rewrite the route and count the rerun as passing.
-
-## Recording and presentation
-
-Recording must remain outside the decision loop.
-
-Requirements:
-
-- 1280x720 customer-ready output.
-- Browser viewport at a deterministic frame, without capturing other applications.
-- Optional synthetic BB/Dusk-style wallpaper margins added during export.
-- Standard cursor with a restrained optional click indicator.
-- No CUA high-visibility overlay.
-- Continuous capture with original timing only for synthetic, non-sensitive fixture runs. Recording is off by default for other runs; protected intervals produce explicit gaps rather than unredacted frames.
-- Event markers mapped to recording timestamps.
-- Failure clip export around the relevant event.
-- H.264, `yuv420p`, mobile-compatible output.
-- Byte-range streaming for inline playback; do not embed the full MP4 as a base64 data URL.
-
-## Safety and secrets
-
-- Resolve all credentials through Infisical at runtime, including model-provider credentials. Verify project, environment, and narrow folder scope first. Use process injection, not values in shell arguments or BB settings. Missing authentication is a prerequisite failure, not a browser-login task.
-- Never persist `.env` files when process injection works.
-- Never include credential values in prompts, traces, logs, screenshots, videos, shell arguments, or artifacts.
-- Resolve the target field before injecting a secret.
-- Password-field masking alone is insufficient: sensitive values can appear in text, URLs, autocomplete, console output, or pixels. Before secret injection, suspend capture and model-visible observation until an independently checked safe state. V1 uses synthetic non-sensitive data; authenticated flows remain deferred until leak tests pass. Never send Infisical credentials through a browser.
-- Separate exact navigation origins from permitted resource/API origins. Validate redirects, popups, frames, workers, WebSockets, downloads, and non-HTTP schemes. Deny loopback, private/link-local networks, and metadata endpoints except explicit local fixture origins; address DNS rebinding at the network isolation layer. A hostname string check alone is not an SSRF boundary.
-- A denylist of button text is not a safety boundary: form submit, Enter, JavaScript handlers, and navigation can all mutate state. The first live routes must be reviewed and stop before consequential actions. Prove pre-dispatch blocking in controlled fixtures, including service-worker traffic; if interception coverage cannot be established, restrict the spike to fixtures/test stores. Do not promise arbitrary-site side-effect prevention through CDP alone.
-- Stop before payments, purchases, external communication, deletion, permissions, account changes, and other consequential actions in v1. Future execution requires separately reviewed enforcement and explicit user confirmation.
-- Keep policy enforcement in code. Prompt instructions cannot relax it.
-- Verify that cancellation and timeout close owned targets and temporary profiles.
-
-## Performance and cost telemetry
-
-Collect per run:
-
-- Total elapsed time.
-- Time to first meaningful action.
-- Observation latency.
-- Jev request count and latency distribution.
-- Text-helper calls and latency.
-- CDP call count.
-- Unsupported-state handoff count and time spent paused.
-- Network wait duration.
-- Input and output tokens by model.
-- Provider-reported cost when available.
-- General-model escalation count.
-
-The published reference used approximately 90,558 TypeSafe input tokens across 17 requests. Jev is intended to process these cheaply, but Wayfinder must measure real billing rather than assuming cost from latency.
-
-## Implementation phases
-
-### Phase 0: baseline
-
-Recover existing CUA-based Jackfir timing artifacts if available; label the approximately 380-second figure historical and unverified otherwise. Do not reinstall removed computer-use plugins to reproduce it. Establish a new deterministic local-fixture baseline using the same browser, viewport, network conditions, checkpoints, and recording policy as the spike.
-
-Deliverables:
-
-- Action-by-action timing.
-- Model, tool, observation, execution, wait, and recording breakdown.
-- Stable route and deterministic verifier used by every later comparison.
-
-### Phase 1: Fortress compatibility spike
-
-Run the pinned Jev Ultrafast engine outside BB against a dedicated Fortress session. First audit upstream code and lock all Python dependencies (including transitive dependencies and hashes), model IDs, Node/SDK versions, and browser version. Verify provider access and budget through scoped Infisical injection.
-
-Start with offline policy tests and a controlled fixture store. Only after safety tests pass, and live-site scope is approved, run these candidate tasks without real personal/payment data:
-
-1. Wikipedia navigation.
-2. Jackfir product navigation.
-3. Add the Classic Shave Cream as a one-time purchase.
-4. Reach checkout and stop before payment submission.
-
-Verify:
-
-- Browser Harness connects through explicit `BU_CDP_URL`.
-- Target identity remains stable.
-- Fortress/CDP is compatible on the selected host; record any change in browser behavior without attempting to bypass challenges or access controls.
-- Background focus emulation does not break the visible recording.
-- Temporary profiles clean up correctly.
-- Independent Jackfir checkpoints pass.
-
-This phase is a go/no-go gate. Do not build the complete BB plugin until Fortress compatibility and speed are measured.
-
-### Phase 2: hardened worker
-
-Add:
-
-- Typed route schema.
-- Domain and action policy.
-- Confidence gates.
-- Confirmation states.
-- Independent verifiers.
-- Sanitized traces.
-- Network and console collection.
-- Timeouts, cancellation, and resource cleanup.
-- Clean recording and event markers.
-- Unsupported-state stop and handoff interface.
-
-### Phase 3: BB backend plugin
-
-Create the plugin manifest, backend entrypoint, supervised worker service, agent tools, settings, storage boundaries, and lifecycle cleanup.
-
-Add focused tests for:
-
-- Tool input validation.
-- Worker restart and disposal.
-- Cancellation.
-- Confirmation scoping.
-- Bounded output.
-- Policy enforcement.
-- Secret redaction.
-
-### Phase 4: frontend experience
-
-If the backend proves useful, add:
-
-- Live run progress.
-- Current action and elapsed time.
-- Confirmation cards.
-- Lightweight preview frames.
-- Trail timeline.
-- Failure packet view.
-- Inline range-streamed recording.
-
-### Phase 5: parallel test runner
-
-Add bounded concurrency with one isolated Fortress profile and exact target per run. Respect BB host concurrency and machine capacity.
-
-Support:
-
-- Route suites.
-- Tags and environment selection.
-- Retry policy limited to safe read-only or independently idempotent routes.
-- Aggregate reports.
-- Comparison against prior accepted runs.
-
-### Phase 6: learning from failures
-
-Aggregate sanitized automation-failure categories to guide engineering improvements:
-
-- Date-picker adapter.
-- Frame and shadow-root traversal.
-- Better checked-state extraction.
-- Improved settling policy.
-- Earlier detection of unsupported states.
-- Site-specific trusted verifiers.
-
-Do not automatically change production policy from model suggestions. Every change requires tests and measured comparison.
-
-## Acceptance criteria
-
-### Compatibility spike
-
-- Fortress connects reliably through an explicit CDP endpoint.
-- The Wikipedia route passes in under 10 seconds on repeated runs.
-- The Jackfir product-to-cart route passes in under 20 seconds on repeated runs.
-- The full Jackfir route reaches the payment boundary in under 60 seconds at median.
-- No run clicks or submits a forbidden payment or order action.
-
-These are targets, not promises. Record full distributions and failures. Use at least 20 attempts per route per configuration; report cold and warm launches separately, success counts, median/p95 end-to-end times, costs, and every failure/timeout. Compare matched conditions; do not drop failures or exclude model, startup, and recording overhead from end-to-end claims. If the historical CUA baseline cannot be reproduced from artifacts, make no verified speedup claim against it.
-
-### First plugin release
-
-- At least 95% success on a versioned held-out suite of at least 10 supported routes and 20 attempts per route. Report per-route results and uncertainty; expected safety blocks are tested separately and never counted as successful arrivals. Any unauthorized consequential action or secret leak is a release blocker regardless of aggregate success.
-- Routine deterministic browser actions complete under 1 second at p50.
-- First meaningful action occurs under 3 seconds at p50.
-- Every pass is established by independent checkpoints.
-- Every failure produces a bounded diagnostic packet.
-- Cancellation closes owned resources.
-- No secrets appear in logs, trails, screenshots, recordings, or tool output.
-- Unsupported states stop explicitly without invoking a removed plugin.
-- Plugin build, typecheck, focused tests, and live BB workflow pass.
-
-## Test strategy
-
-### Offline tests
-
-- Dynamic action-space construction.
-- Operation-specific target isolation.
-- Model-response validation.
-- Stale-decision rejection.
-- Mutation non-retry guarantees.
-- Route parsing and policy compilation.
-- Forbidden-action matching.
-- Confirmation boundaries.
-- Secret redaction, including URL/DOM/console/model payload canaries and pixel/recording checks.
-- Run ownership, forged/expired/replayed confirmations, and cross-thread artifact access.
-- Crash-after-dispatch reconciliation, duplicate starts, lease expiry, reload/uninstall, and incomplete cleanup.
-- Redirects, popups, private-network targets, service workers, and action paths that bypass button clicks.
-- Assertion evaluation, including historical versus final predicates and unknown results.
-- Failure classification.
-- Trace bounds.
-
-### Local browser fixtures
-
-- Replaced and disconnected nodes.
-- Hidden, disabled, readonly, and covered controls.
-- Checkboxes, radios, switches, text fields, and native selects.
-- Autocomplete arrival.
-- Navigation during action.
-- Loading and no-progress loops.
-- Console and network failures.
-- Iframes, shadow DOM, canvas, and other unsupported-state triggers.
-
-### Live routes
-
-Use a small versioned suite with independent verifiers. Separate development routes from untouched acceptance routes. Retain source hashes, model versions, browser version, timings, costs, and every failure.
-
-## Risks
-
-### Reliability beyond the demos
-
-Jev Ultrafast is new and reports results from only a few tasks. Mitigation: require the compatibility spike and fixed-route evaluation before productizing claims.
-
-### Large dynamic pages
-
-Up to 250 candidates and repeated target heads can create large Jev requests. Mitigation: deterministic filtering, relevance grouping, viewport scoping, and measured context budgets.
-
-### Prompt injection in page content
-
-Jev receives page text as untrusted data but may still be influenced. Mitigation: constrained choices, domain policy, code-owned targets, forbidden-action checks, minimal visible text, and adversarial fixture tests.
-
-### CDP and browser compatibility
-
-Remote debugging may alter Fortress behavior. Mitigation: measure supported browser behavior before and after CDP connection on controlled fixtures. Stop at CAPTCHAs and access challenges; compatibility is not permission to bypass them.
-
-### Ambiguous mutations
-
-A navigation can interrupt confirmation after an action may already have executed. Mitigation: never retry uncertain mutations; stop and verify state independently.
-
-### Provider dependency
-
-The hot loop depends on TypeSafe and a small text provider. Mitigation: bounded retries before action, provider health reporting, exact model-version telemetry, and no action after an uncertain provider response.
-
-### Cost assumptions
-
-Fast does not automatically mean free. Mitigation: capture actual token and billing telemetry during the spike.
-
-### Plugin crash impact
-
-Embedding browser and native runtimes directly in `bb-server` increases blast radius. Mitigation: use a supervised sidecar and a narrow local protocol.
-
-## Open decisions
-
-1. Whether to vendor the audited Jev Ultrafast core or maintain a pinned fork after the spike.
-2. Which small text model gives the best latency and field accuracy for our routes.
-3. Initial Jev operation and target confidence thresholds.
-4. Whether the first release needs a frontend panel or backend tools and artifacts are sufficient.
-5. The exact route schema and natural-language-to-checkpoint compilation boundary.
-6. How much sanitized network response content to retain for diagnostics.
-7. Requirements for reusable authenticated profiles after v1 (excluded from the first release).
-8. The maximum safe parallelism for this server.
-9. Package and brand availability for `Wayfinder` before public release.
-
-## Planned repository layout
-
-No implementation files should be added as part of this plan review. Next approval gate: implement the isolated Phase 0/1 spike, not the complete plugin. Before that spike, settle the exact provider/model access, executable/browser support, dependency lock, typed fixture routes, and local network isolation approach.
-
-```text
-bb-plugin-wayfinder/
-  PLAN.md
-  package.json
-  package-lock.json
-  bb-plugin.json
-  server.ts
-  src/
-    routes/
-    policy/
-    supervisor/
-    tools/
-    artifacts/
-  worker/
-    pyproject.toml
-    wayfinder/
-      agent.py
-      browser.py
-      model.py
-      policy.py
-      verify.py
-      trace.py
-      unsupported.py
-  tests/
-  skills/
-```
-
-The final layout must follow the current BB plugin scaffold and installed SDK contracts rather than this illustrative tree.
-
-## Go/no-go decision
-
-Proceed to a complete plugin only if the Fortress compatibility spike demonstrates:
-
-1. A material end-to-end speed improvement.
-2. Reliable independent verification.
-3. Acceptable Jev and text-helper cost.
-4. No regression in Fortress's required browser behavior.
-5. Clean cancellation and profile isolation.
-6. A reliable, bounded stop and diagnostic handoff for unsupported controls, without computer-use plugin dependencies.
-
-If those conditions hold, Wayfinder can turn browser testing from a slow conversational process into a fast, repeatable execution system while reserving capable-model tokens for planning and diagnosis.
+Parallel controlling runs, arbitrary desktop autonomy, persistent authenticated profiles, consequential actions, browser/desktop manual takeover, Bun migration, and automatic policy learning. Expand only after the single-controller browser/native/FS slice and remote viewing/artifact delivery are reliable.
