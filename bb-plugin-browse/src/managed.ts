@@ -1,15 +1,13 @@
+import { createHash } from "node:crypto";
 import { existsSync, promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, delimiter } from "node:path";
 import type { ChildProcess } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { runProcess } from "./process";
 import { configureProfilePreferences } from "./profile-preferences";
 import { spawnWatched } from "./watched-process";
-import {
-  installed,
-  fortressExecutable,
-  installFortress,
-} from "./runtime";
+import { installed, fortressExecutable, installFortress } from "./runtime";
 
 export function managedEnv(root: string) {
   const env = { ...process.env };
@@ -389,6 +387,19 @@ export type ManagedBrowser = {
   close: () => Promise<void>;
 };
 const activeProfiles = new Set<string>();
+export function managedSessionTemp(root: string, profileId: string) {
+  const id = createHash("sha256")
+    .update(root)
+    .update("\0")
+    .update(profileId)
+    .digest("hex")
+    .slice(0, 16);
+  return join(
+    process.platform === "linux" ? "/tmp" : tmpdir(),
+    `bb-browse-${id}`,
+  );
+}
+
 export async function launchManaged(
   root: string,
   profileId: string,
@@ -398,7 +409,15 @@ export async function launchManaged(
 ): Promise<ManagedBrowser> {
   signal.throwIfAborted();
   // Unavailable video hosts keep the ordinary browser and JPEG viewer.
-  video = video && process.platform === "linux" && existsSync(join(root, "selkies-runtime/opt/selkies/lib/python3.13/site-packages/selkies"));
+  video =
+    video &&
+    process.platform === "linux" &&
+    existsSync(
+      join(
+        root,
+        "selkies-runtime/opt/selkies/lib/python3.13/site-packages/selkies",
+      ),
+    );
   if (install)
     throw new Error(
       "Browser installation is in progress. Wait for its setup job.",
@@ -409,7 +428,13 @@ export async function launchManaged(
     throw new Error("This browser profile is already running or connecting.");
   activeProfiles.add(key);
   try {
-    const browser = await launchBrowser(root, profileId, signal, video, initialUrl);
+    const browser = await launchBrowser(
+      root,
+      profileId,
+      signal,
+      video,
+      initialUrl,
+    );
     const stop = browser.close;
     let closing: Promise<void> | undefined;
     browser.process.once("exit", () => activeProfiles.delete(key));
@@ -424,7 +449,10 @@ export async function launchManaged(
     return browser;
   } catch (e) {
     activeProfiles.delete(key);
-    await fs.rm(join(root, "tmp", profileId), { recursive: true, force: true });
+    await fs.rm(managedSessionTemp(root, profileId), {
+      recursive: true,
+      force: true,
+    });
     throw e;
   }
 }
@@ -442,7 +470,9 @@ async function launchBrowser(
     );
   if (!/^ab-[a-z0-9-]+$/.test(profileId)) throw new Error("Invalid profile ID");
   const profile = join(root, "profiles", profileId);
-  const sessionTemp = join(root, "tmp", profileId);
+  // Chromium creates a nested SingletonSocket below TMPDIR. Keep this path short
+  // so deeply nested BB host-data roots cannot exceed the Unix socket limit.
+  const sessionTemp = managedSessionTemp(root, profileId);
   const displayTemp = join(root, "tmp", "display");
   await fs.mkdir(profile, { recursive: true, mode: 0o700 });
   await fs.rm(sessionTemp, { recursive: true, force: true });
@@ -460,7 +490,9 @@ async function launchBrowser(
   const browserEnv = { ...display.env, TMPDIR: sessionTemp };
   const child = spawnWatched(
     browserPath,
-    video ? videoChromeArgs(profile, initialUrl) : chromeArgs(profile, initialUrl),
+    video
+      ? videoChromeArgs(profile, initialUrl)
+      : chromeArgs(profile, initialUrl),
     {
       env: browserEnv,
       stderr: "pipe",
@@ -504,7 +536,8 @@ async function launchBrowser(
     for (;;) {
       signal.throwIfAborted();
       if (spawnError) throw spawnError;
-      if (child.exitCode !== null) throw new Error("Fortress exited: " + stderr);
+      if (child.exitCode !== null)
+        throw new Error("Fortress exited: " + stderr);
       try {
         const [port, path] = (
           await fs.readFile(join(profile, "DevToolsActivePort"), "utf8")
