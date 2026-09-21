@@ -20,6 +20,36 @@ describe("Wayfinder host integration", () => {
     await harness.experimental_dispose();
   });
 
+  it("does not substitute the fixture or launch Fortress when provider configuration is missing", async () => {
+    const harness = experimental_createHostEntryHarness(hostEntry);
+    const route = { ...makeRoute(), decisionProvider: undefined };
+    const runId = "run_missing_provider";
+    await harness.experimental_call("runs.start", { expectedHostId: route.identity.hostId, runId, routeHash: sha256(route), route: route as never });
+    let status = await harness.experimental_call("runs.status", { expectedHostId: route.identity.hostId, runId });
+    for (let attempt = 0; attempt < 20 && status.state === "queued"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      status = await harness.experimental_call("runs.status", { expectedHostId: route.identity.hostId, runId });
+    }
+    expect(status.state).toBe("blocked");
+    expect(status.error?.message).toMatch(/decisionProvider must be explicitly selected/iu);
+    await harness.experimental_dispose();
+  });
+
+  it("blocks real providers before launch without a verified Infisical scope", async () => {
+    const harness = experimental_createHostEntryHarness(hostEntry);
+    const route = { ...makeRoute(), decisionProvider: { provider: "openrouter" as const, model: "openai/test", endpoint: "https://openrouter.ai/api/v1/chat/completions" } };
+    const runId = "run_unverified_provider";
+    await harness.experimental_call("runs.start", { expectedHostId: route.identity.hostId, runId, routeHash: sha256(route), route });
+    let status = await harness.experimental_call("runs.status", { expectedHostId: route.identity.hostId, runId });
+    for (let attempt = 0; attempt < 20 && status.state === "queued"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      status = await harness.experimental_call("runs.status", { expectedHostId: route.identity.hostId, runId });
+    }
+    expect(status.state).toBe("blocked");
+    expect(status.error?.message).toMatch(/Infisical/iu);
+    await harness.experimental_dispose();
+  });
+
   it("runs the owned Fortress fixture and retains screenshot evidence", async () => {
     const harness = experimental_createHostEntryHarness(hostEntry);
     const route = makeRoute();
