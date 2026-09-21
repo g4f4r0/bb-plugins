@@ -168,18 +168,19 @@ Actual commands/results:
   `cua-driver`, or `browser-automation` is installed.
 - No install, reload, enable, live UI check, or provider transaction was run.
 
-### Required downstream integration work
+## Step 4 — minimal integration and live fixture (2026-09-21)
 
-- Engine: implement the queue/lease/journal and adapters behind the published
-  contracts. Acquire a BB desktop-browser lease through the SDK; keep the CDP
-  endpoint host-local. Bind Cua to the exact allowed app/window generation and
-  narrow its capability manifest. Resolve Jev credentials only through a
-  verified Infisical project/environment/path and process injection.
-- UI/media: add `app.tsx`/`app.css` and request the integration owner add
-  `bb.app` after tests exist. Register the Computer nav panel and a validated
-  artifact message directive. Keep live view private/read-only, cache one feed
-  per run, drop stale frames, and use authenticated fixed routes for
-  Copy/Download/Share.
-- Integration: replace both labeled stubs, register RPC/HTTP/realtime/lifecycle,
-  reconcile orphaned runs, add authenticated range/no-store/no-referrer
-  handling, and only then build/install from this permanent source.
+Status: integrated and installed from the permanent source. The server now registers the strict RPC contract, fixed private artifact routes, realtime Computer invalidation, and the bounded `wayfinder_start` agent tool. The host probes the retained Fortress executable, owns run lifecycle records, enforces terminal cancellation, and reports setup-required rather than fabricating a provider result. Existing Computer and artifact UI are registered through public SDK app slots; HTML remains download-only and external sharing stays disabled without a verified HTTPS origin.
+
+Checks:
+
+- `bb plugin types --check .`: PASS (`@get-bb/plugin-sdk` 0.4.87).
+- `npm run check`: PASS — TypeScript, 20 Vitest files / 107 tests, BB build.
+- Live deterministic fixture: PASS with Fortress v151.0.7908.0 using a fresh owned temporary profile and loopback CDP. The synthetic form reached `/done`, status was `Local report ready for Synthetic fixture`, and `Page.captureScreenshot` returned 13,092 bytes. Browser process and profile were stopped and removed. This is an independent fixture/CDP check, not a Jev run or external-site result.
+- Permanent install: PASS — `wayfinder` is running from `path:/home/g4f4r0/projects/bb-plugins/bb-plugin-wayfinder`. Browse, Cua Driver, and Browser Automation remain uninstalled.
+
+Blockers: the connected host has no verified Infisical project/environment/path or TypeSafe credential, so Jev execution remains setup-required. BB has no active browser lease for Wayfinder, so the Computer frame endpoint returns an explicit empty/disconnected state rather than exposing CDP or claiming a live run. Native accessibility/OCR and online sharing remain deferred.
+
+### Deferred follow-up
+
+A real BB browser lease, Jev credential resolution through Infisical, native accessibility, and verified HTTPS sharing are prerequisites for the remaining live-provider gates. No speculative fallback or external mutation was added.

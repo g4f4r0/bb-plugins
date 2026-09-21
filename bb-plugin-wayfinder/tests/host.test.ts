@@ -3,12 +3,12 @@ import { describe, expect, it } from "vitest";
 
 import hostEntry from "../host.js";
 
-describe("foundation host stub", () => {
-  it("validates the contract and refuses to imply a runnable adapter", async () => {
+describe("Wayfinder host integration", () => {
+  it("probes capabilities and validates strict input", async () => {
     const harness = experimental_createHostEntryHarness(hostEntry);
-    await expect(
-      harness.experimental_call("capabilities.probe", { expectedHostId: "host_test" }),
-    ).rejects.toThrow("foundation stub");
+    const result = await harness.experimental_call("capabilities.probe", { expectedHostId: "host_test" });
+    expect(result.hostId).toBe("host_test");
+    expect(result.decisionProvider.state).toBe("setup-required");
     await expect(
       harness.experimental_call(
         "capabilities.probe",

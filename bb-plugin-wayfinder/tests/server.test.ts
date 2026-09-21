@@ -1,21 +1,22 @@
 import { createFakePluginHost, experimental_scanPublicSdkOnly } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
-import plugin, { FOUNDATION_ONLY_MESSAGE } from "../server.js";
+import plugin from "../server.js";
 
-describe("foundation server stub", () => {
-  it("advertises setup-required and registers no runnable surface", async () => {
+describe("Wayfinder server integration", () => {
+  it("registers bounded RPC, artifact routes, and an agent tool", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "wayfinder" });
     await plugin(bb);
-    expect(harness.inspection.needsConfigurationMessages).toEqual([FOUNDATION_ONLY_MESSAGE]);
-    expect(harness.inspection.registrations.rpcMethods).toEqual([]);
-    expect(harness.inspection.registrations.httpRoutes).toHaveLength(0);
+    expect(harness.inspection.needsConfigurationMessages).toEqual([]);
+    expect(harness.inspection.registrations.rpcMethods).toContain("runs.start");
+    expect(harness.inspection.registrations.httpRoutes.map((route) => route.path)).toContain("/v1/artifacts/inline");
+    expect(harness.inspection.registrations.agentTools.map((tool) => tool.name)).toContain("wayfinder_start");
     await harness.lifecycle.dispose();
   });
 
   it("imports only public SDK surfaces", async () => {
     const result = await experimental_scanPublicSdkOnly(new URL("..", import.meta.url).pathname, {
-      allow: [/^effect$/u, /^jsdom$/u],
+      allow: [/^effect$/u, /^jsdom$/u, /^react$/u, /^@hugeicons\//u, /^sonner$/u, /^@testing-library\//u, /^better-sqlite3$/u],
     });
     expect(result.violations).toEqual([]);
     expect(result.privateDependencies).toEqual([]);
