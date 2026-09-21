@@ -2,6 +2,16 @@
 
 Status: implementation authorized. This document supersedes the earlier Python/browser-only proposal. No feature is complete until its tests and live checks pass. Favor a small working vertical slice over speculative frameworks.
 
+## Latest user direction: YAGNI, ship the small working slice first
+
+This section overrides the broader first-release scope and phase requirements below, including older workflow prompts. The user explicitly asked for less complexity after the build took too long.
+
+Immediate delivery: launch/bind Fortress, execute one simple browser task, verify its result, show its live view in Computer, and return an inline screenshot with copy/download. One computer, one active run, straightforward cancel and cleanup. Reuse existing working code; do not add another framework, abstraction layer, or planning phase.
+
+Do not delay this slice for desktop/OCR, advanced filesystem workflows, external sharing/signing, video optimization, durable recovery machinery, broad benchmark suites, or generic extensibility. Those remain follow-up goals, not current release gates. Keep useful work already written, but do not wire unfinished features into the first delivery or advertise them as working. Preserve basic ownership, secret protection, bounded execution, target validation, and cleanup.
+
+Current workers should finish the minimum usable path, run focused tests, and hand off promptly. Integration and review should focus only on that path. If browser or Jev readiness prevents a real run, report the exact prerequisite immediately instead of expanding offline scaffolding. No claim of a working demo without real evidence.
+
 ## Product
 
 Wayfinder tests browser flows, desktop apps, and their filesystem outputs on one shared server computer. A BB agent supplies a goal, typed checkpoints, and allowed actions. A local worker executes routine steps without returning to the main model after every click. Deterministic assertions establish success; Jev's completion score does not.
