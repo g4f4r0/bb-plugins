@@ -40,6 +40,7 @@ export interface RunEngineOptions {
   readonly minDecisionConfidence?: number;
   readonly closeAdaptersOnFinish?: boolean;
   readonly now?: () => number;
+  readonly controllerLease?: ControllerLease;
 }
 
 function checkpointAdapter(checkpoint: Checkpoint): AutomationAdapter["kind"] | null {
@@ -66,7 +67,7 @@ async function runTypedEffect<A>(effect: Effect.Effect<A, WayfinderError>): Prom
 }
 
 export class RunEngine {
-  readonly #options: Required<Omit<RunEngineOptions, "now">> & { readonly now: () => number };
+  readonly #options: Required<Omit<RunEngineOptions, "now" | "controllerLease">> & { readonly now: () => number; readonly controllerLease?: ControllerLease };
 
   constructor(options: RunEngineOptions) {
     this.#options = {
@@ -98,7 +99,7 @@ export class RunEngine {
     const recent: string[] = [];
     let noProgressRounds = 0;
     try {
-      lease = await this.#options.queue.acquire(input.runId, route.identity.threadId, runController.signal);
+      lease = this.#options.controllerLease ?? await this.#options.queue.acquire(input.runId, route.identity.threadId, runController.signal);
       while (true) {
         this.#throwIfAborted(runController.signal);
         lease.heartbeat();
@@ -145,15 +146,15 @@ export class RunEngine {
         const decision = parsedDecision.data;
         const operationIds = new Set(choices.operationChoices.map((choice) => choice.choiceId));
         const targetIds = new Set(choices.targetChoices.map((choice) => choice.choiceId));
-        if (!operationIds.has(decision.operationChoiceId) || decision.operationProbabilities.some((entry) => !operationIds.has(entry.choiceId))) {
+        if (!operationIds.has(decision.operationChoiceId) || decision.operationProbabilities?.some((entry) => !operationIds.has(entry.choiceId))) {
           return this.#result(input.runId, "blocked", [...results.values()], actions, decisions,
             wayfinderError("provider-unavailable", "decide", "Decision provider selected an operation outside the bounded choices"), cleanup);
         }
-        if ((decision.targetChoiceId !== null && !targetIds.has(decision.targetChoiceId)) || decision.targetProbabilities.some((entry) => !targetIds.has(entry.choiceId))) {
+        if ((decision.targetChoiceId !== null && !targetIds.has(decision.targetChoiceId)) || decision.targetProbabilities?.some((entry) => !targetIds.has(entry.choiceId))) {
           return this.#result(input.runId, "blocked", [...results.values()], actions, decisions,
             wayfinderError("provider-unavailable", "decide", "Decision provider selected a target outside the bounded choices"), cleanup);
         }
-        if (decision.confidence < this.#options.minDecisionConfidence) {
+        if (decision.confidence !== null && decision.confidence < this.#options.minDecisionConfidence) {
           return this.#result(input.runId, "blocked", [...results.values()], actions, decisions,
             wayfinderError("ambiguous-target", "decide", "Jev confidence is below the configured execution threshold"), cleanup);
         }

@@ -245,7 +245,10 @@ export class BrowserAdapter implements AutomationAdapter {
       if (["browser.click", "browser.type", "browser.select", "browser.download"].includes(action.kind)) {
         let origin: string | null = null;
         try { origin = current.location === null ? null : new URL(current.location).origin; } catch { /* denied below */ }
-        const fixture = origin !== null && this.#route.browser.navigationOrigins.some((entry) => entry.origin === origin && entry.purpose === "fixture");
+        const fixture = origin !== null && this.#route.browser.navigationOrigins.some((entry) => {
+          if (entry.purpose !== "fixture") return false;
+          try { const expected = new URL(entry.origin); const actual = new URL(origin); return expected.origin === actual.origin || (expected.hostname === "127.0.0.1" && actual.hostname === "127.0.0.1"); } catch { return false; }
+        });
         if (!fixture) throw wayfinderError("policy-denied", "act", "Browser mutations are limited to explicitly classified fixture origins in v1");
       }
       switch (action.kind) {

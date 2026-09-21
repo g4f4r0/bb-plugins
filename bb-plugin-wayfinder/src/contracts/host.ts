@@ -55,7 +55,7 @@ export const hostCapabilitiesSchema = z
     decisionProvider: z
       .object({
         state: capabilityStateSchema,
-        provider: z.literal("typesafe-jev"),
+        provider: z.enum(["typesafe-jev", "openrouter", "deterministic-fixture"]),
         infisicalScopeVerified: z.boolean(),
         detail: z.string().min(1).max(1_000).nullable(),
       })

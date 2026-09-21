@@ -119,36 +119,21 @@ export const decisionResponseSchema = z
   .object({
     operationChoiceId: entityIdSchema,
     targetChoiceId: entityIdSchema.nullable(),
-    operationProbabilities: z.array(probabilitySchema).min(1).max(32),
-    targetProbabilities: z.array(probabilitySchema).max(1_000),
-    confidence: z.number().min(0).max(1),
+    operationProbabilities: z.array(probabilitySchema).max(32).nullable(),
+    targetProbabilities: z.array(probabilitySchema).max(1_000).nullable(),
+    confidence: z.number().min(0).max(1).nullable(),
     providerModel: z.string().min(1).max(200),
     latencyMs: z.number().int().nonnegative().max(120_000),
   })
   .strict()
   .superRefine((response, context) => {
-    const operationIds = new Set(response.operationProbabilities.map((entry) => entry.choiceId));
-    const operationSum = response.operationProbabilities.reduce((sum, entry) => sum + entry.probability, 0);
-    if (!operationIds.has(response.operationChoiceId)) {
-      context.addIssue({ code: "custom", path: ["operationChoiceId"], message: "Chosen operation is missing from probabilities" });
+    for (const [field, entries] of [["operationProbabilities", response.operationProbabilities], ["targetProbabilities", response.targetProbabilities]] as const) {
+      if (entries === null) continue;
+      const ids = new Set(entries.map((entry) => entry.choiceId));
+      const sum = entries.reduce((total, entry) => total + entry.probability, 0);
+      if (ids.size !== entries.length || (entries.length > 0 && Math.abs(sum - 1) > 0.02)) context.addIssue({ code: "custom", path: [field], message: "Probabilities must be unique and sum to one" });
     }
-    if (operationIds.size !== response.operationProbabilities.length || Math.abs(operationSum - 1) > 0.02) {
-      context.addIssue({ code: "custom", path: ["operationProbabilities"], message: "Operation probabilities must be unique and sum to one" });
-    }
-    const targetIds = new Set(response.targetProbabilities.map((entry) => entry.choiceId));
-    const targetSum = response.targetProbabilities.reduce((sum, entry) => sum + entry.probability, 0);
-    if (response.targetChoiceId === null && response.targetProbabilities.length !== 0) {
-      context.addIssue({ code: "custom", path: ["targetProbabilities"], message: "A targetless choice cannot include target probabilities" });
-    }
-    if (response.targetChoiceId !== null && !targetIds.has(response.targetChoiceId)) {
-      context.addIssue({ code: "custom", path: ["targetChoiceId"], message: "Chosen target is missing from probabilities" });
-    }
-    if (
-      targetIds.size !== response.targetProbabilities.length ||
-      (response.targetProbabilities.length > 0 && Math.abs(targetSum - 1) > 0.02)
-    ) {
-      context.addIssue({ code: "custom", path: ["targetProbabilities"], message: "Target probabilities must be unique and sum to one" });
-    }
+    if (response.targetChoiceId === null && response.targetProbabilities !== null && response.targetProbabilities.length !== 0) context.addIssue({ code: "custom", path: ["targetProbabilities"], message: "A targetless choice cannot include target probabilities" });
   });
 
 export interface AdapterExecutionContext {

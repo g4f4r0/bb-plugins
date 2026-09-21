@@ -16,6 +16,7 @@ export function makeRoute(): WayfinderRoute {
       allowPopups: false,
       allowDownloads: false,
     },
+    decisionProvider: { provider: "fixture", model: "wayfinder-deterministic-fixture", endpoint: null },
     desktop: {
       applications: [
         {

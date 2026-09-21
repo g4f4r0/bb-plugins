@@ -168,22 +168,22 @@ Actual commands/results:
   `cua-driver`, or `browser-automation` is installed.
 - No install, reload, enable, live UI check, or provider transaction was run.
 
-## Step 4 — minimal integration and live fixture (2026-09-21)
+## Step 4 — bounded browser slice (2026-09-21)
 
-Status: integrated and installed from the permanent source. The server now registers the strict RPC contract, fixed private artifact routes, realtime Computer invalidation, and the bounded `wayfinder_start` agent tool. The host probes the retained Fortress executable, owns run lifecycle records, enforces terminal cancellation, and reports setup-required rather than fabricating a provider result. Existing Computer and artifact UI are registered through public SDK app slots; HTML remains download-only and external sharing stays disabled without a verified HTTPS origin.
+Status: implemented and checked offline plus against the local Fortress fixture. This is not production-ready: provider scope and remote Computer UI checks remain blocked.
 
 Checks:
 
 - `bb plugin types --check .`: PASS (`@get-bb/plugin-sdk` 0.4.87).
-- `npm run check`: PASS — TypeScript, 20 Vitest files / 107 tests, BB build.
+- `npm run typecheck`: PASS; focused and full Vitest checks pass after the lifecycle/provider changes; BB build is still required before reload.
 - Live deterministic fixture: PASS with Fortress v151.0.7908.0 using a fresh owned temporary profile and loopback CDP. The synthetic form reached `/done`, status was `Local report ready for Synthetic fixture`, and `Page.captureScreenshot` returned 13,092 bytes. Browser process and profile were stopped and removed. This is an independent fixture/CDP check, not a Jev run or external-site result.
 - Permanent install: PASS — `wayfinder` is running from `path:/home/g4f4r0/projects/bb-plugins/bb-plugin-wayfinder`. Browse, Cua Driver, and Browser Automation remain uninstalled.
 
-The former host stub was replaced with the bounded browser slice: `runs.start` owns a fresh temporary profile, launches the retained Fortress executable with loopback CDP, serves the committed local fixture, connects `BrowserAdapter`, runs `RunEngine` with a deterministic fixture provider, captures a PNG into `ArtifactStore`, serves `media.latest` and `artifacts.readRange`, and kills/removes owned resources on completion or cancellation. The fixture input is optional so the deterministic click reaches `/done`.
+The host now acquires the single controller before launching Fortress, retains it through capture and cleanup, uses an ephemeral loopback fixture server and plugin-owned artifact storage, waits for process exit, and reports incomplete cleanup. Provider selection is route-configured (`fixture`, `jev`, or `openrouter`) with model and endpoint selection; credentials are read only from process injection boundaries (`WAYFINDER_*_API_KEY`) and missing Infisical scope remains setup-required. OpenRouter responses are strict choice IDs without fabricated confidence distributions. `media.latest` captures changing active-run frames and labels post-run evidence disconnected rather than live.
 
 Focused live regression: `tests/host.test.ts` now runs the real Fortress fixture through the host harness and asserts `passed`, a `done_url` checkpoint, retained screenshot bytes, and an artifact range read. Observed live result: Fortress v151.0.7908.0, `/done` checkpoint passed, PNG artifact retained and served (17,628-byte base64 response; 13,092-byte PNG in the prior independent fixture run), cleanup completed, and the temporary profile was removed.
 
-Blockers: the connected host has no verified Infisical project/environment/path or TypeSafe credential, so external Jev execution remains setup-required. This slice uses a deterministic local provider only for the committed synthetic fixture. Native accessibility/OCR, BB browser lease integration, and online sharing remain deferred. No CDP endpoint is exposed.
+Blockers: no verified Infisical project/environment/path exists for this Wayfinder run, so Jev/OpenRouter invocation and any production readiness claim remain blocked. Native accessibility/OCR, remote Computer UI, and online sharing remain deferred. No CDP endpoint is exposed.
 
 ### Deferred follow-up
 

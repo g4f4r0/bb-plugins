@@ -172,6 +172,14 @@ export const routeSchema = z
         allowDownloads: z.boolean(),
       })
       .strict(),
+    decisionProvider: z
+      .object({
+        provider: z.enum(["fixture", "jev", "openrouter"]),
+        model: z.string().min(1).max(200).nullable(),
+        endpoint: z.string().url().max(2_048).nullable(),
+      })
+      .strict()
+      .optional(),
     desktop: z
       .object({
         applications: z

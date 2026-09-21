@@ -71,6 +71,7 @@ export class JevDecisionProvider implements DecisionProvider {
       throw wayfinderError("setup-required", "decide", "TypeSafe System One endpoint must use HTTPS or explicit local loopback");
     }
     if (options.apiKey.trim().length === 0) throw wayfinderError("setup-required", "decide", "TypeSafe provider credential is missing");
+    if (options.model.trim().length === 0) throw wayfinderError("setup-required", "decide", "TypeSafe Jev model is missing");
     this.#options = {
       ...options,
       timeoutMs: options.timeoutMs ?? 30_000,
