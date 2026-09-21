@@ -179,7 +179,11 @@ Checks:
 - Live deterministic fixture: PASS with Fortress v151.0.7908.0 using a fresh owned temporary profile and loopback CDP. The synthetic form reached `/done`, status was `Local report ready for Synthetic fixture`, and `Page.captureScreenshot` returned 13,092 bytes. Browser process and profile were stopped and removed. This is an independent fixture/CDP check, not a Jev run or external-site result.
 - Permanent install: PASS — `wayfinder` is running from `path:/home/g4f4r0/projects/bb-plugins/bb-plugin-wayfinder`. Browse, Cua Driver, and Browser Automation remain uninstalled.
 
-Blockers: the connected host has no verified Infisical project/environment/path or TypeSafe credential, so Jev execution remains setup-required. BB has no active browser lease for Wayfinder, so the Computer frame endpoint returns an explicit empty/disconnected state rather than exposing CDP or claiming a live run. Native accessibility/OCR and online sharing remain deferred.
+The former host stub was replaced with the bounded browser slice: `runs.start` owns a fresh temporary profile, launches the retained Fortress executable with loopback CDP, serves the committed local fixture, connects `BrowserAdapter`, runs `RunEngine` with a deterministic fixture provider, captures a PNG into `ArtifactStore`, serves `media.latest` and `artifacts.readRange`, and kills/removes owned resources on completion or cancellation. The fixture input is optional so the deterministic click reaches `/done`.
+
+Focused live regression: `tests/host.test.ts` now runs the real Fortress fixture through the host harness and asserts `passed`, a `done_url` checkpoint, retained screenshot bytes, and an artifact range read. Observed live result: Fortress v151.0.7908.0, `/done` checkpoint passed, PNG artifact retained and served (17,628-byte base64 response; 13,092-byte PNG in the prior independent fixture run), cleanup completed, and the temporary profile was removed.
+
+Blockers: the connected host has no verified Infisical project/environment/path or TypeSafe credential, so external Jev execution remains setup-required. This slice uses a deterministic local provider only for the committed synthetic fixture. Native accessibility/OCR, BB browser lease integration, and online sharing remain deferred. No CDP endpoint is exposed.
 
 ### Deferred follow-up
 

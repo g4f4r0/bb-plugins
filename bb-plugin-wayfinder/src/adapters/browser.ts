@@ -122,6 +122,14 @@ export class BrowserAdapter implements AutomationAdapter {
     }
   }
 
+  /** Capture the bound viewport for the host live view/evidence path. */
+  async captureScreenshot(signal: AbortSignal): Promise<Buffer> {
+    this.#assertContext({ signal, expectedHostId: this.#hostId }, "observe");
+    const result = await this.#command<{ data?: string }>("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }, signal);
+    if (typeof result.data !== "string" || result.data.length === 0) throw wayfinderError("provider-unavailable", "capture", "Fortress returned an empty screenshot");
+    return Buffer.from(result.data, "base64");
+  }
+
   observe(context: AdapterExecutionContext) {
     return adapterEffect("observe", () => this.#observe(context));
   }
