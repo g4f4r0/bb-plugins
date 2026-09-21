@@ -1,0 +1,36 @@
+{
+  "identity": {
+    "adapter": "desktop",
+    "hostId": "host_fixture",
+    "resourceId": "window_fixture",
+    "resourceGeneration": "generation_one",
+    "snapshotId": "snapshot_one",
+    "observedAt": 1
+  },
+  "title": "Wayfinder desktop fixture",
+  "location": null,
+  "text": "Synthetic name Create local report Waiting",
+  "targets": [
+    {
+      "targetId": "name_field",
+      "resourceGeneration": "generation_one",
+      "role": "textbox",
+      "name": "Synthetic name",
+      "valueSummary": "",
+      "bounds": { "x": 40, "y": 80, "width": 240, "height": 32 },
+      "allowedOperations": ["click", "type"]
+    },
+    {
+      "targetId": "create_button",
+      "resourceGeneration": "generation_one",
+      "role": "button",
+      "name": "Create local report",
+      "valueSummary": null,
+      "bounds": { "x": 40, "y": 128, "width": 180, "height": 32 },
+      "allowedOperations": ["click"]
+    }
+  ],
+  "stateHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "changedTargetIds": ["name_field", "create_button"],
+  "humanActivityDetected": false
+}
