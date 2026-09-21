@@ -113,6 +113,22 @@ export const hostContract = defineRpcContract({
       })
       .strict(),
   },
+  "artifacts.list": {
+    input: z
+      .object({
+        expectedHostId: entityIdSchema,
+        threadId: entityIdSchema,
+        runId: entityIdSchema.nullable(),
+        cursor: entityIdSchema.nullable(),
+        limit: z.number().int().min(1).max(100),
+      })
+      .strict(),
+    output: z.object({ artifacts: z.array(artifactRecordSchema).max(100), nextCursor: entityIdSchema.nullable() }).strict(),
+  },
+  "artifacts.get": {
+    input: z.object({ expectedHostId: entityIdSchema, threadId: entityIdSchema, artifactId: entityIdSchema }).strict(),
+    output: artifactRecordSchema,
+  },
   "artifacts.readRange": {
     input: z
       .object({
