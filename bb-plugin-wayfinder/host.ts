@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:http";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { constants, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,7 @@ import { sha256 } from "./src/core/hash.js";
 import { wayfinderError } from "./src/core/errors.js";
 import { SingleControllerQueue, hostControllerQueue, disposeHostControllerQueue } from "./src/core/controller-queue.js";
 import { ActionJournal } from "./src/core/journal.js";
+import { FIXTURE_HTML } from "./fixtures/browser/page.js";
 import { RunEngine } from "./worker/engine.js";
 import { ObservedActionCatalog } from "./worker/action-catalog.js";
 import { ArtifactStore, type PutArtifactInput } from "./src/artifacts/store.js";
@@ -25,7 +26,6 @@ import { JevDecisionProvider } from "./src/adapters/jev.js";
 import { OpenRouterDecisionProvider } from "./src/adapters/openrouter.js";
 
 const FORTRESS = process.env.WAYFINDER_FORTRESS_PATH ?? "/home/g4f4r0/.bb/plugins/browse/host-data/browsers/fortress/v151.0.7908.0/linux-x64/tilion-fortress/tilion";
-const FIXTURE = join(process.cwd(), "fixtures/browser/index.html");
 const ARTIFACT_ROOT = process.env.WAYFINDER_DATA_DIR ?? join(dirname(fileURLToPath(import.meta.url)), "host-data", "artifacts");
 const RUN_ROOT = join(ARTIFACT_ROOT, "runs");
 const runs = new Map<string, RunRecord>();
@@ -79,7 +79,7 @@ async function waitForJson(url: string, signal: AbortSignal, timeoutMs = 10_000)
   throw wayfinderError("provider-unavailable", "observe", "Fortress CDP endpoint did not become ready", { retryable: true });
 }
 async function launch(route: WayfinderRoute, signal: AbortSignal) {
-  const server = createServer(async (_request, response) => { response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }); response.end(await readFile(FIXTURE)); });
+  const server = createServer((_request, response) => { response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }); response.end(FIXTURE_HTML); });
   await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   const address = server.address(); if (!address || typeof address === "string") throw new Error("Fixture server did not expose a port");
   const fixtureOrigin = `http://127.0.0.1:${address.port}`;

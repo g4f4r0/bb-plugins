@@ -1,3 +1,4 @@
+import { FIXTURE_HTML } from "../../fixtures/browser/page.js";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
@@ -8,8 +9,7 @@ import { adapterObservationSchema } from "../../src/contracts/adapter.js";
 
 describe("synthetic fixtures", () => {
   it("exposes a deterministic browser form without external effects", async () => {
-    const path = fileURLToPath(new URL("../../fixtures/browser/index.html", import.meta.url));
-    const source = await readFile(path, "utf8");
+    const source = FIXTURE_HTML;
     const dom = new JSDOM(source, {
       runScripts: "dangerously",
       url: "http://127.0.0.1:4173/",
