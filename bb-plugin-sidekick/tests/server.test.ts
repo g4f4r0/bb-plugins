@@ -214,14 +214,35 @@ describe("Sidekick backend", () => {
     const updated = await harness.behavior.resolveAgentConfiguration(context);
     expect(updated.instructions).toContain("Use the updated shared policy.");
     expect(updated.instructions).not.toContain("Follow the shared release policy.");
-    await expect(harness.behavior.setSettings({ sharedInstructions: "x".repeat(1_201) })).rejects.toThrow(
-      "at most 1200 characters",
+    await harness.behavior.setSettings({ sharedInstructions: "x".repeat(4_096) });
+    await expect(harness.behavior.setSettings({ sharedInstructions: "x".repeat(4_097) })).rejects.toThrow(
+      "at most 4096 characters",
     );
 
     const unrelated = await harness.behavior.resolveAgentConfiguration(makePluginAgentConfigurationContext({
       pluginMetadata: { profileId: profile.id, profileSlug: profile.slug },
     }));
     expect(unrelated).toMatchObject({ tools: [], skills: [], instructions: null });
+    await harness.lifecycle.dispose();
+  });
+
+  it("accepts 4,096 profile instruction characters but rejects 4,097", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "sidekick" });
+    await plugin(bb);
+    const profile = await harness.behavior.callRpc("profiles.create", {
+      ...profileInput,
+      instructions: "a".repeat(4_096),
+    }) as Profile;
+    expect(profile.instructions).toHaveLength(4_096);
+    await expect(harness.behavior.callRpc("profiles.create", {
+      ...profileInput,
+      slug: "too-long",
+      instructions: "a".repeat(4_097),
+    })).rejects.toThrow();
+    await expect(harness.behavior.callRpc("profiles.update", {
+      id: profile.id,
+      instructions: "a".repeat(4_097),
+    })).rejects.toThrow();
     await harness.lifecycle.dispose();
   });
 

@@ -13,7 +13,7 @@ import {
 
 const slugSchema = z.string().regex(PROFILE_SLUG_RE, "use lowercase letters, digits, and dashes; maximum 40 characters");
 const skillNameSchema = z.string().regex(SKILL_NAME_RE, "use lowercase letters, digits, dashes, underscores, and namespace colons; maximum 128 characters");
-const AGENT_INSTRUCTIONS_MAX_CHARS = 3_500;
+const AGENT_INSTRUCTIONS_MAX_CHARS = 4_096;
 
 const profileInputShape = {
   slug: slugSchema,
@@ -156,7 +156,7 @@ interface ProfileRow {
   updated_at: number;
 }
 
-const SHARED_INSTRUCTIONS_MAX_CHARS = 1_200;
+const SHARED_INSTRUCTIONS_MAX_CHARS = 4_096;
 const DYNAMIC_INSTRUCTIONS_MAX_CHARS = 4_000;
 
 function renderProfileInstructions(profile: Profile, sharedInstructions: string): string {
@@ -219,7 +219,7 @@ export default async function plugin(bb: BbPluginApi) {
     sharedInstructions: {
       type: "string",
       label: "Instructions for all agents",
-      description: "Up to 1,200 characters, injected first into every Sidekick agent thread. Agent-specific instructions follow. Changes apply when the provider session next starts.",
+      description: "Up to 4,096 characters. Sidekick currently truncates the combined shared and agent instructions above 4,000 characters. Changes apply when the provider session next starts.",
       experimental_multiline: true,
       experimental_schema: z.string().max(
         SHARED_INSTRUCTIONS_MAX_CHARS,
