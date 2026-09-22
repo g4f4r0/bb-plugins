@@ -157,8 +157,11 @@ function capture(job: { adapter: BrowserAdapter | null; abort: AbortController; 
 async function execute(run: RunRecord): Promise<void> {
   const job = jobs.get(run.runId)!; const signal = job.abort.signal;
   let lease: Awaited<ReturnType<SingleControllerQueue["acquire"]>> | null = null;
+  let leaseHeartbeat: ReturnType<typeof setInterval> | null = null;
   try {
     lease = await queue.acquire(run.runId, run.route.identity.threadId, signal);
+    leaseHeartbeat = setInterval(() => { try { lease?.heartbeat(); } catch { job.abort.abort("Controller lease expired"); } }, 5_000);
+    leaseHeartbeat.unref?.();
     update(runs.get(run.runId)!, { queuePosition: null, activeController: true });
     const provider = await providerFor(run.route);
     const launched = await launch(run.route, signal, job.controlGate); job.server = launched.server; job.profile = launched.profile; job.process = launched.child; job.adapter = launched.adapter;
@@ -180,15 +183,16 @@ async function execute(run: RunRecord): Promise<void> {
       ? candidate as RunRecord["error"]
       : setupError(error instanceof Error ? error.message : "Fortress run failed");
     if (current.state !== "cancelled") update(current, { state: signal.aborted ? "cancelled" : "blocked", activeController: true, finishedAt: Date.now(), error: failure, cleanup: { state: "pending", message: null, completedAt: null } });
-  } finally { await cleanup(run.runId); lease?.release(); }
+  } finally { if (leaseHeartbeat !== null) clearInterval(leaseHeartbeat); await cleanup(run.runId); lease?.release(); }
 }
 async function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
-  if (child.exitCode !== null || child.signalCode !== null) return true;
-  return new Promise<boolean>((resolve) => {
-    const timer = setTimeout(() => { child.removeListener("exit", exited); resolve(false); }, timeoutMs);
-    const exited = () => { clearTimeout(timer); resolve(true); };
-    child.once("exit", exited);
-  });
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) return true;
+    if (child.pid !== undefined) { try { process.kill(child.pid, 0); } catch { return true; } }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return child.exitCode !== null || child.signalCode !== null;
 }
 async function stopProcess(child: ChildProcess): Promise<boolean> {
   if (child.exitCode !== null || child.signalCode !== null) return true;
