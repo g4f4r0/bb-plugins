@@ -9,6 +9,7 @@
     { "name": "dusk", "source": "./bb-plugin-dusk" },
     { "name": "reserve", "source": "./bb-plugin-reserve" },
     { "name": "mcps", "source": "./bb-plugin-mcps" },
-    { "name": "wayfinder", "source": "./bb-plugin-wayfinder" }
+    { "name": "wayfinder", "source": "./bb-plugin-wayfinder" },
+    { "name": "sidekick", "source": "./bb-plugin-sidekick" }
   ]
 }
