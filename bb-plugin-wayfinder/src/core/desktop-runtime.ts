@@ -1,4 +1,5 @@
 import { access, chmod, mkdir, rm, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -102,6 +103,7 @@ async function compress(bytes: Buffer, width: number, height: number, signal: Ab
 export class DesktopRuntime {
   readonly #dataDir: string;
   readonly #window: { pid: number; windowId: number } | null;
+  readonly #instanceId = randomBytes(6).toString("hex");
   #binary: string | null = null;
   #socket = "";
   #process: ChildProcess | null = null;
@@ -256,7 +258,7 @@ export class DesktopRuntime {
       const recordingRoot = join(this.#dataDir, "recordings");
       await mkdir(recordingRoot, { recursive: true, mode: 0o700 });
       const manifest = join(this.#dataDir, "desktop-capabilities.json");
-      this.#socket = process.platform === "win32" ? `\\\\.\\pipe\\wayfinder-cua-${process.pid}` : join(tmpdir(), `wayfinder-cua-${process.pid}.sock`);
+      this.#socket = process.platform === "win32" ? `\\\\.\\pipe\\wayfinder-cua-${process.pid}-${this.#instanceId}` : join(tmpdir(), `wayfinder-cua-${process.pid}-${this.#instanceId}.sock`);
       await writeFile(manifest, capabilityManifest(recordingRoot, this.#window), { mode: 0o600 });
       await chmod(manifest, 0o600).catch(() => undefined);
       await rm(this.#socket, { force: true }).catch(() => undefined);
