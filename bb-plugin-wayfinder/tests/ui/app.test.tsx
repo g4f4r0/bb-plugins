@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
 import type { UiRpcContract } from "../../components/rpc.js";
@@ -62,8 +62,14 @@ function renderDirective(attributes: Record<string, string>, threadId: string, r
 describe("app registration", () => {
   it("registers Computer only as a right thread-panel tab, plus the inline artifact directive", () => {
     expect(app.navPanels).toHaveLength(0);
-    expect(panel).toMatchObject({ title: "Computer", layout: "flush" });
+    expect(panel).toMatchObject({ title: "Open computer", icon: "Laptop", layout: "flush" });
     expect(directive).toBeDefined();
+  });
+
+  it("opens a tab titled Computer from the Open computer action", async () => {
+    const openPanel = vi.fn(() => true);
+    await panel.run?.({ threadId: "thr_a", openPanel });
+    expect(openPanel).toHaveBeenCalledWith({ title: "Computer" });
   });
 
   it("parses only well-formed run tab parameters", () => {

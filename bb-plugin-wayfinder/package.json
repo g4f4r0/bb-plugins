@@ -25,7 +25,7 @@
     "name": "Wayfinder",
     "description": "Policy-bound browser, desktop, and filesystem flow verification on one shared computer.",
     "branding": {
-      "icon": "Route"
+      "icon": "Laptop"
     },
     "app": "./app.tsx",
     "server": "./server.ts",

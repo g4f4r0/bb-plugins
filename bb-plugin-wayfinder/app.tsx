@@ -8,10 +8,11 @@ export const ARTIFACT_DIRECTIVE_ID = "wayfinder-artifact";
 export default definePluginApp((app) => {
   app.slots.threadPanelAction({
     id: "computer",
-    title: "Computer",
-    icon: "Monitor",
+    title: "Open computer",
+    icon: "Laptop",
     layout: "flush",
     component: ComputerPanel,
+    run: ({ openPanel }) => { openPanel({ title: "Computer" }); },
   });
   // Agents reference evidence as ::wayfinder-artifact{id="art_…"} in replies.
   app.slots.messageDirective({ id: ARTIFACT_DIRECTIVE_ID, component: ArtifactDirective });
