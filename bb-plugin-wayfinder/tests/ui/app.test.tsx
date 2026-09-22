@@ -315,7 +315,7 @@ describe("Settings section", () => {
     expect(model.tagName).toBe("SELECT");
     expect(Array.from(model.options).map((option) => option.text)).toEqual(["Jev"]);
     expect(slot.queryByPlaceholderText("e.g. openai/gpt-5")).toBeNull();
-    expect(slot.queryByText("OpenRouter")).toBeNull();
+    expect(slot.getByLabelText("Provider")).toBeDefined();
     expect(slot.getByText("Missing")).toBeDefined();
     slot.lifecycle.unmount();
   });
@@ -325,15 +325,48 @@ describe("Settings section", () => {
       rpc: {
         "settings.hosts": () => [],
         "settings.get": () => ({ selectedHostId: null, provider: "openrouter", model: "old-model", keyStatus: "configured", lastTest: null }),
+        "settings.models": () => [{ id: "old-model", name: "Existing OpenRouter model" }],
         "settings.saveProvider": () => ({ selectedHostId: null, provider: "jev", model: "jev-latest", keyStatus: "missing", lastTest: null }),
       } as never,
     });
-    const model = await slot.findByLabelText("Model");
+    const provider = await slot.findByLabelText("Provider");
+    fireEvent.change(provider, { target: { value: "jev" } });
     expect(slot.queryByText("Configured")).toBeNull();
-    fireEvent.change(model, { target: { value: "jev-latest" } });
+    fireEvent.click(slot.getByRole("button", { name: "Save provider" }));
     await slot.findByText("Missing");
     expect(slot.inspection.rpcCalls).toContainEqual({ method: "settings.saveProvider", input: { provider: "jev", model: "jev-latest" } });
     slot.lifecycle.unmount();
+  });
+
+  it("uses the selected OpenRouter provider for models, key saving, and testing", async () => {
+    let settings: any = { selectedHostId: null, provider: "jev", model: "jev-latest", keyStatus: "missing", lastTest: null };
+    const slot = renderSlot(settingsSection, {}, {
+      rpc: {
+        "settings.hosts": () => [] as never,
+        "settings.get": () => settings,
+        "settings.models": (input: any) => {
+          expect(input.provider).toBe("openrouter");
+          return [{ id: "vendor/model", name: "Available model" }];
+        },
+        "settings.saveProvider": (input: any) => { settings = { ...settings, ...input }; return settings; },
+      } as never,
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ ok: true, message: "ready" }), { status: 200 }));
+    try {
+      fireEvent.change(await slot.findByLabelText("Provider"), { target: { value: "openrouter" } });
+      await slot.findByText("Available model");
+      fireEvent.change(slot.getByLabelText("Model"), { target: { value: "vendor/model" } });
+      fireEvent.change(slot.getByLabelText("OpenRouter API key"), { target: { value: "synthetic-only" } });
+      fireEvent.click(slot.getByRole("button", { name: /^Save$/ }));
+      await slot.findByText("ready");
+      expect(settings.provider).toBe("openrouter");
+      expect(settings.model).toBe("vendor/model");
+      expect(JSON.parse(String(fetchSpy.mock.calls[0]![1]!.body))).toEqual({ provider: "openrouter", key: "synthetic-only" });
+      fetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true, message: "connection verified" }), { status: 200 }));
+      fireEvent.click(slot.getByRole("button", { name: "Test connection" }));
+      await slot.findByText("connection verified");
+      expect(JSON.parse(String(fetchSpy.mock.calls[1]![1]!.body))).toEqual({ provider: "openrouter" });
+    } finally { fetchSpy.mockRestore(); slot.lifecycle.unmount(); }
   });
 
   it("the API key field is a masked password input that never comes prefilled with a value", async () => {

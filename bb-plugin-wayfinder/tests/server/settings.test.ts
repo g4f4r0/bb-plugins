@@ -2,6 +2,7 @@ import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
 import plugin from "../../server.js";
+import { makeRoute } from "../contracts/fixtures.js";
 import type { InfisicalScope, InfisicalClient, ProviderTestResult } from "../../src/core/infisical.js";
 
 /** In-memory Infisical stand-in so these tests never shell out to a real CLI/project. */
@@ -37,6 +38,28 @@ const HOST_A = {
 const HOST_B_DISCONNECTED = { ...HOST_A, id: "host_b", name: "Old laptop", status: "disconnected" as const, lifecycle: { ...HOST_A.lifecycle, phase: "suspended" as const } };
 
 describe("Wayfinder settings", () => {
+  it("uses the saved provider/model for real runs, ignoring stale route providers and endpoints", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "wayfinder",
+      sdk: {
+        hosts: { list: async () => [HOST_A] },
+        threads: { get: async () => ({ environmentId: "env_test", projectId: "proj_test" }) },
+        environments: { get: async () => ({ id: "env_test", hostId: "host_a" }) },
+      } as never,
+      experimental_callHostRpc: async (call) => ({ accepted: true, runId: (call.input as { runId: string }).runId }),
+    });
+    plugin(bb, { infisicalClient: fakeInfisicalClient() });
+    try {
+      await harness.callRpc("settings.saveProvider", { provider: "openrouter", model: "vendor/model" });
+      await harness.callAgentTool("wayfinder_start", { idempotencyKey: "selected-provider", route: {
+        ...makeRoute(), decisionProvider: { provider: "jev", model: "jev-latest", endpoint: "https://stale.example/api" },
+      } }, { threadId: "thr_owner" });
+      const call = harness.inspection.experimental_hostRpcCalls.find((entry) => entry.method === "runs.start");
+      expect((call?.input as { route: { decisionProvider: unknown } }).route.decisionProvider)
+        .toEqual({ provider: "openrouter", model: "vendor/model", endpoint: null });
+    } finally { await harness.lifecycle.dispose(); }
+  });
+
   it("uses only the verified server-wide Infisical scope", async () => {
     const client = fakeInfisicalClient();
     const { bb, harness } = createFakePluginHost({ pluginId: "wayfinder", sdk: { hosts: { list: async () => [] } } });

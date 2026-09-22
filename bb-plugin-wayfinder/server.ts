@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { providerModels } from "./src/core/provider-models.js";
 import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { wayfinderRpcContract } from "./src/contracts/api.js";
@@ -141,7 +142,12 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
   }
   async function doStart(key: string, threadId: string, idempotencyKey: string, requested: unknown, signal?: AbortSignal) {
     const identity = await identityFor(threadId);
-    const route = routeSchema.parse({ ...(requested as object), identity });
+    const parsed = routeSchema.parse({ ...(requested as object), identity });
+    const settings = await readStoredSettings();
+    const route = parsed.decisionProvider?.provider === "fixture" ? parsed : routeSchema.parse({
+      ...parsed,
+      decisionProvider: { provider: settings.provider, model: settings.model, endpoint: null },
+    });
     const routeHash = sha256(route);
     const stored = await kv.get<IdempotencyEntry>(`idem:${key}`);
     if (stored !== undefined) {
@@ -224,6 +230,7 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
 
   bb.rpc.register(wayfinderSettingsRpcContract, {
     "settings.hosts": () => enrolledHosts(),
+    "settings.models": (input) => providerModels(input.provider),
     "settings.get": () => settingsState(),
     async "settings.selectHost"(input) {
       const stored = await readStoredSettings();
@@ -236,7 +243,7 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     },
     async "settings.saveProvider"(input) {
       const stored = await readStoredSettings();
-      await writeStoredSettings({ ...stored, provider: input.provider, model: input.model });
+      await writeStoredSettings({ ...stored, provider: input.provider, model: input.model, lastTest: null });
       return settingsState();
     },
   });
@@ -257,6 +264,10 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     const keyName = PROVIDER_KEY_NAME[parsed.provider];
     const saved = await infisical.setSecret(INFISICAL_SCOPE, keyName, parsed.key).catch(() => false);
     const configured = saved ? await infisical.secretConfigured(INFISICAL_SCOPE, keyName).catch(() => false) : false;
+    if (saved) {
+      const stored = await readStoredSettings();
+      if (stored.provider === parsed.provider) await writeStoredSettings({ ...stored, lastTest: null });
+    }
     return jsonResponse({
       ok: saved && configured,
       keyStatus: saved && configured ? "configured" : "missing",
@@ -288,7 +299,10 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
         ? "TypeSafe rejected this key. Use a TypeSafe API key for Jev, not an OpenRouter key."
         : "OpenRouter rejected this key. Check the key and its permissions.",
     } : tested;
-    await writeStoredSettings({ ...stored, lastTest: { ok: result.ok, message: result.message, testedAt: Date.now() } });
+    const current = await readStoredSettings();
+    if (current.provider === parsed.provider && current.model === stored.model) {
+      await writeStoredSettings({ ...current, lastTest: { ok: result.ok, message: result.message, testedAt: Date.now() } });
+    }
     return jsonResponse(result);
   });
 

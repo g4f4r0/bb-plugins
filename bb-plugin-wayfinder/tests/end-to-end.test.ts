@@ -56,7 +56,7 @@ describe("Wayfinder browser -> Computer -> inline screenshot (server <-> host co
       await new Promise((resolve) => setTimeout(resolve, 100));
       status = await harness.callRpc("runs.status", { runId: started.runId }) as { state: string };
     }
-    expect(status.state).toBe("passed");
+    expect(status.state, JSON.stringify((status as { error?: unknown }).error)).toBe("passed");
     expect(harness.inspection.realtimeSignals.length).toBeGreaterThan(0);
 
     const snapshot = await harness.callRpc("computer.snapshot", { hostId: "host_test", selectedRunId: started.runId }) as { selectedRun: { state: string } | null };
