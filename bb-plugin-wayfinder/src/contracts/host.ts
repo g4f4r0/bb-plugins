@@ -126,6 +126,13 @@ export const hostContract = defineRpcContract({
     input: z.object({ expectedHostId: entityIdSchema, threadId: entityIdSchema, recordingId: entityIdSchema }).strict(),
     output: z.object({ artifact: artifactRecordSchema }).strict(),
   },
+  "desktop.agent.input": {
+    input: z.object({ expectedHostId: entityIdSchema, threadId: entityIdSchema, input: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("click"), x: z.number().int().nonnegative(), y: z.number().int().nonnegative(), button: z.literal("left") }).strict(),
+      z.object({ kind: z.literal("wheel"), x: z.number().int().nonnegative(), y: z.number().int().nonnegative(), deltaX: z.literal(0), deltaY: z.number().int().min(-1200).max(1200) }).strict(),
+    ]) }).strict(),
+    output: z.object({ accepted: z.literal(true) }).strict(),
+  },
   "desktop.windows": {
     input: z.object({ expectedHostId: entityIdSchema }).strict(),
     output: z.object({ windows: z.array(z.object({ pid: z.number().int().positive(), windowId: z.number().int().positive(), title: z.string().max(200), x: z.number(), y: z.number(), width: z.number().positive(), height: z.number().positive() }).strict()).max(64) }).strict(),

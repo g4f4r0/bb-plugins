@@ -507,15 +507,23 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
       { name: "screenshot", summary: "Capture a private whole-desktop screenshot", usage: "bb wayfinder screenshot [filename.png]" },
       { name: "windows", summary: "List the visible Cua windows on this computer", usage: "bb wayfinder windows" },
       { name: "window", summary: "Center an exact visible application window", usage: "bb wayfinder window center <pid> <windowId> [width height]" },
+      { name: "click", summary: "Native Cua pixel click with its own visible cursor", usage: "bb wayfinder click <x> <y>" },
+      { name: "scroll", summary: "Native Cua desktop scroll", usage: "bb wayfinder scroll <x> <y> <deltaY>" },
       { name: "doctor", summary: "Verify the current computer, Cua Driver, permissions, screenshots, accessibility, input, and video", usage: "bb wayfinder doctor [--machine <hostId>] [--json]" },
       { name: "setup", summary: "Install the supported Cua Driver and verify the current computer without replacing its desktop", usage: "bb wayfinder setup [--machine <hostId>] [--json] [--no-permissions]" },
     ],
     async run(argv, context) {
       try {
-        if (["record", "screenshot", "windows", "window"].includes(argv[0] ?? "")) {
+        if (["record", "screenshot", "windows", "window", "click", "scroll"].includes(argv[0] ?? "")) {
           if (!context.threadId) throw new Error("Run this command from a BB thread with an environment");
           const identity = await identityFor(context.threadId);
           const hostId = identity.hostId;
+          if ((argv[0] === "click" && argv.length === 3) || (argv[0] === "scroll" && argv.length === 4)) {
+            const [x, y, deltaY] = argv.slice(1).map(Number);
+            const input = argv[0] === "click" ? { kind: "click" as const, x: x!, y: y!, button: "left" as const } : { kind: "wheel" as const, x: x!, y: y!, deltaX: 0 as const, deltaY: deltaY! };
+            const result = await host.call("desktop.agent.input", { expectedHostId: hostId, threadId: context.threadId, input }, { hostId, signal: context.signal, timeoutMs: 20_000 });
+            return { exitCode: 0, stdout: `${JSON.stringify(result)}\n` };
+          }
           if (argv[0] === "windows" && argv.length === 1) {
             const result = await host.call("desktop.windows", { expectedHostId: hostId }, { hostId, signal: context.signal, timeoutMs: 15_000 });
             return { exitCode: 0, stdout: `${JSON.stringify(result)}\n` };
@@ -542,7 +550,7 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
             const result = await host.call("desktop.record.stop", { expectedHostId: owner.hostId, threadId: context.threadId, recordingId }, { hostId: owner.hostId, signal: context.signal, timeoutMs: 30_000 });
             return { exitCode: 0, stdout: `${JSON.stringify({ artifactId: result.artifact.artifactId, durationMs: result.artifact.media.durationMs, url: `/api/v1/plugins/wayfinder/http${artifactHttpRoutes.inline}?${new URLSearchParams({ artifactId: result.artifact.artifactId, threadId: context.threadId })}` })}\n` };
           }
-          throw new Error("Usage: bb wayfinder record start [filename.mp4] | record stop <recordingId> | screenshot [filename.png] | windows | window center <pid> <windowId> [width height]");
+          throw new Error("Usage: bb wayfinder record start [filename.mp4] | record stop <recordingId> | screenshot [filename.png] | windows | window center <pid> <windowId> [width height] | click <x> <y> | scroll <x> <y> <deltaY>");
         }
         const options = parseComputerCommand(argv);
         const machines = await bb.sdk.hosts.list();
@@ -574,6 +582,24 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     return { identity, hostId };
   };
   const privateMediaUrl = (artifactId: string, threadId: string) => `/api/v1/plugins/wayfinder/http${artifactHttpRoutes.inline}?${new URLSearchParams({ artifactId, threadId })}`;
+  bb.agents.registerTool({
+    name: "wayfinder_desktop_click",
+    description: "Click a visible whole-desktop pixel via Cua's native input and native animated cursor. Coordinates must come from a fresh whole-screen screenshot; no browser-coordinate mapping or synthetic overlay.",
+    parameters: z.object({ x: z.number().int().nonnegative(), y: z.number().int().nonnegative(), machine: entityIdSchema.optional() }).strict(),
+    execute: async ({ x, y, machine }, context) => {
+      const { hostId } = await captureHost(context.threadId, machine);
+      return JSON.stringify(await host.call("desktop.agent.input", { expectedHostId: hostId, threadId: context.threadId, input: { kind: "click", x, y, button: "left" } }, { hostId, signal: context.signal, timeoutMs: 20_000 }));
+    },
+  });
+  bb.agents.registerTool({
+    name: "wayfinder_desktop_scroll",
+    description: "Scroll the visible whole desktop via Cua's native input at a point from a fresh screenshot; positive deltaY scrolls down.",
+    parameters: z.object({ x: z.number().int().nonnegative(), y: z.number().int().nonnegative(), deltaY: z.number().int().min(-1200).max(1200), machine: entityIdSchema.optional() }).strict(),
+    execute: async ({ x, y, deltaY, machine }, context) => {
+      const { hostId } = await captureHost(context.threadId, machine);
+      return JSON.stringify(await host.call("desktop.agent.input", { expectedHostId: hostId, threadId: context.threadId, input: { kind: "wheel", x, y, deltaX: 0, deltaY } }, { hostId, signal: context.signal, timeoutMs: 20_000 }));
+    },
+  });
   bb.agents.registerTool({
     name: "wayfinder_windows",
     description: "List up to 64 visible windows on the thread's computer (or an explicitly selected connected machine), with exact Cua pid/window IDs and bounds for safe presentation control.",

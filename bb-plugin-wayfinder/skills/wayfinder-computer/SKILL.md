@@ -28,12 +28,14 @@ Capture and presentation on the thread's existing computer:
 ```sh
 bb wayfinder windows
 bb wayfinder window center <pid> <windowId> [width height]
+bb wayfinder click <x> <y>
+bb wayfinder scroll <x> <y> <deltaY>
 bb wayfinder screenshot [filename.png]
 bb wayfinder record start [filename.mp4]
 bb wayfinder record stop <recordingId>
 ```
 
-Agents can use `wayfinder_windows`, `wayfinder_window_center`, `wayfinder_screenshot`, `wayfinder_record_start`, and `wayfinder_record_stop`. The agent tools default to the thread's enrolled machine and accept an explicit connected `machine` for cross-machine capture. CLI capture commands require a thread environment. Window IDs must come from a fresh `windows` listing; frame changes are limited to that exact visible window through a temporary Cua capability manifest. Cua records the actual whole desktop at 30 fps; files are private BB artifacts, not public shares. One recording per machine, at most two minutes. Stop it to finalize the MP4, and verify the checkout or other claimed endpoint independently. Never capture protected input or secrets.
+Agents can use `wayfinder_windows`, `wayfinder_window_center`, `wayfinder_screenshot`, `wayfinder_record_start`, and `wayfinder_record_stop`, `wayfinder_desktop_click`, and `wayfinder_desktop_scroll`. Desktop clicks use only Cua's native pointer; coordinates must come from a fresh whole-screen observation, and the active human or run controller must release control before agent input. The agent tools default to the thread's enrolled machine and accept an explicit connected `machine` for cross-machine capture. CLI capture commands require a thread environment. Window IDs must come from a fresh `windows` listing; frame changes are limited to that exact visible window through a temporary Cua capability manifest. Cua records the actual whole desktop at 30 fps; files are private BB artifacts, not public shares. One recording per machine, at most two minutes. Stop it to finalize the MP4, and verify the checkout or other claimed endpoint independently. Never capture protected input or secrets.
 
 Options:
 

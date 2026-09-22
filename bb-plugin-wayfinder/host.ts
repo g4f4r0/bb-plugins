@@ -371,6 +371,19 @@ export default experimental_defineHostEntry({ contract: hostContract, experiment
     }
   },
   "desktop.record.stop": async (input) => ({ artifact: await finishRecording(input.recordingId, input.threadId) }),
+  "desktop.agent.input": async (input, context) => {
+    const signal = AbortSignal.any([context.signal, AbortSignal.timeout(15_000)]);
+    const lease = await queue.acquire(`input_${randomUUID().replaceAll("-", "")}`, input.threadId, signal);
+    try {
+      await desktopControlGate.runAgent(signal, async () => {
+        const runtime = desktopRuntime(context.experimental_paths.dataDir);
+        const frame = await runtime.capture(signal);
+        if (input.input.x >= frame.width || input.input.y >= frame.height) throw new Error("Pointer coordinates are outside the captured desktop");
+        await runtime.input(input.input, signal);
+      });
+      return { accepted: true as const };
+    } finally { lease.release(); }
+  },
   "desktop.windows": async (_input, context) => ({ windows: await desktopRuntime(context.experimental_paths.dataDir).windows(context.signal) }),
   "desktop.window.center": async (input, context) => {
     const runtime = desktopRuntime(context.experimental_paths.dataDir);
