@@ -58,7 +58,10 @@ function desktopRuntime(dataDir: string): DesktopRuntime { desktop ??= new Deskt
 function retainDesktopWorker(context: { experimental_retainWorker(): { dispose(): void } }): void {
   desktopWorkerLease ??= context.experimental_retainWorker();
   if (desktopWorkerTimer !== null) clearTimeout(desktopWorkerTimer);
-  desktopWorkerTimer = setTimeout(() => { desktopWorkerLease?.dispose(); desktopWorkerLease = null; desktopWorkerTimer = null; }, 15_000);
+  desktopWorkerTimer = setTimeout(() => {
+    desktopWorkerTimer = null;
+    void desktop?.dispose().finally(() => { desktop = null; desktopWorkerLease?.dispose(); desktopWorkerLease = null; });
+  }, 15_000);
   desktopWorkerTimer.unref?.();
 }
 const liveFrames = new Map<string, { sequence: number; capturedAt: number; bytes: Buffer }>();
