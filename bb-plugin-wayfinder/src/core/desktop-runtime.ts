@@ -116,14 +116,28 @@ export class DesktopRuntime {
 
   async inspectAccessibility(signal: AbortSignal): Promise<{ available: boolean; detail: string }> {
     await this.#start(signal);
-    const result = await this.#transport!.call("get_accessibility_tree", {}, signal);
-    const data = result.structuredContent ?? {};
-    const windows = Array.isArray(data.windows) ? data.windows.length : null;
-    const processes = Array.isArray(data.processes) ? data.processes.length : null;
-    if (windows !== null || processes !== null) {
-      return { available: true, detail: `Accessibility tree responded (${windows ?? 0} windows, ${processes ?? 0} processes).` };
+    const listed = await this.#transport!.call("list_windows", { on_screen_only: true }, signal);
+    const windows = Array.isArray(listed.structuredContent?.windows) ? listed.structuredContent.windows : [];
+    let failure = "No visible window was available for a semantic accessibility probe.";
+    for (const window of windows.slice(0, 6)) {
+      if (window === null || typeof window !== "object") continue;
+      const candidate = window as Record<string, unknown>;
+      if (typeof candidate.pid !== "number" || typeof candidate.window_id !== "number") continue;
+      try {
+        const result = await this.#transport!.call("get_window_state", {
+          pid: candidate.pid,
+          window_id: candidate.window_id,
+          include_screenshot: false,
+          max_elements: 100,
+        }, signal);
+        const elements = result.structuredContent?.elements;
+        if (Array.isArray(elements)) return { available: true, detail: `Semantic accessibility responded (${elements.length} elements).` };
+        failure = "Semantic accessibility returned no element data.";
+      } catch (error) {
+        failure = errorMessage(error).slice(0, 1_000);
+      }
     }
-    return { available: Object.keys(data).length > 0, detail: Object.keys(data).length > 0 ? "Accessibility tree responded." : "Accessibility tree returned no data." };
+    return { available: false, detail: failure };
   }
 
   async input(input: HumanInput, signal: AbortSignal): Promise<void> {

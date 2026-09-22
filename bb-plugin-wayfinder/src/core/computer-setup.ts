@@ -140,10 +140,12 @@ export async function inspectComputer(dataDir: string, signal: AbortSignal): Pro
 
   const accessibilityProbe = doctorProbe(probes, /AT-SPI|accessibility|UI Automation/iu);
   const explicitAccessibilityFailure = accessibilityProbe !== undefined && accessibilityProbe.status !== "ok";
-  const accessibilityReady = tree.available && !explicitAccessibilityFailure;
+  // A successful get_window_state call is an end-to-end semantic probe and is
+  // more authoritative than Cua's prerequisite-only doctor heuristic.
+  const accessibilityReady = tree.available;
   const accessibility = {
     state: accessibilityReady ? "ready" as const : capture.state === "ready" ? "warning" as const : "missing" as const,
-    detail: explicitAccessibilityFailure ? probeDetail(accessibilityProbe, tree.detail) : tree.detail,
+    detail: !accessibilityReady && explicitAccessibilityFailure ? probeDetail(accessibilityProbe, tree.detail) : tree.detail,
   };
   const inputBlocked = process.platform === "darwin" && !accessibilityReady;
   const input = {
