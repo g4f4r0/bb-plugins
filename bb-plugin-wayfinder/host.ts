@@ -114,8 +114,16 @@ async function launch(route: WayfinderRoute, signal: AbortSignal, controlGate: C
     const ws = version.webSocketDebuggerUrl;
     if (typeof ws !== "string") throw wayfinderError("provider-unavailable", "observe", "Fortress did not publish a CDP WebSocket");
     const port = new URL(ws).port;
-    const tabs = await waitForJson(`http://127.0.0.1:${port}/json/list`, signal);
-    const tab = Array.isArray(tabs) ? (tabs as unknown[]).find((entry) => typeof entry === "object" && entry !== null && (entry as { type?: unknown }).type === "page") as { id?: unknown } | undefined : undefined;
+    let tab: { id?: unknown; url?: unknown } | undefined;
+    let fallbackTab: { id?: unknown; url?: unknown } | undefined;
+    for (let attempt = 0; attempt < 50 && tab === undefined; attempt += 1) {
+      const tabs = await waitForJson(`http://127.0.0.1:${port}/json/list`, signal);
+      const pages = Array.isArray(tabs) ? (tabs as unknown[]).filter((entry) => typeof entry === "object" && entry !== null && (entry as { type?: unknown }).type === "page") as Array<{ id?: unknown; url?: unknown }> : [];
+      fallbackTab ??= pages[0];
+      tab = pages.find((entry) => typeof entry.url === "string" && entry.url.startsWith(fixtureOrigin));
+      if (tab === undefined) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    tab ??= fallbackTab;
     if (typeof tab?.id !== "string") throw wayfinderError("provider-unavailable", "observe", "Fortress did not expose a page target");
     await new Promise((resolve) => setTimeout(resolve, 250));
     const adapter = await BrowserAdapter.connectFortress({ route, hostId: route.identity.hostId, tabId: tab.id, resourceGeneration: `fortress_${Date.now()}`, wsEndpoint: ws, signal, controlGate });
