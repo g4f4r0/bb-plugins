@@ -162,8 +162,8 @@ describe("Wayfinder settings", () => {
     await plugin(bb, { infisicalClient: fakeInfisicalClient() });
     const hosts = await harness.behavior.callRpc("settings.hosts", {});
     expect(hosts).toEqual([
-      { hostId: "host_a", name: "Shared computer", status: "connected", phase: "active", os: null, arch: null, browserState: null, providerState: null },
-      { hostId: "host_b", name: "Old laptop", status: "disconnected", phase: "suspended", os: null, arch: null, browserState: null, providerState: null },
+      { hostId: "host_a", name: "Shared computer", status: "connected", phase: "active", os: null, arch: null, browserState: null, desktopState: null, providerState: null },
+      { hostId: "host_b", name: "Old laptop", status: "disconnected", phase: "suspended", os: null, arch: null, browserState: null, desktopState: null, providerState: null },
     ]);
     await harness.lifecycle.dispose();
   });

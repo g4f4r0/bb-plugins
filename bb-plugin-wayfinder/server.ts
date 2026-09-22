@@ -127,6 +127,7 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
         os: capabilities?.platform.os ?? null,
         arch: capabilities?.platform.arch ?? null,
         browserState: nativeReady ? "ready" : capabilities?.browser.state ?? null,
+        desktopState: capabilities?.desktop.state ?? null,
         providerState: capabilities?.decisionProvider.state ?? null,
       };
     }));
@@ -180,11 +181,12 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     let tab = [...existing.tabs].reverse().find((candidate) => candidate.profile.kind === "automation" && candidate.control === null);
     let created = false;
     if (!tab) {
-      tab = (await browser.createTab({ ...base, url: route.browser.navigationOrigins[0]!.origin, presentation: "hidden" })).tab;
+      tab = (await browser.createTab({ ...base, url: route.browser.navigationOrigins[0]!.origin, presentation: "reveal" })).tab;
       created = true;
     }
     let leaseId: string | null = null;
     try {
+      await browser.revealTab({ ...base, tabId: tab.tabId });
       const lease = await browser.acquireControl({ ...base, tabIds: [tab.tabId], controllerLabel: "Wayfinder", ttlMs: Math.min(30 * 60_000, Math.max(60_000, route.limits.maxRuntimeMs + 30_000)), allowPersonal: false });
       leaseId = lease.leaseId;
       const connection = await browser.openConnection({ ...base, leaseId });
@@ -289,17 +291,14 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     },
     async "computer.preview"(input) {
       const enrolled = await bb.sdk.hosts.list();
-      if (!enrolled.some((candidate) => candidate.id === input.hostId && candidate.status === "connected")) return { frame: null };
-      const browser = bb.sdk.experimental_desktopBrowsers;
-      const { instances } = await desktopInstances(input.hostId);
-      const instance = instances[0];
-      if (!instance) return { frame: null };
-      const base = { hostId: input.hostId, threadId: input.threadId, instanceId: instance.instanceId, generation: instance.generation };
-      const { tabs } = await within(browser.listTabs(base), { tabs: [] });
-      const tab = [...tabs].reverse().find((candidate) => candidate.profile.kind === "automation") ?? tabs.at(-1);
-      if (!tab) return { frame: null };
-      const capture = await within(browser.captureTab({ ...base, tabId: tab.tabId }), null);
-      return capture ? { frame: { base64: capture.base64, width: capture.width, height: capture.height, capturedAt: Date.now() } } : { frame: null };
+      if (!enrolled.some((candidate) => candidate.id === input.hostId && candidate.status === "connected")) return { frame: null, state: "unavailable" as const, message: "This computer is offline." };
+      try {
+        const { frame } = await host.call("desktop.capture", { expectedHostId: input.hostId }, { hostId: input.hostId, timeoutMs: 15_000 });
+        return { frame: { base64: frame.bytesBase64, mimeType: frame.mimeType, width: frame.width, height: frame.height, capturedAt: frame.capturedAt }, state: "ready" as const, message: null };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Whole-desktop capture is unavailable.";
+        return { frame: null, state: "setup-required" as const, message: message.slice(0, 1_000) };
+      }
     },
     async "computer.control.acquire"(input) {
       const entry = await requireRun(input.runId);

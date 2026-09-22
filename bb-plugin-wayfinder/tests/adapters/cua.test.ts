@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { CuaAdapter } from "../../src/adapters/cua.js";
-import type { CuaToolResult, CuaTransport } from "../../src/adapters/cua-client.js";
+import { parseCuaResult, type CuaToolResult, type CuaTransport } from "../../src/adapters/cua-client.js";
 import { sha256 } from "../../src/core/hash.js";
 import { makeRoute } from "../contracts/fixtures.js";
 
@@ -17,6 +17,13 @@ class FakeCua implements CuaTransport {
   }
   async close() {}
 }
+
+describe("Cua CLI responses", () => {
+  it("accepts direct desktop-state output and fails closed on manifest refusals", () => {
+    expect(parseCuaResult(JSON.stringify({ screen_width: 1280, screenshot_png_b64: "YWJj" }))).toMatchObject({ structuredContent: { screen_width: 1280, screenshot_png_b64: "YWJj" } });
+    expect(parseCuaResult(JSON.stringify({ status: "refused", refusal: { code: "outside_manifest", message: "desktop denied" } }))).toMatchObject({ isError: true, content: [{ type: "text", text: "desktop denied" }] });
+  });
+});
 
 describe("CuaAdapter", () => {
   it("binds the exact app/window and rejects a stale generation", async () => {

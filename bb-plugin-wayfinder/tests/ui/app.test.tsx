@@ -269,10 +269,11 @@ describe("Computer panel", () => {
               frameCapturedAt: null,
               sampledAt: 10,
             }) as never,
+          "computer.preview": () => ({ frame: { base64: "YWJj", mimeType: "image/png", width: 1280, height: 720, capturedAt: Date.now() }, state: "ready", message: null }),
         } as never,
       },
     );
-    await slot.findByText("Computer is idle");
+    await slot.findByRole("img", { name: "Live view of the controlled desktop" });
     expect(slot.getByText("Connected")).toBeDefined();
     expect(slot.getByText("1 queued")).toBeDefined();
     expect(slot.getByText("Selected run is not controlling the computer.")).toBeDefined();
@@ -283,18 +284,18 @@ describe("Computer panel", () => {
     slot.lifecycle.unmount();
   });
 
-  it("shows the active built-in browser instead of an idle placeholder on client machines", async () => {
+  it("shows the whole desktop rather than a browser-only or idle view", async () => {
     const slot = renderSlot<PluginThreadPanelProps, UiRpcContract>(panel, { threadId: "thr_a", params: null }, {
       rpc: {
         "settings.hostForThread": () => ({ hostId: "host_mac", source: "thread" }),
         "settings.get": () => ({ selectedHostId: null, provider: "openrouter", model: "jev", keyStatus: "configured", lastTest: null }),
-        "settings.hosts": () => [{ hostId: "host_mac", name: "Studio Mac", status: "connected", phase: "active", os: "darwin", arch: "arm64", browserState: "ready", providerState: "ready" }],
+        "settings.hosts": () => [{ hostId: "host_mac", name: "Studio Mac", status: "connected", phase: "active", os: "darwin", arch: "arm64", browserState: "ready", desktopState: "ready", providerState: "ready" }],
         "computer.snapshot": () => ({ hostId: "host_mac", readiness: "ready", readinessMessage: null, activeRun: null, queue: [], selectedRun: null, connectionState: "connected", frameSequence: null, frameCapturedAt: null, sampledAt: Date.now() }),
-        "computer.preview": () => ({ frame: { base64: "YWJj", width: 1280, height: 800, capturedAt: Date.now() } }),
+        "computer.preview": () => ({ frame: { base64: "YWJj", mimeType: "image/png", width: 1280, height: 800, capturedAt: Date.now() }, state: "ready", message: null }),
       } as never,
     });
-    const image = await slot.findByRole("img", { name: "Live view of the built-in browser" }) as HTMLImageElement;
-    expect(image.src).toBe("data:image/jpeg;base64,YWJj");
+    const image = await slot.findByRole("img", { name: "Live view of the controlled desktop" }) as HTMLImageElement;
+    expect(image.src).toBe("data:image/png;base64,YWJj");
     expect(slot.queryByText("Computer is idle")).toBeNull();
     expect(slot.getByLabelText("Computer host").textContent).toContain("Studio Mac");
     slot.lifecycle.unmount();
@@ -305,19 +306,27 @@ describe("Computer panel", () => {
       rpc: {
         "settings.hostForThread": () => ({ hostId: "host_thread", source: "thread" }),
         "settings.get": () => ({ selectedHostId: null, provider: "openrouter", model: "jev", keyStatus: "configured", lastTest: null }),
-        "settings.hosts": () => [{ hostId: "host_thread", name: "Studio Mac", status: "connected", phase: "active", os: "darwin", arch: "arm64", browserState: "ready", providerState: "ready" }],
+        "settings.hosts": () => [{ hostId: "host_thread", name: "Studio Mac", status: "connected", phase: "active", os: "darwin", arch: "arm64", browserState: "ready", desktopState: "ready", providerState: "ready" }],
         "computer.snapshot": () => ({
           hostId: "host_thread", readiness: "ready", readinessMessage: null,
           activeRun: { runId: "run_live", state: "running", route: { goal: "Check the storefront" }, activeController: true },
           queue: [], selectedRun: null, connectionState: "connected", frameSequence: 1, frameCapturedAt: Date.now(), sampledAt: Date.now(),
         }),
+        "computer.preview": () => ({ frame: { base64: "YWJj", mimeType: "image/png", width: 1280, height: 720, capturedAt: Date.now() }, state: "ready", message: null }),
         "computer.control.acquire": () => ({ state: "human" }),
         "computer.control.release": () => ({ released: true }),
+        "computer.control.input": () => ({ accepted: true }),
       } as never,
     });
     fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
     await slot.findByText("You’re controlling");
     expect(slot.getByLabelText("Computer host").textContent).toContain("Studio Mac");
+    const desktop = slot.getByLabelText("Live computer; click, type, paste, or scroll") as HTMLImageElement;
+    Object.defineProperty(desktop, "naturalWidth", { value: 1280 });
+    Object.defineProperty(desktop, "naturalHeight", { value: 720 });
+    desktop.getBoundingClientRect = () => ({ x: 0, y: 0, left: 0, top: 0, right: 640, bottom: 360, width: 640, height: 360, toJSON: () => ({}) });
+    fireEvent.click(desktop, { clientX: 320, clientY: 180 });
+    await waitFor(() => expect(slot.inspection.rpcCalls).toContainEqual({ method: "computer.control.input", input: { hostId: "host_thread", runId: "run_live", clientId: expect.any(String), input: { kind: "click", x: 640, y: 360, button: "left" } } }));
     window.dispatchEvent(new Event("blur"));
     await waitFor(() => expect(slot.inspection.rpcCalls.some((call) => call.method === "computer.control.release")).toBe(true));
     expect(slot.queryByText("You’re controlling")).toBeNull();
@@ -339,8 +348,8 @@ describe("Settings section", () => {
         rpc: {
           "settings.hosts": () =>
             [
-              { hostId: "host_a", name: "Shared computer", status: "connected", phase: "active", os: "linux", arch: "x64", browserState: "ready", providerState: "ready" },
-              { hostId: "host_b", name: "Old laptop", status: "disconnected", phase: "suspended", os: null, arch: null, browserState: null, providerState: null },
+              { hostId: "host_a", name: "Shared computer", status: "connected", phase: "active", os: "linux", arch: "x64", browserState: "ready", desktopState: "ready", providerState: "ready" },
+              { hostId: "host_b", name: "Old laptop", status: "disconnected", phase: "suspended", os: null, arch: null, browserState: null, desktopState: null, providerState: null },
             ] as never,
           "settings.get": () =>
             ({ selectedHostId: "host_a", provider: "jev", model: "jev-latest", keyStatus: "missing", lastTest: null }) as never,
@@ -362,7 +371,7 @@ describe("Settings section", () => {
   it("renders Jev as the fixed model and exposes one form-level Save action", async () => {
     const slot = renderSlot(settingsSection, {}, {
       rpc: {
-        "settings.hosts": () => [{ hostId: "host_a", name: "Shared computer", status: "connected", phase: "active", os: "linux", arch: "x64", browserState: "ready", providerState: "ready" }],
+        "settings.hosts": () => [{ hostId: "host_a", name: "Shared computer", status: "connected", phase: "active", os: "linux", arch: "x64", browserState: "ready", desktopState: "ready", providerState: "ready" }],
         "settings.get": () => ({ selectedHostId: "host_a", provider: "jev", model: "jev-latest", keyStatus: "missing", lastTest: null }),
       } as never,
     });
@@ -382,7 +391,7 @@ describe("Settings section", () => {
     });
     const slot = renderSlot(settingsSection, {}, {
       rpc: {
-        "settings.hosts": () => [{ hostId: "host_a", name: "Shared computer", status: "connected", phase: "active", os: "linux", arch: "x64", browserState: "ready", providerState: "ready" }],
+        "settings.hosts": () => [{ hostId: "host_a", name: "Shared computer", status: "connected", phase: "active", os: "linux", arch: "x64", browserState: "ready", desktopState: "ready", providerState: "ready" }],
         "settings.get": () => ({ selectedHostId: null, provider: "jev", model: "jev-latest", keyStatus: "missing", lastTest: null }),
       } as never,
     });

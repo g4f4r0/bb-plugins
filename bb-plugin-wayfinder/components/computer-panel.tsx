@@ -12,7 +12,7 @@ import { entityIdSchema } from "../src/contracts/primitives.js";
 import type { ComputerSnapshot, HumanInput } from "../src/contracts/run.js";
 import type { wayfinderSettingsRpcContract } from "../src/contracts/settings.js";
 import { errorMessage, RUN_STATE_LABEL } from "./format.js";
-import { LiveView } from "./live-view.js";
+import { DesktopView } from "./live-view.js";
 import { COMPUTER_REALTIME_CHANNEL, type UiRpcContract } from "./rpc.js";
 
 type SettingsRpcContract = typeof wayfinderSettingsRpcContract;
@@ -36,7 +36,9 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
   const [snapshot, setSnapshot] = useState<ComputerSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [liveStatus, setLiveStatus] = useState<LiveStatus>("connecting");
-  const [nativeFrame, setNativeFrame] = useState<string | null>(null);
+  const [desktopFrame, setDesktopFrame] = useState<string | null>(null);
+  const [desktopState, setDesktopState] = useState<"connecting" | "ready" | "setup-required" | "unavailable">("connecting");
+  const [desktopMessage, setDesktopMessage] = useState<string | null>(null);
   const panelRoot = useRef<HTMLDivElement>(null);
   const panelVisible = useRef(true);
   const nativeInflight = useRef(false);
@@ -106,21 +108,27 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
 
   const active = snapshot?.activeRun ?? null;
   useEffect(() => {
-    if (hostId === null || active !== null) { setNativeFrame(null); return; }
+    if (hostId === null) return;
     let stopped = false;
     const poll = async () => {
       if (stopped || nativeInflight.current || !panelVisible.current || document.visibilityState === "hidden") return;
       nativeInflight.current = true;
       try {
         const result = await rpc.call("computer.preview", { hostId, threadId });
-        if (!stopped && result.frame) { setNativeFrame(`data:image/jpeg;base64,${result.frame.base64}`); setLiveStatus("live"); }
-      } catch { /* Built-in browser is optional; retained run evidence remains the fallback. */ }
-      finally { nativeInflight.current = false; }
+        if (!stopped) {
+          setDesktopState(result.state);
+          setDesktopMessage(result.message);
+          if (result.frame) { setDesktopFrame(`data:${result.frame.mimeType};base64,${result.frame.base64}`); setLiveStatus("live"); }
+          else setLiveStatus("disconnected");
+        }
+      } catch (cause) {
+        if (!stopped) { setDesktopState("unavailable"); setDesktopMessage(errorMessage(cause)); setLiveStatus("disconnected"); }
+      } finally { nativeInflight.current = false; }
     };
     void poll();
     const timer = setInterval(() => void poll(), 1_000);
     return () => { stopped = true; clearInterval(timer); };
-  }, [active, hostId, rpc, threadId]);
+  }, [hostId, rpc, threadId]);
   const controllableRunId = active && ["running", "verifying"].includes(active.state) ? active.runId : null;
   useEffect(() => {
     if (humanRunId !== null && humanRunId !== controllableRunId) releaseControl(humanRunId);
@@ -133,10 +141,9 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
   if (hostId === null) return <Notice title="Setup required">Attach this thread to a computer or choose a fallback computer in Wayfinder settings.</Notice>;
   if (snapshot === null) return <Notice title="Computer unavailable">{error ?? "The computer did not respond."}</Notice>;
 
-  const selected = snapshot.selectedRun;
-  const viewed = active ?? selected;
-  const hasViewport = nativeFrame !== null || viewed !== null;
-  if (snapshot.readiness === "setup-required" && !hasViewport && snapshot.queue.length === 0) return <Notice title="Setup required">{snapshot.readinessMessage || "Finish setup in Wayfinder settings."}</Notice>;
+  const hasViewport = desktopFrame !== null;
+  if (!hasViewport && desktopState === "connecting") return <CenteredSpinner />;
+  if (!hasViewport && desktopState !== "ready") return <Notice title="Desktop unavailable">{desktopMessage ?? "Whole-desktop capture requires Cua Driver and screen-recording permission on this computer."}</Notice>;
 
   const cancel = async () => {
     if (active === null) return;
@@ -165,7 +172,7 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
   const statusLabel = hasHumanControl ? "You’re controlling" : !hasViewport ? (connection === "connected" ? "Connected" : "Disconnected") : liveStatus === "live" ? "Connected" : liveStatus === "paused" ? "Paused" : liveStatus === "redacted" ? "Hidden" : liveStatus === "disconnected" || liveStatus === "not-found" ? "Disconnected" : "Connecting";
 
   return <div ref={panelRoot} className="group relative h-full min-h-0 overflow-hidden bg-black text-white">
-    {active !== null ? <LiveView runId={active.runId} fill interactive={hasHumanControl} onInput={sendInput} onStatusChange={setLiveStatus} /> : nativeFrame !== null ? <img src={nativeFrame} alt="Live view of the built-in browser" className="h-full w-full select-none object-contain" draggable={false} /> : viewed !== null ? <LiveView runId={viewed.runId} fill onStatusChange={setLiveStatus} /> : <IdleView />}
+    <DesktopView imageUrl={desktopFrame!} interactive={hasHumanControl} onInput={sendInput} />
 
     {controllableRunId !== null && humanRunId !== controllableRunId ? <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-black/0 opacity-0 transition-opacity group-hover:bg-black/25 group-hover:opacity-100 group-focus-within:bg-black/25 group-focus-within:opacity-100"><button type="button" onClick={() => void takeControl()} disabled={takingControl} className="pointer-events-auto inline-flex min-h-9 items-center gap-2 rounded-md bg-white px-3 text-xs font-medium text-black shadow-lg hover:bg-white/90 disabled:opacity-60">{takingControl ? <Icon name="Loading" className="size-4 animate-spin" aria-hidden="true" /> : <Icon name="Cursor" className="size-4" aria-hidden="true" />}{takingControl ? "Taking control…" : "Take control"}</button></div> : null}
 
@@ -179,5 +186,4 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
 }
 
 function CenteredSpinner() { return <div role="status" aria-label="Loading computer" className="flex h-full min-h-0 items-center justify-center bg-black text-white"><Icon name="Loading" aria-hidden="true" className="size-5 animate-spin text-white/60" /></div>; }
-function IdleView() { return <div className="flex h-full min-h-0 items-center justify-center bg-black text-center"><div><Icon name="Laptop" className="mx-auto mb-3 size-8 text-white/35" aria-hidden="true" /><p className="text-sm text-white/70">Computer is idle</p><p className="mt-1 text-xs text-white/40">The live view starts when a run takes control.</p></div></div>; }
 function Notice({ title, children }: { title: string; children: string }) { return <div role="status" className="flex h-full min-h-0 items-center justify-center bg-black px-8 text-center text-white"><div><Icon name="Laptop" aria-hidden="true" className="mx-auto mb-3 size-8 text-white/35" /><h2 className="text-sm font-semibold">{title}</h2><p className="mt-1 max-w-sm text-sm text-white/55">{children}</p></div></div>; }

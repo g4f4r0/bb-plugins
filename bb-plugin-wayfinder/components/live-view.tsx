@@ -6,6 +6,20 @@ import { INITIAL_LIVE_STATE, LiveFramePoller, type LiveFramePollerOptions, type 
 
 export const STALE_FRAME_MS = 3_000;
 
+function inputPoint(image: HTMLImageElement, clientX: number, clientY: number) {
+  const bounds = image.getBoundingClientRect();
+  if (bounds.width <= 0 || bounds.height <= 0) return null;
+  return {
+    x: Math.max(0, Math.min(image.naturalWidth - 1, (clientX - bounds.left) * image.naturalWidth / bounds.width)),
+    y: Math.max(0, Math.min(image.naturalHeight - 1, (clientY - bounds.top) * image.naturalHeight / bounds.height)),
+  };
+}
+
+function toKeyboardInput(event: KeyboardEvent<HTMLImageElement>): HumanInput {
+  const modifiers = (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0);
+  return event.key.length === 1 && (modifiers & 7) === 0 ? { kind: "text", text: event.key } : { kind: "key", key: event.key, code: event.code, modifiers };
+}
+
 const STATUS_TEXT: Record<LiveViewState["status"], string> = {
   connecting: "Connecting to the live view…",
   live: "Live",
@@ -63,18 +77,11 @@ export function LiveView({
   const point = (event: MouseEvent<HTMLImageElement> | WheelEvent<HTMLImageElement>) => {
     const target = image.current;
     if (!target) return null;
-    const bounds = target.getBoundingClientRect();
-    if (bounds.width <= 0 || bounds.height <= 0) return null;
-    return {
-      x: Math.max(0, Math.min(target.naturalWidth - 1, (event.clientX - bounds.left) * target.naturalWidth / bounds.width)),
-      y: Math.max(0, Math.min(target.naturalHeight - 1, (event.clientY - bounds.top) * target.naturalHeight / bounds.height)),
-    };
+    return inputPoint(target, event.clientX, event.clientY);
   };
   const keyboard = (event: KeyboardEvent<HTMLImageElement>) => {
     if (!interactive || !onInput) return;
-    const modifiers = (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0);
-    if (event.key.length === 1 && (modifiers & 7) === 0) onInput({ kind: "text", text: event.key });
-    else onInput({ kind: "key", key: event.key, code: event.code, modifiers });
+    onInput(toKeyboardInput(event));
     event.preventDefault();
   };
 
@@ -96,5 +103,25 @@ export function LiveView({
       /> : loadingFrame ? <div role="status" aria-label="Loading browser" className="h-[min(80%,800px)] w-[min(92%,1280px)] max-h-full animate-pulse rounded-md border border-white/10 bg-white/[0.06]" style={{ aspectRatio: "8 / 5" }}><span className="sr-only">{STATUS_TEXT[state.status]}</span></div> : <p className={`px-6 text-center text-sm ${fill ? "text-white/55" : "text-muted-foreground"}`}>{STATUS_TEXT[state.status]}</p>}
     </div>
     {!fill ? <dl className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground" aria-live="polite"><div className="flex gap-1"><dt>View</dt><dd className="text-foreground">{stale ? "Stale" : STATUS_TEXT[state.status].split(".")[0]}</dd></div><div className="flex gap-1"><dt>Frame age</dt><dd className={stale ? "text-destructive" : "text-foreground"}>{formatFrameAge(ageMs)}</dd></div><div className="flex gap-1"><dt>Mode</dt><dd className="text-foreground">{interactive ? "Human control" : "Read-only"}</dd></div></dl> : null}
+  </div>;
+}
+
+export function DesktopView({ imageUrl, interactive, onInput }: { imageUrl: string; interactive: boolean; onInput: (input: HumanInput) => void }) {
+  const image = useRef<HTMLImageElement>(null);
+  return <div className="relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden bg-black">
+    <img
+      ref={image}
+      src={imageUrl}
+      alt="Live view of the controlled desktop"
+      draggable={false}
+      tabIndex={interactive ? 0 : -1}
+      aria-label={interactive ? "Live computer; click, type, paste, or scroll" : undefined}
+      className="h-full w-full select-none object-contain outline-none"
+      onClick={(event) => { if (!interactive || !image.current) return; const at = inputPoint(image.current, event.clientX, event.clientY); if (at) onInput({ kind: "click", ...at, button: event.button === 1 ? "middle" : event.button === 2 ? "right" : "left" }); }}
+      onContextMenu={(event) => { if (interactive) event.preventDefault(); }}
+      onWheel={(event) => { if (!interactive || !image.current) return; const at = inputPoint(image.current, event.clientX, event.clientY); if (!at) return; event.preventDefault(); onInput({ kind: "wheel", ...at, deltaX: Math.max(-3_000, Math.min(3_000, event.deltaX)), deltaY: Math.max(-3_000, Math.min(3_000, event.deltaY)) }); }}
+      onKeyDown={(event) => { if (!interactive) return; onInput(toKeyboardInput(event)); event.preventDefault(); }}
+      onPaste={(event) => { if (!interactive) return; const text = event.clipboardData.getData("text/plain"); if (text) { event.preventDefault(); onInput({ kind: "text", text: text.slice(0, 10_000) }); } }}
+    />
   </div>;
 }

@@ -15,6 +15,7 @@ export const hostSummarySchema = z
     os: z.string().nullable(),
     arch: z.string().nullable(),
     browserState: z.enum(["ready", "setup-required", "unavailable"]).nullable(),
+    desktopState: z.enum(["ready", "setup-required", "unavailable"]).nullable(),
     providerState: z.enum(["ready", "setup-required", "unavailable"]).nullable(),
   })
   .strict();

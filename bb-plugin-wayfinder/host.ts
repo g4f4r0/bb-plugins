@@ -25,6 +25,7 @@ import type { ArtifactRecord } from "./src/contracts/artifact.js";
 import { JevDecisionProvider } from "./src/adapters/jev.js";
 import { createInfisicalClient, type InfisicalScope } from "./src/core/infisical.js";
 import { resolveFortressExecutable } from "./src/core/browser-runtime.js";
+import { DesktopRuntime } from "./src/core/desktop-runtime.js";
 const INFISICAL_SCOPE: InfisicalScope = {
   projectId: "bd53277c-43aa-4093-8aea-1e4040fc1962",
   env: "prod",
@@ -50,6 +51,8 @@ function artifactRoot(): string { if (artifactRootPath === null) throw new Error
 function runRoot(): string { if (runRootPath === null) throw new Error("Wayfinder host storage is not initialized"); return runRootPath; }
 function artifactStore(): ArtifactStore { if (artifacts === null) throw new Error("Wayfinder host storage is not initialized"); return artifacts; }
 const artifactRecords = new Map<string, ArtifactRecord>();
+let desktop: DesktopRuntime | null = null;
+function desktopRuntime(dataDir: string): DesktopRuntime { desktop ??= new DesktopRuntime(join(dataDir, "desktop")); return desktop; }
 const liveFrames = new Map<string, { sequence: number; capturedAt: number; bytes: Buffer }>();
 const setupError = (message: string, phase: "observe" | "cleanup" = "observe") => ({ code: "setup-required" as const, phase, message, retryable: false, details: [] });
 function persistRun(run: RunRecord): void {
@@ -228,15 +231,16 @@ async function stopProcess(child: ChildProcess): Promise<boolean> {
 }
 async function cleanup(runId: string) { const job = jobs.get(runId); if (!job) return; job.controlGate.dispose(); let failure: string | null = null; try { if (job.adapter) await job.adapter.close({ signal: new AbortController().signal, expectedHostId: runs.get(runId)!.route.identity.hostId }); } catch (error) { failure = error instanceof Error ? error.message : "Browser cleanup failed"; } if (job.process && !await stopProcess(job.process)) failure = failure ?? "Fortress process did not exit after forced cleanup"; if (job.server) await new Promise<void>((resolve) => job.server!.close(() => resolve())); if (job.profile) await rm(job.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch((error) => { failure = failure ?? (error instanceof Error ? error.message : "Profile cleanup failed"); }); const run = runs.get(runId); if (run) runs.set(runId, update(run, { activeController: false, cleanup: { state: failure === null ? "completed" : "incomplete", message: failure, completedAt: failure === null ? Date.now() : null } })); jobs.delete(runId); }
 
-async function probe(hostId: string, provider: "fixture" | "jev" | "openrouter"): Promise<HostCapabilities> {
+async function probe(hostId: string, provider: "fixture" | "jev" | "openrouter", dataDir: string): Promise<HostCapabilities> {
   const fortressReady = await resolveFortressExecutable() !== null;
+  const desktopReady = await desktopRuntime(dataDir).available();
   const selected = provider === "fixture" ? "deterministic-fixture" : provider === "openrouter" ? "openrouter" : "typesafe-jev";
   const providerReady = provider === "fixture" || await infisical.secretConfigured(INFISICAL_SCOPE, PROVIDER_KEY_NAME[provider]).catch(() => false);
   return {
     hostId,
     platform: { os: process.platform, arch: process.arch, nodeVersion: process.version },
     browser: { state: fortressReady ? "ready" : "setup-required", provider: "fortress-cdp", instanceCount: jobs.size, detail: fortressReady ? "Fortress executable found; Wayfinder owns fresh profiles per run." : `Fortress is not installed for ${process.platform}/${process.arch}.` },
-    desktop: { state: "setup-required", provider: "cua-driver", version: null, daemonRunning: false, accessibilityReady: false, captureReady: false, detail: `Native desktop support is not installed for ${process.platform}/${process.arch}.` },
+    desktop: { state: desktopReady ? "ready" : "setup-required", provider: "cua-driver", version: null, daemonRunning: desktopReady, accessibilityReady: desktopReady, captureReady: desktopReady, detail: desktopReady ? "Private whole-desktop capture is available through Cua Driver." : `Cua Driver is not installed for ${process.platform}/${process.arch}.` },
     encoder: { state: "ready", ffmpegVersion: null, h264Encoders: [], detail: "Screenshot evidence uses Fortress PNG capture." },
     ocr: { state: "setup-required", provider: null, detail: "OCR is deferred." },
     decisionProvider: { state: providerReady ? "ready" : "setup-required", provider: selected, infisicalScopeVerified: providerReady, detail: providerReady ? `${selected} credential is available on this host.` : `${selected} credential is not configured on this host.` },
@@ -245,10 +249,15 @@ async function probe(hostId: string, provider: "fixture" | "jev" | "openrouter")
 }
 
 export default experimental_defineHostEntry({ contract: hostContract, experimental_signals: hostSignals, handlers: {
-  "capabilities.probe": async (input) => probe(input.expectedHostId, input.provider),
+  "capabilities.probe": async (input, context) => probe(input.expectedHostId, input.provider, context.experimental_paths.dataDir),
   "runs.start": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); context.signal.throwIfAborted(); if (runs.has(input.runId) || loadRun(input.runId)) return { accepted: true as const, runId: input.runId }; const run = initialRun(input.runId, input.routeHash, input.route); runs.set(input.runId, run); const abort = new AbortController(); const lease = context.experimental_retainWorker(); const emit: Emit = (signal, payload) => { void context.experimental_emitSignal(signal, payload as never).catch(() => undefined); }; const job = { abort, process: null, profile: null, server: null, adapter: null, artifact: null, emit, capture: null, controlGate: new ControlGate(), browserBinding: input.browserBinding }; jobs.set(input.runId, job); void execute(run).finally(() => lease.dispose()); emit("runChanged", { runId: input.runId, revision: run.revision }); return { accepted: true as const, runId: input.runId }; },
   "runs.status": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); const run = runs.get(input.runId) ?? loadRun(input.runId); if (!run) throw new Error("Run not found"); runs.set(input.runId, run); return run; },
   "runs.cancel": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); const run = runs.get(input.runId); if (!run) throw new Error("Run not found"); if (["passed", "failed", "blocked", "cancelled", "timed_out", "interrupted"].includes(run.state)) return { accepted: false, run }; jobs.get(input.runId)?.abort.abort(input.reason); const cancelled = update(run, { state: "cancelled", error: { code: "cancelled", phase: "cleanup", message: input.reason, retryable: false, details: [] } }); runs.set(input.runId, cancelled); await context.experimental_emitSignal("runChanged", { runId: input.runId, revision: cancelled.revision }); return { accepted: true, run: cancelled }; },
+  "desktop.capture": async (input, context) => {
+    ensureStorage(context.experimental_paths.dataDir);
+    const frame = await desktopRuntime(context.experimental_paths.dataDir).capture(context.signal);
+    return { frame: { bytesBase64: frame.bytes.toString("base64"), mimeType: frame.mimeType, width: frame.width, height: frame.height, capturedAt: frame.capturedAt } };
+  },
   "computer.control.acquire": async (input, context) => {
     ensureStorage(context.experimental_paths.dataDir);
     const job = jobs.get(input.runId);
@@ -263,12 +272,13 @@ export default experimental_defineHostEntry({ contract: hostContract, experiment
   "computer.control.input": async (input, context) => {
     ensureStorage(context.experimental_paths.dataDir);
     const job = jobs.get(input.runId);
-    if (!job?.adapter) throw new Error("The computer is not ready for input");
-    await job.adapter.dispatchHumanInput(input.input, input.clientId, context.signal);
+    if (!job?.adapter || !job.controlGate.owns(input.clientId)) throw new Error("The computer is not ready for input");
+    job.controlGate.touch(input.clientId);
+    await desktopRuntime(context.experimental_paths.dataDir).input(input.input, context.signal);
     return { accepted: true as const };
   },
   "media.latest": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); const run = runs.get(input.runId); const job = jobs.get(input.runId); const previous = liveFrames.get(input.runId); if (!run) return { frame: null }; if (job?.adapter && ["queued", "running", "verifying"].includes(run.state)) { const png = await capture(job); const frame = { sequence: (previous?.sequence ?? 0) + 1, capturedAt: Date.now(), bytes: png }; liveFrames.set(input.runId, frame); job.emit("frameAvailable", { runId: input.runId, sequence: frame.sequence }); if (input.afterSequence !== null && frame.sequence <= input.afterSequence) return { frame: null }; return { frame: { sequence: frame.sequence, capturedAt: frame.capturedAt, mimeType: "image/png" as const, width: 1280, height: 800, bytesBase64: png.toString("base64"), state: "live" as const } }; } if (!previous) { const artifactId = run.checkpoints.flatMap((checkpoint) => checkpoint.evidenceArtifactIds).at(-1); const artifact = artifactId ? await artifactStore().getUnscoped(artifactId) : null; if (artifact && artifact.media.sizeBytes <= 1_048_576) { const bytes = (await artifactStore().readRange(artifact, 0, artifact.media.sizeBytes - 1)).bytes; return { frame: { sequence: 1, capturedAt: artifact.media.createdAt, mimeType: "image/png" as const, width: artifact.media.width ?? 1280, height: artifact.media.height ?? 800, bytesBase64: bytes.toString("base64"), state: "disconnected" as const } }; } } if (!previous) return { frame: null }; /* ended runs always report "disconnected" so a relay never serves a stale live frame */ return { frame: { sequence: previous.sequence, capturedAt: previous.capturedAt, mimeType: "image/png" as const, width: 1280, height: 800, bytesBase64: previous.bytes.toString("base64"), state: "disconnected" as const } }; },
   "artifacts.list": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); return artifactStore().list({ threadId: input.threadId, runId: input.runId, cursor: input.cursor, limit: input.limit }); },
   "artifacts.get": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); return artifactStore().get(input.artifactId, { threadId: input.threadId }); },
   "artifacts.readRange": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); const known = artifactRecords.get(input.artifactId) ?? await artifactStore().getUnscoped(input.artifactId); if (!known) throw new Error("Artifact not found"); const range = await artifactStore().readRange(known, input.range.start, input.range.endInclusive); return { artifact: known, bytesBase64: range.bytes.toString("base64"), range: { start: range.start, endInclusive: range.endInclusive }, complete: range.endInclusive === known.media.sizeBytes - 1 }; },
-}, dispose: async () => { for (const job of jobs.values()) job.abort.abort("dispose"); await Promise.all([...jobs.keys()].map((runId) => cleanup(runId))); disposeHostControllerQueue("wayfinder-host"); runs.clear(); queue = hostControllerQueue("wayfinder-host"); if (process.env.WAYFINDER_DATA_DIR === undefined) { artifactRootPath = null; runRootPath = null; artifacts = null; } }});
+}, dispose: async () => { for (const job of jobs.values()) job.abort.abort("dispose"); await Promise.all([...jobs.keys()].map((runId) => cleanup(runId))); await desktop?.dispose(); desktop = null; disposeHostControllerQueue("wayfinder-host"); runs.clear(); queue = hostControllerQueue("wayfinder-host"); if (process.env.WAYFINDER_DATA_DIR === undefined) { artifactRootPath = null; runRootPath = null; artifacts = null; } }});

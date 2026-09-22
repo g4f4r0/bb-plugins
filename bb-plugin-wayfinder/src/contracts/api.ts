@@ -35,7 +35,11 @@ export const wayfinderRpcContract = defineRpcContract({
   },
   "computer.preview": {
     input: z.object({ hostId: entityIdSchema, threadId: entityIdSchema }).strict(),
-    output: z.object({ frame: z.object({ base64: base64Schema, width: z.number().int().positive().max(4_096), height: z.number().int().positive().max(4_096), capturedAt: unixMsSchema }).strict().nullable() }).strict(),
+    output: z.object({
+      frame: z.object({ base64: base64Schema, mimeType: z.enum(["image/png", "image/jpeg"]), width: z.number().int().positive().max(4_096), height: z.number().int().positive().max(4_096), capturedAt: unixMsSchema }).strict().nullable(),
+      state: z.enum(["ready", "setup-required", "unavailable"]),
+      message: z.string().min(1).max(1_000).nullable(),
+    }).strict(),
   },
   "computer.control.acquire": {
     input: z.object({ hostId: entityIdSchema, runId: entityIdSchema, clientId: entityIdSchema }).strict(),

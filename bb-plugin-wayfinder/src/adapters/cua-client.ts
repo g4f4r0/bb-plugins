@@ -21,16 +21,18 @@ export interface ProcessCuaTransportOptions {
   readonly maxOutputBytes?: number;
 }
 
-function parseResult(stdout: string): CuaToolResult {
+export function parseCuaResult(stdout: string): CuaToolResult {
   const parsed = JSON.parse(stdout) as Record<string, unknown>;
   const candidate = parsed.result !== null && typeof parsed.result === "object"
     ? parsed.result as Record<string, unknown>
     : parsed;
   const structured = candidate.structuredContent ?? candidate.structured_content;
+  const refusal = candidate.refusal !== null && typeof candidate.refusal === "object" ? candidate.refusal as Record<string, unknown> : null;
+  const direct = structured === undefined && !Array.isArray(candidate.content) && refusal === null ? candidate : null;
   return {
-    ...(structured !== null && typeof structured === "object" ? { structuredContent: structured as Record<string, unknown> } : {}),
-    ...(Array.isArray(candidate.content) ? { content: candidate.content as CuaToolResult["content"] } : {}),
-    ...(typeof candidate.isError === "boolean" ? { isError: candidate.isError } : {}),
+    ...(structured !== null && typeof structured === "object" ? { structuredContent: structured as Record<string, unknown> } : direct !== null ? { structuredContent: direct } : {}),
+    ...(refusal !== null ? { content: [{ type: "text", text: String(refusal.message ?? "Cua capability manifest refused the operation") }] } : Array.isArray(candidate.content) ? { content: candidate.content as CuaToolResult["content"] } : {}),
+    ...(refusal !== null ? { isError: true } : typeof candidate.isError === "boolean" ? { isError: candidate.isError } : {}),
   };
 }
 
@@ -98,7 +100,7 @@ export class ProcessCuaTransport implements CuaTransport {
           return;
         }
         try {
-          const result = parseResult(stdout);
+          const result = parseCuaResult(stdout);
           if (result.isError === true) {
             const message = result.content?.find((part) => part.type === "text")?.text ?? "Cua tool returned an error";
             reject(wayfinderError(/stale/iu.test(message) ? "stale-observation" : "provider-unavailable", "act", message.slice(0, 1_000), { retryable: /stale/iu.test(message) }));
@@ -165,7 +167,7 @@ export async function probeCuaRuntime(binaryPath: string, signal: AbortSignal): 
     ]);
     if (health.code !== 0) return { state: "setup-required", message: "Cua daemon is running but the end-to-end health probe failed", version: versionText };
     if (windows.code !== 0) return { state: "setup-required", message: "Cua daemon cannot list accessible windows", version: versionText };
-    const windowResult = parseResult(windows.stdout);
+    const windowResult = parseCuaResult(windows.stdout);
     const windowList = windowResult.structuredContent?.windows;
     if (!Array.isArray(windowList) || windowList.length === 0) return { state: "setup-required", message: "Cua runtime has no accessible on-screen window", version: versionText };
     return { state: "ready", message: "Cua daemon and platform probes are ready", version: versionText };
