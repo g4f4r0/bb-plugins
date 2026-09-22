@@ -8,13 +8,16 @@ import { ProcessCuaTransport, type CuaToolResult } from "../adapters/cua-client.
 import { errorMessage } from "./errors.js";
 
 export const DESKTOP_CAPABILITY_TOOLS = ["get_desktop_state", "get_accessibility_tree", "get_window_state", "list_windows", "health_report", "click", "drag", "scroll", "type_text", "press_key", "start_recording", "stop_recording", "get_recording_state"] as const;
-function capabilityManifest(recordingRoot: string): string {
+export interface DesktopWindow { pid: number; windowId: number; title: string; x: number; y: number; width: number; height: number }
+function capabilityManifest(recordingRoot: string, window: { pid: number; windowId: number } | null): string {
   return JSON.stringify({
     version: 3,
     expires_after: "12h",
     idle_timeout: "10m",
-    resources: { desktop: { display: true }, files: { write: [{ dir: recordingRoot, recursive: true }] } },
-    allow: { tools: DESKTOP_CAPABILITY_TOOLS },
+    resources: window === null
+      ? { desktop: { display: true }, files: { write: [{ dir: recordingRoot, recursive: true }] } }
+      : { desktop: { display: true, windows: [{ pid: window.pid, window_id: window.windowId }] } },
+    allow: { tools: window === null ? DESKTOP_CAPABILITY_TOOLS : ["list_windows", "set_window_frame"] },
   });
 }
 const MAX_FRAME_BYTES = 1_100_000;
@@ -98,6 +101,7 @@ async function compress(bytes: Buffer, width: number, height: number, signal: Ab
 
 export class DesktopRuntime {
   readonly #dataDir: string;
+  readonly #window: { pid: number; windowId: number } | null;
   #binary: string | null = null;
   #socket = "";
   #process: ChildProcess | null = null;
@@ -105,7 +109,7 @@ export class DesktopRuntime {
   #starting: Promise<void> | null = null;
   #capture: Promise<DesktopFrame> | null = null;
 
-  constructor(dataDir: string) { this.#dataDir = dataDir; }
+  constructor(dataDir: string, window: { pid: number; windowId: number } | null = null) { this.#dataDir = dataDir; this.#window = window; }
 
   async available(): Promise<boolean> { return await resolveCuaExecutable() !== null; }
 
@@ -151,6 +155,27 @@ export class DesktopRuntime {
     const transport = this.#transport!;
     const call = desktopInputCall(input);
     await transport.call(call.tool, call.payload, signal);
+  }
+
+  async windows(signal: AbortSignal): Promise<DesktopWindow[]> {
+    await this.#start(signal);
+    const result = await this.#transport!.call("list_windows", { on_screen_only: true }, signal);
+    const entries = result.structuredContent?.windows;
+    if (!Array.isArray(entries)) throw new Error("Cua did not return visible windows");
+    return entries.filter((entry): entry is Record<string, unknown> => entry !== null && typeof entry === "object")
+      .filter((entry) => [entry.pid, entry.window_id, entry.x, entry.y, entry.width, entry.height].every((value) => typeof value === "number" && Number.isFinite(value)))
+      .slice(0, 64).map((entry) => ({ pid: entry.pid as number, windowId: entry.window_id as number, title: String(entry.title ?? "").slice(0, 200), x: entry.x as number, y: entry.y as number, width: entry.width as number, height: entry.height as number }));
+  }
+
+  async setWindowFrame(x: number, y: number, width: number, height: number, signal: AbortSignal): Promise<DesktopWindow> {
+    if (this.#window === null) throw new Error("Window frame changes require an exact approved Cua window");
+    const before = (await this.windows(signal)).find((candidate) => candidate.pid === this.#window!.pid && candidate.windowId === this.#window!.windowId);
+    if (!before) throw new Error("The selected window is no longer visible");
+    const result = await this.#transport!.call("set_window_frame", { pid: before.pid, window_id: before.windowId, x, y, width, height }, signal);
+    if (result.isError === true) throw new Error("Cua refused the window frame change");
+    const after = (await this.windows(signal)).find((candidate) => candidate.pid === before.pid && candidate.windowId === before.windowId);
+    if (!after) throw new Error("Window disappeared after the frame change");
+    return after;
   }
 
   async startRecording(outputDir: string, signal: AbortSignal): Promise<void> {
@@ -232,7 +257,7 @@ export class DesktopRuntime {
       await mkdir(recordingRoot, { recursive: true, mode: 0o700 });
       const manifest = join(this.#dataDir, "desktop-capabilities.json");
       this.#socket = process.platform === "win32" ? `\\\\.\\pipe\\wayfinder-cua-${process.pid}` : join(tmpdir(), `wayfinder-cua-${process.pid}.sock`);
-      await writeFile(manifest, capabilityManifest(recordingRoot), { mode: 0o600 });
+      await writeFile(manifest, capabilityManifest(recordingRoot, this.#window), { mode: 0o600 });
       await chmod(manifest, 0o600).catch(() => undefined);
       await rm(this.#socket, { force: true }).catch(() => undefined);
       const serveArgs = ["serve", "--socket", this.#socket, "--permission-mode", "bounded", "--capability-manifest", manifest, "--approve-capability-manifest"];

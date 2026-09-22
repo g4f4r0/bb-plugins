@@ -505,15 +505,27 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     commands: [
       { name: "record", summary: "Start or stop a private whole-desktop MP4", usage: "bb wayfinder record start [filename.mp4] | bb wayfinder record stop <recordingId>" },
       { name: "screenshot", summary: "Capture a private whole-desktop screenshot", usage: "bb wayfinder screenshot [filename.png]" },
+      { name: "windows", summary: "List the visible Cua windows on this computer", usage: "bb wayfinder windows" },
+      { name: "window", summary: "Center an exact visible application window", usage: "bb wayfinder window center <pid> <windowId> [width height]" },
       { name: "doctor", summary: "Verify the current computer, Cua Driver, permissions, screenshots, accessibility, input, and video", usage: "bb wayfinder doctor [--machine <hostId>] [--json]" },
       { name: "setup", summary: "Install the supported Cua Driver and verify the current computer without replacing its desktop", usage: "bb wayfinder setup [--machine <hostId>] [--json] [--no-permissions]" },
     ],
     async run(argv, context) {
       try {
-        if (argv[0] === "record" || argv[0] === "screenshot") {
+        if (["record", "screenshot", "windows", "window"].includes(argv[0] ?? "")) {
           if (!context.threadId) throw new Error("Run this command from a BB thread with an environment");
           const identity = await identityFor(context.threadId);
           const hostId = identity.hostId;
+          if (argv[0] === "windows" && argv.length === 1) {
+            const result = await host.call("desktop.windows", { expectedHostId: hostId }, { hostId, signal: context.signal, timeoutMs: 15_000 });
+            return { exitCode: 0, stdout: `${JSON.stringify(result)}\n` };
+          }
+          if (argv[0] === "window" && argv[1] === "center" && (argv.length === 4 || argv.length === 6)) {
+            const [pid, windowId, width, height] = argv.slice(2).map(Number);
+            if (![pid, windowId, width ?? 1080, height ?? 610].every((value) => Number.isSafeInteger(value) && (value ?? 0) > 0)) throw new Error("Window ID and dimensions must be positive integers");
+            const result = await host.call("desktop.window.center", { expectedHostId: hostId, pid: pid!, windowId: windowId!, width: width ?? 1080, height: height ?? 610 }, { hostId, signal: context.signal, timeoutMs: 20_000 });
+            return { exitCode: 0, stdout: `${JSON.stringify(result)}\n` };
+          }
           if (argv[0] === "screenshot" && argv.length <= 2) {
             const result = await host.call("desktop.snapshot", { expectedHostId: hostId, threadId: context.threadId, projectId: identity.projectId, filename: argv[1] ?? "desktop.png" }, { hostId, signal: context.signal, timeoutMs: 20_000 });
             return { exitCode: 0, stdout: `${JSON.stringify({ artifactId: result.artifact.artifactId, url: `/api/v1/plugins/wayfinder/http${artifactHttpRoutes.inline}?${new URLSearchParams({ artifactId: result.artifact.artifactId, threadId: context.threadId })}` })}\n` };
@@ -530,7 +542,7 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
             const result = await host.call("desktop.record.stop", { expectedHostId: owner.hostId, threadId: context.threadId, recordingId }, { hostId: owner.hostId, signal: context.signal, timeoutMs: 30_000 });
             return { exitCode: 0, stdout: `${JSON.stringify({ artifactId: result.artifact.artifactId, durationMs: result.artifact.media.durationMs, url: `/api/v1/plugins/wayfinder/http${artifactHttpRoutes.inline}?${new URLSearchParams({ artifactId: result.artifact.artifactId, threadId: context.threadId })}` })}\n` };
           }
-          throw new Error("Usage: bb wayfinder record start [filename.mp4] | record stop <recordingId> | screenshot [filename.png]");
+          throw new Error("Usage: bb wayfinder record start [filename.mp4] | record stop <recordingId> | screenshot [filename.png] | windows | window center <pid> <windowId> [width height]");
         }
         const options = parseComputerCommand(argv);
         const machines = await bb.sdk.hosts.list();
@@ -562,6 +574,24 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     return { identity, hostId };
   };
   const privateMediaUrl = (artifactId: string, threadId: string) => `/api/v1/plugins/wayfinder/http${artifactHttpRoutes.inline}?${new URLSearchParams({ artifactId, threadId })}`;
+  bb.agents.registerTool({
+    name: "wayfinder_windows",
+    description: "List up to 64 visible windows on the thread's computer (or an explicitly selected connected machine), with exact Cua pid/window IDs and bounds for safe presentation control.",
+    parameters: z.object({ machine: entityIdSchema.optional() }).strict(),
+    execute: async ({ machine }, context) => {
+      const { hostId } = await captureHost(context.threadId, machine);
+      return JSON.stringify(await host.call("desktop.windows", { expectedHostId: hostId }, { hostId, signal: context.signal, timeoutMs: 15_000 }));
+    },
+  });
+  bb.agents.registerTool({
+    name: "wayfinder_window_center",
+    description: "Center one exact visible application window on its existing display using Cua's set_window_frame. This does not install or replace a desktop.",
+    parameters: z.object({ pid: z.number().int().positive(), windowId: z.number().int().positive(), width: z.number().int().min(320).max(3840).default(1080), height: z.number().int().min(240).max(2160).default(610), machine: entityIdSchema.optional() }).strict(),
+    execute: async ({ pid, windowId, width, height, machine }, context) => {
+      const { hostId } = await captureHost(context.threadId, machine);
+      return JSON.stringify(await host.call("desktop.window.center", { expectedHostId: hostId, pid, windowId, width, height }, { hostId, signal: context.signal, timeoutMs: 20_000 }));
+    },
+  });
   bb.agents.registerTool({
     name: "wayfinder_record_start",
     description: "Start Cua's native 30-fps whole-desktop MP4 recording on the thread's computer (or an explicitly selected connected machine). One recording per computer, maximum two minutes. Do not record protected input.",

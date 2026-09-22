@@ -126,6 +126,14 @@ export const hostContract = defineRpcContract({
     input: z.object({ expectedHostId: entityIdSchema, threadId: entityIdSchema, recordingId: entityIdSchema }).strict(),
     output: z.object({ artifact: artifactRecordSchema }).strict(),
   },
+  "desktop.windows": {
+    input: z.object({ expectedHostId: entityIdSchema }).strict(),
+    output: z.object({ windows: z.array(z.object({ pid: z.number().int().positive(), windowId: z.number().int().positive(), title: z.string().max(200), x: z.number(), y: z.number(), width: z.number().positive(), height: z.number().positive() }).strict()).max(64) }).strict(),
+  },
+  "desktop.window.center": {
+    input: z.object({ expectedHostId: entityIdSchema, pid: z.number().int().positive(), windowId: z.number().int().positive(), width: z.number().int().min(320).max(3840), height: z.number().int().min(240).max(2160) }).strict(),
+    output: z.object({ window: z.object({ pid: z.number().int().positive(), windowId: z.number().int().positive(), title: z.string().max(200), x: z.number(), y: z.number(), width: z.number().positive(), height: z.number().positive() }).strict() }).strict(),
+  },
   "desktop.snapshot": {
     input: z.object({ expectedHostId: entityIdSchema, threadId: entityIdSchema, projectId: entityIdSchema.nullable(), filename: z.string().min(1).max(120) }).strict(),
     output: z.object({ artifact: artifactRecordSchema }).strict(),

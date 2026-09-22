@@ -371,6 +371,19 @@ export default experimental_defineHostEntry({ contract: hostContract, experiment
     }
   },
   "desktop.record.stop": async (input) => ({ artifact: await finishRecording(input.recordingId, input.threadId) }),
+  "desktop.windows": async (_input, context) => ({ windows: await desktopRuntime(context.experimental_paths.dataDir).windows(context.signal) }),
+  "desktop.window.center": async (input, context) => {
+    const runtime = desktopRuntime(context.experimental_paths.dataDir);
+    const before = (await runtime.windows(context.signal)).find((entry) => entry.pid === input.pid && entry.windowId === input.windowId);
+    if (!before || !before.title || /^(Desktop|xfce4-panel)$/iu.test(before.title)) throw new Error("Choose a visible application window, not the desktop or dock");
+    const frame = await runtime.capture(context.signal);
+    if (input.width > frame.width || input.height > frame.height) throw new Error("The requested window size exceeds the display");
+    const exact = new DesktopRuntime(join(context.experimental_paths.dataDir, "window-control", `${input.pid}-${input.windowId}`), { pid: input.pid, windowId: input.windowId });
+    try {
+      const window = await exact.setWindowFrame(Math.floor((frame.width - input.width) / 2), Math.floor((frame.height - input.height) / 2), input.width, input.height, context.signal);
+      return { window };
+    } finally { await exact.dispose(); }
+  },
   "desktop.snapshot": async (input, context) => {
     ensureStorage(context.experimental_paths.dataDir);
     const frame = await desktopRuntime(context.experimental_paths.dataDir).capture(context.signal);
