@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import process from "node:process";
 import { Effect } from "effect";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -132,8 +132,9 @@ async function waitForJson(url: string, signal: AbortSignal, timeoutMs = 10_000)
   throw wayfinderError("provider-unavailable", "observe", "Fortress CDP endpoint did not become ready", { retryable: true });
 }
 async function launch(route: WayfinderRoute, signal: AbortSignal, controlGate: ControlGate, binding: NativeBrowserBinding | null) {
+  const pointAt = (x: number, y: number, actionSignal: AbortSignal) => desktopRuntime(dirname(artifactRoot())).pointAt(x, y, actionSignal);
   if (binding !== null) {
-    const adapter = await BrowserAdapter.connectFortress({ route, hostId: route.identity.hostId, tabId: binding.tabId, resourceGeneration: `native_${Date.now()}`, wsEndpoint: binding.wsEndpoint, signal, controlGate });
+    const adapter = await BrowserAdapter.connectFortress({ route, hostId: route.identity.hostId, tabId: binding.tabId, resourceGeneration: `native_${Date.now()}`, wsEndpoint: binding.wsEndpoint, signal, controlGate, pointAt });
     return { server: null, profile: null, child: null, adapter, fixtureOrigin: null };
   }
   const fortress = await resolveFortressExecutable();
@@ -169,7 +170,7 @@ async function launch(route: WayfinderRoute, signal: AbortSignal, controlGate: C
     tab ??= fallbackTab;
     if (typeof tab?.id !== "string") throw wayfinderError("provider-unavailable", "observe", "Fortress did not expose a page target");
     await new Promise((resolve) => setTimeout(resolve, 250));
-    const adapter = await BrowserAdapter.connectFortress({ route, hostId: route.identity.hostId, tabId: tab.id, resourceGeneration: `fortress_${Date.now()}`, wsEndpoint: ws, signal, controlGate });
+    const adapter = await BrowserAdapter.connectFortress({ route, hostId: route.identity.hostId, tabId: tab.id, resourceGeneration: `fortress_${Date.now()}`, wsEndpoint: ws, signal, controlGate, pointAt });
     const readyBy = Date.now() + 15_000;
     while (Date.now() < readyBy) {
       signal.throwIfAborted();

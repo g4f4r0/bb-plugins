@@ -23,6 +23,7 @@ class FakeCdp implements CdpTransport {
     ] } as T);
     if (method === "Target.getTargetInfo") return Promise.resolve({ targetInfo: { targetId: "tab_one", title: "Fixture", url: "http://127.0.0.1:4173/" } } as T);
     if (method === "DOM.getBoxModel") return Promise.resolve({ model: { content: [0, 0, 100, 0, 100, 20, 0, 20] } } as T);
+    if (method === "Runtime.evaluate") return Promise.resolve({ result: { value: { x: 100, y: 150, visible: true } } } as T);
     if (method === "Input.insertText") this.typedValue = String(params.text ?? "");
     return Promise.resolve({} as T);
   }
@@ -46,6 +47,25 @@ describe("BrowserAdapter", () => {
       actionId: "action_one", runId: "run_one", routePolicyHash: sha256(route), observation: { ...observation.identity, snapshotId: "snapshot_stale" },
       action: { kind: "browser.click", target: { targetId: observation.targets[0]!.targetId, resourceGeneration: "generation_one", snapshotId: "snapshot_stale" } }, intentRecordedAt: 1,
     }, context))).rejects.toThrow(/stale-observation/iu);
+  });
+
+  it("shows a visual cursor at the clicked target without replaying input when feedback fails", async () => {
+    const route: WayfinderRoute = { ...makeRoute(), allowedActions: ["browser.click"] };
+    const transport = new FakeCdp();
+    const positions: Array<[number, number]> = [];
+    const adapter = new BrowserAdapter({ route, hostId: "host_test", tabId: "tab_one", resourceGeneration: "generation_one", transport, settleMs: 1,
+      pointAt: async (x, y) => { positions.push([x, y]); throw new Error("Cursor feedback unavailable"); },
+    });
+    const context = { signal: new AbortController().signal, expectedHostId: "host_test" };
+    const observation = await Effect.runPromise(adapter.observe(context));
+    const target = observation.targets[0]!;
+    const outcome = await Effect.runPromise(adapter.execute({
+      actionId: "action_cursor", runId: "run_one", routePolicyHash: sha256(route), observation: observation.identity,
+      action: { kind: "browser.click", target: { targetId: target.targetId, resourceGeneration: target.resourceGeneration, snapshotId: observation.identity.snapshotId } }, intentRecordedAt: 1,
+    }, context));
+    expect(outcome.state).toBe("completed");
+    expect(positions).toEqual([[150, 160]]);
+    expect(transport.commands.filter((command) => command === "Input.dispatchMouseEvent")).toHaveLength(2);
   });
 
   it("verifies URL independently of the decision provider", async () => {

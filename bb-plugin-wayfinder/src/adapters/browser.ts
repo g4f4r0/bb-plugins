@@ -50,6 +50,8 @@ export interface BrowserAdapterOptions {
   readonly downloadRoots?: ReadonlyMap<string, string>;
   readonly settleMs?: number;
   readonly controlGate?: ControlGate;
+  /** Optional visual-only Cua cursor feedback on the visible desktop. */
+  readonly pointAt?: (x: number, y: number, signal: AbortSignal) => Promise<void>;
 }
 
 export interface FortressConnectionOptions extends Omit<BrowserAdapterOptions, "transport" | "sessionId"> {
@@ -85,6 +87,7 @@ export class BrowserAdapter implements AutomationAdapter {
   readonly #downloadRoots: ReadonlyMap<string, string>;
   readonly #settleMs: number;
   readonly #controlGate?: ControlGate;
+  readonly #pointAt?: BrowserAdapterOptions["pointAt"];
   readonly #bindings = new Map<string, BrowserTargetBinding>();
   readonly #networkOutcomes: Array<{ method: string; url: string; status: number }> = [];
   readonly #requestMethods = new Map<string, string>();
@@ -103,6 +106,7 @@ export class BrowserAdapter implements AutomationAdapter {
     this.#downloadRoots = options.downloadRoots ?? new Map();
     this.#settleMs = options.settleMs ?? 80;
     this.#controlGate = options.controlGate;
+    this.#pointAt = options.pointAt;
     this.#disposeEvent = this.#transport.onEvent((event) => this.#event(event));
   }
 
@@ -369,6 +373,20 @@ export class BrowserAdapter implements AutomationAdapter {
     const ys = [quad[1]!, quad[3]!, quad[5]!, quad[7]!];
     const x = xs.reduce((sum, value) => sum + value, 0) / 4;
     const y = ys.reduce((sum, value) => sum + value, 0) / 4;
+    if (this.#pointAt !== undefined) {
+      try {
+        // DOM box quads are viewport-relative. Only indicate a click when the
+        // live foreground page has a usable screen origin; never move the OS pointer.
+        const origin = await this.#command<{ result?: { value?: { x?: number; y?: number; visible?: boolean } } }>("Runtime.evaluate", {
+          expression: "({x:window.screenX+(window.outerWidth-window.innerWidth)/2,y:window.screenY+window.outerHeight-window.innerHeight,visible:document.visibilityState==='visible' && window.innerWidth>0 && window.innerHeight>0})",
+          returnByValue: true,
+        }, signal);
+        const point = origin.result?.value;
+        if (point?.visible && Number.isFinite(point.x) && Number.isFinite(point.y)) {
+          await this.#pointAt(point.x! + x, point.y! + y, signal);
+        }
+      } catch { /* Pointer feedback must never repeat or block a browser mutation. */ }
+    }
     await this.#command("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 }, signal);
     await this.#command("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 }, signal);
   }
