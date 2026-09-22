@@ -201,7 +201,7 @@ Computer now follows the retained Browse viewer pattern: an active browser shows
 
 A host-side control gate waits for the current atomic agent browser operation before granting one viewer the lease. Agent operations pause while the human owns it and resume when the viewer releases control. The viewer releases automatically when the browser window loses focus, the document is hidden, the Computer tab unmounts, or the one-minute lease expires. Multiple viewers remain read-only except for the single lease holder.
 
-Verification: `npm run typecheck`, 25 Vitest files / 155 tests, and the production build pass. Tests cover atomic handoff, competing viewers, lease expiry, CDP input ownership, UI takeover/release, and the existing Fortress fixture path.
+Verification: `npm run typecheck`, 25 Vitest files / 158 tests, and the production build pass. Tests cover atomic handoff, competing viewers, lease expiry, CDP input ownership, UI takeover/release, and the existing Fortress fixture path.
 
 ## Whole-computer viewer/runtime update (2026-09-22)
 
