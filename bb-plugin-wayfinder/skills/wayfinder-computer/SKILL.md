@@ -21,7 +21,7 @@ bb wayfinder doctor --machine <hostId>
 bb wayfinder setup --machine <hostId>
 ```
 
-`setup` installs the pinned supported Cua Driver when missing, writes Wayfinder's bounded capability manifest when it starts capture, requests macOS permissions, and runs the same end-to-end checks as `doctor`. It does not install GUI applications or a Linux desktop environment.
+`setup` installs the pinned supported Cua Driver when missing, writes Wayfinder's bounded capability manifest when it starts capture, requests macOS permissions for Cua Driver's stable identity, and runs the same end-to-end checks as `doctor`. It does not install GUI applications or a Linux desktop environment.
 
 Options:
 

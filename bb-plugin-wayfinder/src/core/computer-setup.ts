@@ -58,6 +58,26 @@ function probeDetail(probe: CuaDoctorProbe | undefined, fallback: string): strin
   return [probe.message, probe.detail].filter(Boolean).join(" ").slice(0, 1_000) || fallback;
 }
 
+function permissionSummary(stdout: string): string | null {
+  try {
+    const root = JSON.parse(stdout) as unknown;
+    const values: string[] = [];
+    const visit = (value: unknown, path: string, depth: number) => {
+      if (depth > 4 || values.length >= 12 || value === null) return;
+      if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
+        if (/accessibility|screen|capture|granted|status|attribution/iu.test(path)) values.push(`${path}=${String(value).slice(0, 100)}`);
+        return;
+      }
+      if (typeof value !== "object") return;
+      for (const [key, child] of Object.entries(value as Record<string, unknown>)) visit(child, path ? `${path}.${key}` : key, depth + 1);
+    };
+    visit(root, "", 0);
+    return values.length > 0 ? values.join(", ").slice(0, 800) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function inspectComputer(dataDir: string, signal: AbortSignal): Promise<ComputerDiagnostics> {
   const checkedAt = Date.now();
   const binary = await resolveCuaExecutable();
@@ -77,11 +97,13 @@ export async function inspectComputer(dataDir: string, signal: AbortSignal): Pro
     };
   }
 
-  const [versionResult, doctorResult, browser] = await Promise.all([
+  const [versionResult, doctorResult, permissionResult, browser] = await Promise.all([
     runCommand(binary, ["--version"], signal, 5_000).catch(() => ({ code: null, stdout: "", stderr: "" })),
     runCommand(binary, ["doctor", "--json"], signal, 10_000).catch(() => ({ code: null, stdout: "", stderr: "" })),
+    process.platform === "darwin" ? runCommand(binary, ["permissions", "status", "--json"], signal, 5_000).catch(() => ({ code: null, stdout: "", stderr: "" })) : Promise.resolve({ code: null, stdout: "", stderr: "" }),
     resolveFortressExecutable(),
   ]);
+  const permissions = permissionSummary(permissionResult.stdout);
   const version = versionResult.code === 0 ? versionResult.stdout.trim().slice(0, 100) || null : null;
   let probes: readonly CuaDoctorProbe[] = [];
   try {
@@ -105,7 +127,8 @@ export async function inspectComputer(dataDir: string, signal: AbortSignal): Pro
     const frame = await runtime.capture(signal);
     capture = { state: "ready", detail: "Whole-desktop screenshot capture succeeded.", latencyMs: Date.now() - started, width: frame.width, height: frame.height };
   } catch (error) {
-    capture = { state: "missing", detail: error instanceof Error ? error.message.slice(0, 1_000) : "Whole-desktop capture failed.", latencyMs: null, width: null, height: null };
+    const failure = error instanceof Error ? error.message : "Whole-desktop capture failed.";
+    capture = { state: "missing", detail: `${failure}${permissions === null ? "" : ` Permission status: ${permissions}`}`.slice(0, 1_000), latencyMs: null, width: null, height: null };
   }
   try {
     tree = await runtime.inspectAccessibility(signal);

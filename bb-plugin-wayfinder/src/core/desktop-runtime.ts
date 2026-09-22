@@ -19,6 +19,10 @@ const MANIFEST = JSON.stringify({
 const MAX_FRAME_BYTES = 1_100_000;
 const DESKTOP_TARGET = { kind: "desktop", display_id: "primary" } as const;
 
+export function cuaLaunchStrategy(platform: NodeJS.Platform): "launchservices" | "embedded" {
+  return platform === "darwin" ? "launchservices" : "embedded";
+}
+
 export interface DesktopFrame {
   readonly bytes: Buffer;
   readonly mimeType: "image/png" | "image/jpeg";
@@ -124,9 +128,16 @@ export class DesktopRuntime {
 
   async dispose(): Promise<void> {
     const child = this.#process;
+    const transport = this.#transport;
     this.#process = null;
     this.#transport = null;
+    if (transport !== null) await transport.close(AbortSignal.timeout(1_000)).catch(() => undefined);
     await this.#stopChild(child);
+    if (process.platform === "darwin" && this.#binary !== null && this.#socket !== "") {
+      const stopper = spawn(this.#binary, ["stop", "--socket", this.#socket], { stdio: "ignore", env: process.env });
+      await this.#waitForExit(stopper, 2_000);
+      if (stopper.exitCode === null && stopper.signalCode === null) stopper.kill("SIGKILL");
+    }
     await rm(this.#socket, { force: true }).catch(() => undefined);
   }
 
@@ -184,14 +195,22 @@ export class DesktopRuntime {
       await writeFile(manifest, MANIFEST, { mode: 0o600 });
       await chmod(manifest, 0o600).catch(() => undefined);
       await rm(this.#socket, { force: true }).catch(() => undefined);
-      this.#process = spawn(this.#binary, ["serve", "--embedded", "--socket", this.#socket, "--permission-mode", "bounded", "--capability-manifest", manifest, "--approve-capability-manifest", "--no-overlay"], { stdio: "ignore", env: process.env });
-      this.#process.once("exit", () => { this.#process = null; this.#transport = null; });
+      const serveArgs = ["serve", "--socket", this.#socket, "--permission-mode", "bounded", "--capability-manifest", manifest, "--approve-capability-manifest", "--no-overlay"];
+      if (cuaLaunchStrategy(process.platform) === "launchservices") {
+        // LaunchServices makes the signed CuaDriver.app, not BB's generic Node
+        // daemon, the macOS TCC owner shown in Privacy & Security.
+        const launcher = spawn("/usr/bin/open", ["-n", "-g", "-a", "CuaDriver", "--args", ...serveArgs], { stdio: "ignore", env: process.env });
+        if (!await this.#waitForExit(launcher, 5_000) || launcher.exitCode !== 0) throw new Error("CuaDriver.app could not be started through LaunchServices");
+      } else {
+        this.#process = spawn(this.#binary, [serveArgs[0]!, "--embedded", ...serveArgs.slice(1)], { stdio: "ignore", env: process.env });
+        this.#process.once("exit", () => { this.#process = null; this.#transport = null; });
+      }
       const deadline = Date.now() + 5_000;
       while (process.platform !== "win32" && Date.now() < deadline) {
         signal.throwIfAborted();
         try { await access(this.#socket); break; } catch { await new Promise((resolve) => setTimeout(resolve, 50)); }
       }
-      if (this.#process === null) throw new Error("Cua Driver stopped before desktop capture became ready");
+      if (process.platform !== "darwin" && this.#process === null) throw new Error("Cua Driver stopped before desktop capture became ready");
       this.#transport = new ProcessCuaTransport({ binaryPath: this.#binary, socketPath: this.#socket, session: `wayfinder-${process.pid}`, timeoutMs: 5_000, maxOutputBytes: 16_000_000 });
     })().finally(() => { this.#starting = null; });
     return this.#starting;
