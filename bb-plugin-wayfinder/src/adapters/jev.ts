@@ -107,8 +107,6 @@ export class JevDecisionProvider implements DecisionProvider {
   async #decide(rawRequest: DecisionRequest, context: AdapterExecutionContext): Promise<DecisionResponse> {
     const request = sanitizeDecisionRequest(rawRequest);
     const operationIds = new Set(request.operationChoices.map((choice) => choice.choiceId));
-    const targetGroups = Array.from({ length: Math.ceil(request.targetChoices.length / MAX_TYPESAFE_CHOICES) }, (_, index) =>
-      request.targetChoices.slice(index * MAX_TYPESAFE_CHOICES, (index + 1) * MAX_TYPESAFE_CHOICES));
     const state = {
       goal: request.goal,
       observation: request.observation,
@@ -116,46 +114,53 @@ export class JevDecisionProvider implements DecisionProvider {
       operation_choices: request.operationChoices,
       target_choices: request.targetChoices,
     };
-    const questions: Record<string, unknown> = {
+    const first = await this.#systemOne(state, {
       operation: {
         type: "choice",
         instructions: "Which supplied operation choice makes the most progress toward goal from observation? Select only a supplied ID; never generate an action or argument.",
         criteria: criteria(request.operationChoices),
       },
-    };
-    if (targetGroups.length === 1) {
-      questions.target = {
-        type: "choice",
-        instructions: "If the operation needs a target, which supplied target choice should it use? Select only a supplied ID.",
-        criteria: criteria(targetGroups[0]!),
-      };
-    } else if (targetGroups.length > 1) {
-      questions.target_group = {
-        type: "choice",
-        instructions: "Which supplied target group contains the target that best advances goal?",
-        criteria: Object.fromEntries(targetGroups.map((group, index) => [`group_${index}`, group.map((choice) => choice.label).slice(0, 12).join("; ")])),
-      };
-    }
-    const first = await this.#systemOne(state, questions, context.signal);
+    }, context.signal);
     const operation = parseChoice(first.answers.operation, operationIds, "operation");
     let target: ChoiceAnswer | null = null;
     let latencyMs = first.latencyMs;
-    if (targetGroups.length === 1) {
-      target = parseChoice(first.answers.target, new Set(targetGroups[0]!.map((choice) => choice.choiceId)), "target");
-    } else if (targetGroups.length > 1) {
-      const groupIds = new Set(targetGroups.map((_, index) => `group_${index}`));
-      const group = parseChoice(first.answers.target_group, groupIds, "target group");
-      const groupIndex = Number(group.choice.slice("group_".length));
-      const selected = targetGroups[groupIndex];
-      if (selected === undefined) throw wayfinderError("provider-unavailable", "decide", "Jev selected an unknown target group");
-      const second = await this.#systemOne(
-        { ...state, target_choices: selected },
-        { target: { type: "choice", instructions: "Which supplied target choice best advances goal? Select only a supplied ID.", criteria: criteria(selected) } },
+    const targetOperation = operation.choice.endsWith("_click") ? "click"
+      : operation.choice.endsWith("_type") ? "type"
+      : operation.choice.endsWith("_select") ? "select"
+      : operation.choice.endsWith("_scroll") ? "scroll"
+      : operation.choice.endsWith("_activate") ? "activate"
+      : operation.choice.endsWith("_invoke_menu") ? "invoke-menu"
+      : null;
+    if (targetOperation !== null) {
+      const eligibleTargetIds = new Set(request.observation.targets
+        .filter((candidate) => candidate.allowedOperations.includes(targetOperation))
+        .map((candidate) => `target_${candidate.targetId}`));
+      const eligibleTargets = request.targetChoices.filter((choice) => eligibleTargetIds.has(choice.choiceId));
+      if (eligibleTargets.length === 0) throw wayfinderError("provider-unavailable", "decide", "Jev selected an operation with no compatible bounded target");
+      const groups = Array.from({ length: Math.ceil(eligibleTargets.length / MAX_TYPESAFE_CHOICES) }, (_, index) =>
+        eligibleTargets.slice(index * MAX_TYPESAFE_CHOICES, (index + 1) * MAX_TYPESAFE_CHOICES));
+      let selected = groups[0]!;
+      let groupConfidence = 1;
+      if (groups.length > 1) {
+        const groupIds = new Set(groups.map((_, index) => `group_${index}`));
+        const groupResult = await this.#systemOne(
+          { ...state, target_choices: eligibleTargets },
+          { target_group: { type: "choice", instructions: "Which supplied target group contains the target that best advances goal?", criteria: Object.fromEntries(groups.map((group, index) => [`group_${index}`, group.map((choice) => choice.label).slice(0, 12).join("; ")])) } },
+          context.signal,
+        );
+        const group = parseChoice(groupResult.answers.target_group, groupIds, "target group");
+        selected = groups[Number(group.choice.slice("group_".length))] ?? selected;
+        groupConfidence = group.confidence;
+        latencyMs += groupResult.latencyMs;
+      }
+      const targetResult = await this.#systemOne(
+        { ...state, selected_operation: operation.choice, target_choices: selected },
+        { target: { type: "choice", instructions: "For the selected operation, which compatible supplied target best advances goal? Select only a supplied ID.", criteria: criteria(selected) } },
         context.signal,
       );
-      target = parseChoice(second.answers.target, new Set(selected.map((choice) => choice.choiceId)), "target");
-      latencyMs += second.latencyMs;
-      target = { ...target, confidence: Math.min(group.confidence, target.confidence) };
+      target = parseChoice(targetResult.answers.target, new Set(selected.map((choice) => choice.choiceId)), "target");
+      target = { ...target, confidence: Math.min(groupConfidence, target.confidence) };
+      latencyMs += targetResult.latencyMs;
     }
     return decisionResponseSchema.parse({
       operationChoiceId: operation.choice,

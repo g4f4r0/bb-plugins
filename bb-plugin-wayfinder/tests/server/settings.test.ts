@@ -84,14 +84,13 @@ describe("Wayfinder settings", () => {
     });
     plugin(bb, { infisicalClient: fakeInfisicalClient() });
     try {
-      await harness.callRpc("settings.selectHost", { hostId: "host_b" });
       await harness.callAgentTool("wayfinder_start", { idempotencyKey: "thread-default", route: makeRoute() }, { threadId: "thr_owner" });
       const start = harness.inspection.experimental_hostRpcCalls.find((entry) => entry.method === "runs.start");
       expect((start?.input as { expectedHostId: string }).expectedHostId).toBe("host_a");
     } finally { await harness.lifecycle.dispose(); }
   });
 
-  it("uses the configured fallback for portable browser work only when hostSelection is any", async () => {
+  it("tries another connected host for portable browser work only when hostSelection is any", async () => {
     const { bb, harness } = createFakePluginHost({
       pluginId: "wayfinder",
       sdk: {
@@ -109,7 +108,6 @@ describe("Wayfinder settings", () => {
     });
     plugin(bb, { infisicalClient: fakeInfisicalClient() });
     try {
-      await harness.callRpc("settings.selectHost", { hostId: "host_b" });
       const route = { ...makeRoute(), hostSelection: "any", desktop: { applications: [] }, filesystem: { roots: [] }, allowedActions: ["browser.navigate", "browser.click"] };
       await harness.callAgentTool("wayfinder_start", { idempotencyKey: "portable-fallback", route }, { threadId: "thr_owner" });
       const start = harness.inspection.experimental_hostRpcCalls.find((entry) => entry.method === "runs.start");
@@ -130,7 +128,6 @@ describe("Wayfinder settings", () => {
     });
     plugin(bb, { infisicalClient: fakeInfisicalClient() });
     try {
-      await harness.callRpc("settings.selectHost", { hostId: "host_b" });
       await harness.callAgentTool("wayfinder_start", { idempotencyKey: "pinned-build", route: { ...makeRoute(), hostSelection: "any" } }, { threadId: "thr_owner" });
       const start = harness.inspection.experimental_hostRpcCalls.find((entry) => entry.method === "runs.start");
       expect((start?.input as { expectedHostId: string }).expectedHostId).toBe("host_a");
@@ -146,52 +143,14 @@ describe("Wayfinder settings", () => {
     await harness.lifecycle.dispose();
   });
 
-  it("declares no raw hostId setting; the host comes from a settingsSection backed by real host discovery", async () => {
+  it("keeps computer selection out of durable settings", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "wayfinder", sdk: { hosts: { list: async () => [HOST_A] } } });
     await plugin(bb, { infisicalClient: fakeInfisicalClient() });
     expect(harness.inspection.registrations.settingsDescriptors).toEqual({});
-    expect(harness.inspection.registrations.rpcMethods).toContain("settings.hosts");
     expect(harness.inspection.registrations.rpcMethods).toContain("settings.get");
-    expect(harness.inspection.registrations.rpcMethods).toContain("settings.selectHost");
     expect(harness.inspection.registrations.rpcMethods).toContain("settings.saveProvider");
-    await harness.lifecycle.dispose();
-  });
-
-  it("lists enrolled hosts with friendly name and connection state", async () => {
-    const { bb, harness } = createFakePluginHost({ pluginId: "wayfinder", sdk: { hosts: { list: async () => [HOST_A, HOST_B_DISCONNECTED] } } });
-    await plugin(bb, { infisicalClient: fakeInfisicalClient() });
-    const hosts = await harness.behavior.callRpc("settings.hosts", {});
-    expect(hosts).toEqual([
-      { hostId: "host_a", name: "Shared computer", status: "connected", phase: "active", os: null, arch: null, browserState: null, desktopState: null, providerState: null },
-      { hostId: "host_b", name: "Old laptop", status: "disconnected", phase: "suspended", os: null, arch: null, browserState: null, desktopState: null, providerState: null },
-    ]);
-    await harness.lifecycle.dispose();
-  });
-
-  it("rejects selecting a host that is not enrolled", async () => {
-    const { bb, harness } = createFakePluginHost({ pluginId: "wayfinder", sdk: { hosts: { list: async () => [HOST_A] } } });
-    await plugin(bb, { infisicalClient: fakeInfisicalClient() });
-    await expect(harness.behavior.callRpc("settings.selectHost", { hostId: "host_unknown" })).rejects.toThrow(/not enrolled/iu);
-    await harness.lifecycle.dispose();
-  });
-
-  it("persists a valid host selection and returns it from settings.get", async () => {
-    const { bb, harness } = createFakePluginHost({ pluginId: "wayfinder", sdk: { hosts: { list: async () => [HOST_A] } } });
-    await plugin(bb, { infisicalClient: fakeInfisicalClient() });
-    const after = await harness.behavior.callRpc("settings.selectHost", { hostId: "host_a" });
-    expect((after as { selectedHostId: string | null }).selectedHostId).toBe("host_a");
-    const state = await harness.behavior.callRpc("settings.get", {});
-    expect((state as { selectedHostId: string | null }).selectedHostId).toBe("host_a");
-    await harness.lifecycle.dispose();
-  });
-
-  it("clears a stale selection once its host is no longer enrolled, without auto-switching to another host", async () => {
-    const { bb, harness } = createFakePluginHost({ pluginId: "wayfinder", sdk: { hosts: { list: async () => [HOST_A] } } });
-    await plugin(bb, { infisicalClient: fakeInfisicalClient() });
-    await harness.behavior.callRpc("settings.selectHost", { hostId: "host_a" });
-    harness.sdk.stub("hosts.list", async () => [HOST_B_DISCONNECTED]);
-    const state = await harness.behavior.callRpc("settings.get", {}) as { selectedHostId: string | null };
-    expect(state.selectedHostId).toBeNull();
+    expect(harness.inspection.registrations.rpcMethods).not.toContain("settings.selectHost");
+    expect(await harness.behavior.callRpc("settings.get", {})).not.toHaveProperty("selectedHostId");
     await harness.lifecycle.dispose();
   });
 
@@ -205,18 +164,18 @@ describe("Wayfinder settings", () => {
     await harness.lifecycle.dispose();
   });
 
-  it("saves computer, TypeSafe provider, fixed Jev model, and key through one endpoint", async () => {
+  it("saves the TypeSafe provider, fixed Jev model, and key through one endpoint", async () => {
     const client = fakeInfisicalClient();
     const { bb, harness } = createFakePluginHost({ pluginId: "wayfinder", sdk: { hosts: { list: async () => [HOST_A] } } });
     plugin(bb, { infisicalClient: client });
     const response = await harness.fetchHttp("POST", "/settings/save", {
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hostId: "host_a", provider: "jev", key: "synthetic-only" }),
+      body: JSON.stringify({ provider: "jev", key: "synthetic-only" }),
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true, message: "Settings saved." });
     expect(client.secrets.TYPESAFE_API_KEY).toBe("synthetic-only");
-    expect(await harness.callRpc("settings.get", {})).toMatchObject({ selectedHostId: "host_a", provider: "jev", model: "jev-latest", keyStatus: "configured" });
+    expect(await harness.callRpc("settings.get", {})).toMatchObject({ provider: "jev", model: "jev-latest", keyStatus: "configured" });
     await harness.lifecycle.dispose();
   });
 
@@ -225,7 +184,7 @@ describe("Wayfinder settings", () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "wayfinder", sdk: { hosts: { list: async () => [HOST_A] } } });
     plugin(bb, { infisicalClient: client });
     const response = await harness.fetchHttp("POST", "/settings/save", {
-      headers: { "content-type": "application/json" }, body: JSON.stringify({ hostId: "host_a", provider: "openrouter" }),
+      headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: "openrouter" }),
     });
     expect(response.status).toBe(200);
     expect(await harness.callRpc("settings.get", {})).toMatchObject({ provider: "openrouter", model: "~typesafe/jev-latest", keyStatus: "configured" });

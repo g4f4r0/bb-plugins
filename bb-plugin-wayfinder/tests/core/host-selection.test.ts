@@ -19,8 +19,8 @@ describe("host selection", () => {
     expect(isPortableBrowserRoute(route)).toBe(true);
   });
 
-  it("orders thread, fallback, then stable remaining hosts without duplicates", () => {
-    expect(orderedHostCandidates("host_thread", "host_fallback", ["host_z", "host_thread", "host_a"]))
-      .toEqual(["host_thread", "host_fallback", "host_a", "host_z"]);
+  it("orders the thread computer before stable remaining hosts without duplicates", () => {
+    expect(orderedHostCandidates("host_thread", ["host_z", "host_thread", "host_a"]))
+      .toEqual(["host_thread", "host_a", "host_z"]);
   });
 });

@@ -39,6 +39,7 @@ function actionKind(adapter: AdapterObservation["identity"]["adapter"], operatio
 
 export class ObservedActionCatalog implements ActionCatalog {
   readonly #options: ObservedActionCatalogOptions;
+  readonly #usedDataBindings = new Set<string>();
 
   constructor(options: ObservedActionCatalogOptions = {}) { this.#options = options; }
 
@@ -48,7 +49,7 @@ export class ObservedActionCatalog implements ActionCatalog {
       for (const operation of target.allowedOperations) {
         const kind = actionKind(observation.identity.adapter, operation);
         if (kind !== null && route.allowedActions.includes(kind)) {
-          if (kind.endsWith(".type") && !this.#options.dataBindings?.has(target.targetId)) continue;
+          if (kind.endsWith(".type") && this.#dataBinding(route, target) === undefined) continue;
           kinds.add(kind);
         }
       }
@@ -99,13 +100,15 @@ export class ObservedActionCatalog implements ActionCatalog {
       case "browser.click": return { kind, target: reference };
       case "desktop.click": return { kind, target: reference };
       case "browser.type": {
-        const value = this.#options.dataBindings?.get(target.targetId);
+        const value = this.#dataBinding(route, target);
         if (value === undefined) throw wayfinderError("policy-denied", "decide", "No trusted data binding exists for the chosen target");
+        this.#usedDataBindings.add(target.targetId);
         return { kind, target: reference, value };
       }
       case "desktop.type": {
-        const value = this.#options.dataBindings?.get(target.targetId);
+        const value = this.#dataBinding(route, target);
         if (value === undefined) throw wayfinderError("policy-denied", "decide", "No trusted data binding exists for the chosen target");
+        this.#usedDataBindings.add(target.targetId);
         return { kind, target: reference, value };
       }
       case "browser.scroll": return { kind, target: reference, direction: "down", amount: "small" };
@@ -113,5 +116,21 @@ export class ObservedActionCatalog implements ActionCatalog {
       case "desktop.invoke-menu": return { kind, target: reference };
       default: throw wayfinderError("setup-required", "decide", `No trusted builder exists for ${kind}`);
     }
+  }
+
+  #dataBinding(route: WayfinderRoute, target: AdapterObservation["targets"][number]): DataReference | undefined {
+    if (this.#usedDataBindings.has(target.targetId)) return undefined;
+    const configured = this.#options.dataBindings?.get(target.targetId);
+    if (configured !== undefined) return configured;
+    const normalize = (value: string) => value.trim().toLocaleLowerCase();
+    const matches = (actual: string, expected: string, match: "exact" | "contains") => match === "exact"
+      ? normalize(actual) === normalize(expected)
+      : normalize(actual).includes(normalize(expected));
+    for (const checkpoint of route.checkpoints) {
+      if (checkpoint.kind !== "field-value" || checkpoint.target.surface !== "browser" || checkpoint.expected.kind !== "synthetic-literal") continue;
+      if (!matches(target.role, checkpoint.target.role, checkpoint.target.match) || !matches(target.name, checkpoint.target.name, checkpoint.target.match)) continue;
+      return checkpoint.expected;
+    }
+    return undefined;
   }
 }

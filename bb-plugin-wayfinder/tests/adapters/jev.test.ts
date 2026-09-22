@@ -18,9 +18,9 @@ describe("JevDecisionProvider", () => {
   });
 
   it("uses typed System One choice questions and returns distributions", async () => {
-    let requestBody: { questions?: Record<string, { type?: string }> } = {};
+    const requestBodies: Array<{ questions?: Record<string, { type?: string }> }> = [];
     const fetchImpl = async (_input: string | URL | Request, init?: RequestInit) => {
-      requestBody = JSON.parse(String(init?.body)) as typeof requestBody;
+      requestBodies.push(JSON.parse(String(init?.body)) as (typeof requestBodies)[number]);
       return new Response(JSON.stringify({ answers: {
         operation: { choice: "op_browser_click", probabilities: { op_browser_click: 1 }, confidence: 1 },
         target: { choice: "target_create", probabilities: { target_create: 1 }, confidence: 0.91 },
@@ -34,7 +34,8 @@ describe("JevDecisionProvider", () => {
       operationChoices: [{ choiceId: "op_browser_click", label: "browser.click" }], targetChoices: [{ choiceId: "target_create", targetId: "create", label: "Create" }], recentOutcomeSummaries: [],
     }, { signal: new AbortController().signal, expectedHostId: "host_test" }));
     expect(decision.targetChoiceId).toBe("target_create");
-    expect(requestBody.questions?.operation?.type).toBe("choice");
-    expect(JSON.stringify(requestBody)).not.toContain("messages");
+    expect(requestBodies[0]?.questions?.operation?.type).toBe("choice");
+    expect(requestBodies[1]?.questions?.target?.type).toBe("choice");
+    expect(JSON.stringify(requestBodies)).not.toContain("messages");
   });
 });

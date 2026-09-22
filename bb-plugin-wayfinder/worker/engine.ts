@@ -72,7 +72,7 @@ export class RunEngine {
   constructor(options: RunEngineOptions) {
     this.#options = {
       ...options,
-      minDecisionConfidence: options.minDecisionConfidence ?? 0.5,
+      minDecisionConfidence: options.minDecisionConfidence ?? 0.35,
       closeAdaptersOnFinish: options.closeAdaptersOnFinish ?? true,
       now: options.now ?? Date.now,
     };
@@ -156,7 +156,7 @@ export class RunEngine {
         }
         if (decision.confidence !== null && decision.confidence < this.#options.minDecisionConfidence) {
           return this.#result(input.runId, "blocked", [...results.values()], actions, decisions,
-            wayfinderError("ambiguous-target", "decide", "Jev confidence is below the configured execution threshold"), cleanup);
+            wayfinderError("ambiguous-target", "decide", "Jev confidence is below the configured execution threshold", { details: [{ key: "confidence", value: decision.confidence.toFixed(3) }] }), cleanup);
         }
         if (++actions > route.limits.maxActions) {
           return this.#result(input.runId, "failed", [...results.values()], actions, decisions, wayfinderError("limit-exceeded", "act", "Action limit exceeded"), cleanup);

@@ -230,7 +230,7 @@ export class BrowserAdapter implements AutomationAdapter {
         resourceGeneration: this.#generation,
         role,
         name,
-        valueSummary: rawValue.length === 0 || isSensitiveLabel(name) || this.#protectedTargetIds.has(targetId) ? null : bounded(rawValue, 500),
+        valueSummary: rawValue.length === 0 || this.#protectedTargetIds.has(targetId) ? null : isSensitiveLabel(name) ? `[redacted:${rawValue.length}]` : bounded(rawValue, 500),
         bounds: null,
         allowedOperations: [...new Set(operations)],
       });
@@ -271,13 +271,13 @@ export class BrowserAdapter implements AutomationAdapter {
     try {
       const action = intent.action;
       if (["browser.click", "browser.type", "browser.select", "browser.download"].includes(action.kind)) {
-        let origin: string | null = null;
-        try { origin = current.location === null ? null : new URL(current.location).origin; } catch { /* denied below */ }
-        const fixture = origin !== null && this.#route.browser.navigationOrigins.some((entry) => {
+        if (current.location === null) throw wayfinderError("policy-denied", "act", "Browser mutation requires a visible approved page");
+        const currentUrl = new URL(current.location);
+        const ownedFixture = this.#route.browser.navigationOrigins.some((entry) => {
           if (entry.purpose !== "fixture") return false;
-          try { const expected = new URL(entry.origin); const actual = new URL(origin); return expected.origin === actual.origin || (expected.hostname === "127.0.0.1" && actual.hostname === "127.0.0.1"); } catch { return false; }
+          try { const expected = new URL(entry.origin); return expected.hostname === "127.0.0.1" && currentUrl.hostname === "127.0.0.1"; } catch { return false; }
         });
-        if (!fixture) throw wayfinderError("policy-denied", "act", "Browser mutations are limited to explicitly classified fixture origins in v1");
+        if (!ownedFixture) await assertResolvedUrlAllowed(this.#route, current.location, "navigation");
       }
       switch (action.kind) {
         case "browser.navigate":
@@ -361,6 +361,7 @@ export class BrowserAdapter implements AutomationAdapter {
 
   async #click(targetId: string, signal: AbortSignal): Promise<void> {
     const binding = this.#binding(targetId);
+    await this.#command("DOM.scrollIntoViewIfNeeded", { backendNodeId: binding.backendNodeId }, signal);
     const model = await this.#command<{ model?: { content?: number[]; border?: number[] } }>("DOM.getBoxModel", { backendNodeId: binding.backendNodeId }, signal);
     const quad = model.model?.content ?? model.model?.border;
     if (!Array.isArray(quad) || quad.length < 8) throw wayfinderError("ambiguous-target", "act", "Browser target has no usable geometry");

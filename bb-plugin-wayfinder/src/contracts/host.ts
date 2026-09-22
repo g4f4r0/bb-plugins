@@ -90,19 +90,23 @@ export const hostContract = defineRpcContract({
     output: z.object({ accepted: z.boolean(), run: runRecordSchema }).strict(),
   },
   "desktop.capture": {
-    input: z.object({ expectedHostId: entityIdSchema }).strict(),
+    input: z.object({ expectedHostId: entityIdSchema, clientId: entityIdSchema }).strict(),
     output: z.object({ frame: z.object({ bytesBase64: base64Schema, mimeType: z.enum(["image/png", "image/jpeg"]), width: z.number().int().positive().max(4_096), height: z.number().int().positive().max(4_096), capturedAt: unixMsSchema }).strict() }).strict(),
   },
+  "desktop.disconnect": {
+    input: z.object({ expectedHostId: entityIdSchema, clientId: entityIdSchema }).strict(),
+    output: z.object({ disconnected: z.boolean() }).strict(),
+  },
   "computer.control.acquire": {
-    input: z.object({ expectedHostId: entityIdSchema, runId: entityIdSchema, clientId: entityIdSchema }).strict(),
+    input: z.object({ expectedHostId: entityIdSchema, runId: entityIdSchema.nullable(), clientId: entityIdSchema }).strict(),
     output: z.object({ state: z.enum(["human", "busy"]) }).strict(),
   },
   "computer.control.release": {
-    input: z.object({ expectedHostId: entityIdSchema, runId: entityIdSchema, clientId: entityIdSchema }).strict(),
+    input: z.object({ expectedHostId: entityIdSchema, runId: entityIdSchema.nullable(), clientId: entityIdSchema }).strict(),
     output: z.object({ released: z.boolean() }).strict(),
   },
   "computer.control.input": {
-    input: z.object({ expectedHostId: entityIdSchema, runId: entityIdSchema, clientId: entityIdSchema, input: humanInputSchema }).strict(),
+    input: z.object({ expectedHostId: entityIdSchema, runId: entityIdSchema.nullable(), clientId: entityIdSchema, input: humanInputSchema }).strict(),
     output: z.object({ accepted: z.literal(true) }).strict(),
   },
   "media.latest": {

@@ -19,7 +19,7 @@ export function isPortableBrowserRoute(route: WayfinderRoute): boolean {
 }
 
 /** Stable preference order: thread host, explicit fallback, then other connected hosts. */
-export function orderedHostCandidates(threadHostId: string, fallbackHostId: string | null, connectedHostIds: readonly string[]): string[] {
-  const candidates = [threadHostId, fallbackHostId, ...[...connectedHostIds].sort()].filter((value): value is string => value !== null);
+export function orderedHostCandidates(threadHostId: string, connectedHostIds: readonly string[]): string[] {
+  const candidates = [threadHostId, ...[...connectedHostIds].sort()];
   return [...new Set(candidates)];
 }

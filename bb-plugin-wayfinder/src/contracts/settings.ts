@@ -1,60 +1,22 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-import { entityIdSchema } from "./primitives.js";
-
 export const providerIdSchema = z.enum(["jev", "openrouter"]);
 export type ProviderId = z.infer<typeof providerIdSchema>;
-
-export const hostSummarySchema = z
-  .object({
-    hostId: entityIdSchema,
-    name: z.string(),
-    status: z.enum(["connected", "disconnected"]),
-    phase: z.string(),
-    os: z.string().nullable(),
-    arch: z.string().nullable(),
-    browserState: z.enum(["ready", "setup-required", "unavailable"]).nullable(),
-    desktopState: z.enum(["ready", "setup-required", "unavailable"]).nullable(),
-    providerState: z.enum(["ready", "setup-required", "unavailable"]).nullable(),
-  })
-  .strict();
-export type HostSummary = z.infer<typeof hostSummarySchema>;
 
 /** Never carries a key value — only whether one currently resolves at the verified scope. */
 export const keyStatusSchema = z.enum(["configured", "missing", "unknown"]);
 
-export const wayfinderSettingsStateSchema = z
-  .object({
-    selectedHostId: entityIdSchema.nullable(),
-    provider: providerIdSchema,
-    model: z.string(),
-    keyStatus: keyStatusSchema,
-    lastTest: z
-      .object({ ok: z.boolean(), message: z.string(), testedAt: z.number() })
-      .strict()
-      .nullable(),
-  })
-  .strict();
+export const wayfinderSettingsStateSchema = z.object({
+  provider: providerIdSchema,
+  model: z.string(),
+  keyStatus: keyStatusSchema,
+  lastTest: z.object({ ok: z.boolean(), message: z.string(), testedAt: z.number() }).strict().nullable(),
+}).strict();
 export type WayfinderSettingsState = z.infer<typeof wayfinderSettingsStateSchema>;
 
 export const wayfinderSettingsRpcContract = defineRpcContract({
-  "settings.hosts": {
-    input: z.object({}).strict(),
-    output: z.array(hostSummarySchema).max(200),
-  },
-  "settings.get": {
-    input: z.object({}).strict(),
-    output: wayfinderSettingsStateSchema,
-  },
-  "settings.hostForThread": {
-    input: z.object({ threadId: entityIdSchema }).strict(),
-    output: z.object({ hostId: entityIdSchema.nullable(), source: z.enum(["thread", "fallback", "none"]) }).strict(),
-  },
-  "settings.selectHost": {
-    input: z.object({ hostId: entityIdSchema.nullable() }).strict(),
-    output: wayfinderSettingsStateSchema,
-  },
+  "settings.get": { input: z.object({}).strict(), output: wayfinderSettingsStateSchema },
   "settings.saveProvider": {
     input: z.object({ provider: providerIdSchema, model: z.string().min(1).max(200) }).strict(),
     output: wayfinderSettingsStateSchema,

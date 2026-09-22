@@ -67,10 +67,14 @@ export function createInfisicalClient(bin = "infisical", timeoutMs = DEFAULT_TIM
   async function resolveSecret(scope: InfisicalScope, name: string): Promise<string | null> {
     const script = `process.stdout.write(process.env[${JSON.stringify(name)}] ?? "")`;
     const args = ["run", ...scopeArgs(scope), "--", "node", "-e", script];
-    const { code, stdout } = await runCli(bin, args, { captureStdout: true, timeoutMs });
-    if (code !== 0) return null;
-    const value = stdout.toString("utf8").trim();
-    return value.length > 0 ? value : null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const { code, stdout } = await runCli(bin, args, { captureStdout: true, timeoutMs });
+      if (code === 0) {
+        const value = stdout.toString("utf8").trim();
+        if (value.length > 0) return value;
+      }
+    }
+    return null;
   }
 
   return {

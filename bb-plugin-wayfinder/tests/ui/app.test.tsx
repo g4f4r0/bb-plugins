@@ -213,122 +213,64 @@ describe("inline artifact card", () => {
 });
 
 describe("Computer panel", () => {
-  it("shows only a centered spinner while settings load", () => {
-    const slot = renderSlot(panel, { threadId: "thr_a", params: null }, {
-      rpc: { "settings.get": () => new Promise(() => {}) } as never,
-    });
-    const loading = slot.getByRole("status", { name: "Loading computer" });
-    expect(loading.className).toContain("h-full");
-    expect(loading.className).toContain("items-center");
-    expect(loading.className).toContain("justify-center");
-    expect(loading.textContent).toBe("");
-    expect(loading.querySelector(".animate-spin")).not.toBeNull();
+  const machines = { threadHostId: "host_thread", machines: [
+    { hostId: "host_thread", name: "Thread Mac", status: "connected" as const, phase: "active" },
+    { hostId: "host_offline", name: "Old laptop", status: "disconnected" as const, phase: "suspended" },
+  ] };
+  const snapshot = { hostId: "host_thread", readiness: "ready", readinessMessage: null, activeRun: null, queue: [], selectedRun: null, connectionState: "connected", frameSequence: null, frameCapturedAt: null, sampledAt: Date.now() };
+  const preview = { frame: { base64: "YWJj", mimeType: "image/png", width: 1280, height: 720, capturedAt: Date.now() }, state: "ready", message: null };
+
+  it("shows a recent-tabs-style skeleton while computers load", () => {
+    const slot = renderSlot(panel, { threadId: "thr_a", params: null }, { rpc: { "computer.machines": () => new Promise(() => {}) } as never });
+    expect(slot.getByRole("status", { name: "Loading computers" })).toBeDefined();
+    expect(slot.getByText("Computers")).toBeDefined();
     slot.lifecycle.unmount();
   });
 
-  it("shows setup required instead of a fake view when no host is selected", async () => {
-    const slot = renderSlot(panel, { threadId: "thr_a", params: null }, { rpc: {} });
-    await slot.findByRole("heading", { name: "Setup required" });
-    const notice = slot.getByRole("status");
-    expect(notice.className).toContain("h-full");
-    expect(notice.className).toContain("items-center");
-    expect(notice.className).toContain("justify-center");
-    expect(notice.querySelector("button")).toBeNull();
-    expect(notice.querySelector('[aria-hidden="true"]')).not.toBeNull();
-    expect(slot.inspection.rpcCalls).toEqual(expect.arrayContaining([
-      { method: "settings.hostForThread", input: { threadId: "thr_a" } },
-      { method: "settings.get", input: {} },
-    ]));
-  });
-
-  it("keeps the Computer panel viewport-first with compact status overlays", async () => {
-    const slot = renderSlot<PluginThreadPanelProps, UiRpcContract>(
-      panel,
-      { threadId: "thr_a", params: { runId: "run_old" } },
-      {
-        rpc: {
-          "settings.hostForThread": () => ({ hostId: "host_thread", source: "thread" }),
-          "settings.get": () =>
-            ({
-              selectedHostId: "host_1",
-              provider: "openrouter",
-              model: "openai/test",
-              keyStatus: "unknown",
-              lastTest: null,
-            }) as never,
-          "computer.snapshot": () =>
-            ({
-              hostId: "host_thread",
-              readiness: "setup-required",
-              readinessMessage: "Fortress browser lease unavailable",
-              activeRun: null,
-              queue: [{ runId: "run_q", threadId: "thr_q", position: 1, enqueuedAt: 1 }],
-              selectedRun: null,
-              connectionState: "connected",
-              frameSequence: null,
-              frameCapturedAt: null,
-              sampledAt: 10,
-            }) as never,
-          "computer.preview": () => ({ frame: { base64: "YWJj", mimeType: "image/png", width: 1280, height: 720, capturedAt: Date.now() }, state: "ready", message: null }),
-        } as never,
-      },
-    );
-    await slot.findByRole("img", { name: "Live view of the controlled desktop" });
-    expect(slot.getByText("Connected")).toBeDefined();
-    expect(slot.getByText("1 queued")).toBeDefined();
-    expect(slot.getByText("Selected run is not controlling the computer.")).toBeDefined();
-    expect(slot.queryByText("Current controller")).toBeNull();
-    expect(slot.queryByText("Queue (1)")).toBeNull();
-    expect(slot.inspection.rpcCalls).toContainEqual({ method: "computer.snapshot", input: { hostId: "host_thread", selectedRunId: "run_old" } });
-    expect(slot.inspection.navigateCalls).toEqual([]);
+  it("lists the thread computer first and disables offline computers", async () => {
+    const slot = renderSlot(panel, { threadId: "thr_a", params: null }, { rpc: { "computer.machines": () => machines } as never });
+    await slot.findByRole("heading", { name: "Thread computer" });
+    expect((slot.getByRole("button", { name: /Thread Mac/ }) as HTMLButtonElement).disabled).toBe(false);
+    expect((slot.getByRole("button", { name: /Old laptop/ }) as HTMLButtonElement).disabled).toBe(true);
     slot.lifecycle.unmount();
   });
 
-  it("shows the whole desktop rather than a browser-only or idle view", async () => {
-    const slot = renderSlot<PluginThreadPanelProps, UiRpcContract>(panel, { threadId: "thr_a", params: null }, {
-      rpc: {
-        "settings.hostForThread": () => ({ hostId: "host_mac", source: "thread" }),
-        "settings.get": () => ({ selectedHostId: null, provider: "openrouter", model: "jev", keyStatus: "configured", lastTest: null }),
-        "settings.hosts": () => [{ hostId: "host_mac", name: "Studio Mac", status: "connected", phase: "active", os: "darwin", arch: "arm64", browserState: "ready", desktopState: "ready", providerState: "ready" }],
-        "computer.snapshot": () => ({ hostId: "host_mac", readiness: "ready", readinessMessage: null, activeRun: null, queue: [], selectedRun: null, connectionState: "connected", frameSequence: null, frameCapturedAt: null, sampledAt: Date.now() }),
-        "computer.preview": () => ({ frame: { base64: "YWJj", mimeType: "image/png", width: 1280, height: 800, capturedAt: Date.now() }, state: "ready", message: null }),
-      } as never,
-    });
+  it("opens a selected whole desktop inside the padded rounded viewport", async () => {
+    const slot = renderSlot<PluginThreadPanelProps, UiRpcContract>(panel, { threadId: "thr_a", params: { hostId: "host_thread" } }, { rpc: {
+      "computer.machines": () => machines,
+      "computer.snapshot": () => snapshot,
+      "computer.preview": () => preview,
+      "computer.disconnect": () => ({ disconnected: true }),
+      "computer.control.release": () => ({ released: false }),
+    } as never });
     const image = await slot.findByRole("img", { name: "Live view of the controlled desktop" }) as HTMLImageElement;
     expect(image.src).toBe("data:image/png;base64,YWJj");
-    expect(slot.queryByText("Computer is idle")).toBeNull();
-    expect(slot.getByLabelText("Computer host").textContent).toContain("Studio Mac");
+    expect(image.closest("main")?.className).toContain("p-3");
+    expect(image.parentElement?.parentElement?.className).toContain("rounded-md");
+    expect(slot.getByLabelText("Computer host").textContent).toContain("Thread Mac");
     slot.lifecycle.unmount();
   });
 
-  it("takes human control and gives it back to the agent when the window loses focus", async () => {
-    const slot = renderSlot<PluginThreadPanelProps, UiRpcContract>(panel, { threadId: "thr_a", params: null }, {
-      rpc: {
-        "settings.hostForThread": () => ({ hostId: "host_thread", source: "thread" }),
-        "settings.get": () => ({ selectedHostId: null, provider: "openrouter", model: "jev", keyStatus: "configured", lastTest: null }),
-        "settings.hosts": () => [{ hostId: "host_thread", name: "Studio Mac", status: "connected", phase: "active", os: "darwin", arch: "arm64", browserState: "ready", desktopState: "ready", providerState: "ready" }],
-        "computer.snapshot": () => ({
-          hostId: "host_thread", readiness: "ready", readinessMessage: null,
-          activeRun: { runId: "run_live", state: "running", route: { goal: "Check the storefront" }, activeController: true },
-          queue: [], selectedRun: null, connectionState: "connected", frameSequence: 1, frameCapturedAt: Date.now(), sampledAt: Date.now(),
-        }),
-        "computer.preview": () => ({ frame: { base64: "YWJj", mimeType: "image/png", width: 1280, height: 720, capturedAt: Date.now() }, state: "ready", message: null }),
-        "computer.control.acquire": () => ({ state: "human" }),
-        "computer.control.release": () => ({ released: true }),
-        "computer.control.input": () => ({ accepted: true }),
-      } as never,
-    });
+  it("allows control without an active run and disconnects immediately on blur", async () => {
+    const slot = renderSlot<PluginThreadPanelProps, UiRpcContract>(panel, { threadId: "thr_a", params: { hostId: "host_thread" } }, { rpc: {
+      "computer.machines": () => machines,
+      "computer.snapshot": () => snapshot,
+      "computer.preview": () => preview,
+      "computer.control.acquire": () => ({ state: "human" }),
+      "computer.control.release": () => ({ released: true }),
+      "computer.control.input": () => ({ accepted: true }),
+      "computer.disconnect": () => ({ disconnected: true }),
+    } as never });
     fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
     await slot.findByText("You’re controlling");
-    expect(slot.getByLabelText("Computer host").textContent).toContain("Studio Mac");
     const desktop = slot.getByLabelText("Live computer; click, type, paste, or scroll") as HTMLImageElement;
     Object.defineProperty(desktop, "naturalWidth", { value: 1280 });
     Object.defineProperty(desktop, "naturalHeight", { value: 720 });
     desktop.getBoundingClientRect = () => ({ x: 0, y: 0, left: 0, top: 0, right: 640, bottom: 360, width: 640, height: 360, toJSON: () => ({}) });
     fireEvent.click(desktop, { clientX: 320, clientY: 180 });
-    await waitFor(() => expect(slot.inspection.rpcCalls).toContainEqual({ method: "computer.control.input", input: { hostId: "host_thread", runId: "run_live", clientId: expect.any(String), input: { kind: "click", x: 640, y: 360, button: "left" } } }));
+    await waitFor(() => expect(slot.inspection.rpcCalls).toContainEqual({ method: "computer.control.input", input: { hostId: "host_thread", runId: null, clientId: expect.any(String), input: { kind: "click", x: 640, y: 360, button: "left" } } }));
     window.dispatchEvent(new Event("blur"));
-    await waitFor(() => expect(slot.inspection.rpcCalls.some((call) => call.method === "computer.control.release")).toBe(true));
+    await waitFor(() => expect(slot.inspection.rpcCalls.some((call) => call.method === "computer.disconnect")).toBe(true));
     expect(slot.queryByText("You’re controlling")).toBeNull();
     slot.lifecycle.unmount();
   });
@@ -340,31 +282,14 @@ describe("Settings section", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders a host dropdown from real enrolled hosts, disables disconnected entries, and never shows a raw hostId text field", async () => {
-    const slot = renderSlot(
-      settingsSection,
-      {},
-      {
-        rpc: {
-          "settings.hosts": () =>
-            [
-              { hostId: "host_a", name: "Shared computer", status: "connected", phase: "active", os: "linux", arch: "x64", browserState: "ready", desktopState: "ready", providerState: "ready" },
-              { hostId: "host_b", name: "Old laptop", status: "disconnected", phase: "suspended", os: null, arch: null, browserState: null, desktopState: null, providerState: null },
-            ] as never,
-          "settings.get": () =>
-            ({ selectedHostId: "host_a", provider: "jev", model: "jev-latest", keyStatus: "missing", lastTest: null }) as never,
-        } as never,
-      },
-    );
-    const select = (await slot.findByLabelText("Computer host")) as HTMLSelectElement;
-    expect(select.value).toBe("host_a");
-    const options = Array.from(select.options).map((option) => ({ value: option.value, disabled: option.disabled }));
-    expect(options).toContainEqual({ value: "host_b", disabled: true });
-    expect(slot.queryByLabelText(/host id/iu)).toBeNull();
+  it("keeps machine selection out of settings", async () => {
+    const slot = renderSlot(settingsSection, {}, { rpc: {
+      "settings.get": () => ({ selectedHostId: null, provider: "jev", model: "jev-latest", keyStatus: "missing", lastTest: null }),
+    } as never });
+    await slot.findByLabelText("Provider");
+    expect(slot.queryByLabelText("Computer host")).toBeNull();
+    expect(slot.queryByText(/fallback/iu)).toBeNull();
     expect(slot.getByLabelText("Model").textContent).toBe("Jev");
-    expect(slot.queryByPlaceholderText("e.g. openai/gpt-5")).toBeNull();
-    expect(slot.getByLabelText("Provider")).toBeDefined();
-    expect(slot.queryByText(/configured/iu)).toBeNull();
     slot.lifecycle.unmount();
   });
 
@@ -395,12 +320,12 @@ describe("Settings section", () => {
         "settings.get": () => ({ selectedHostId: null, provider: "jev", model: "jev-latest", keyStatus: "missing", lastTest: null }),
       } as never,
     });
-    fireEvent.change(await slot.findByLabelText("Computer host"), { target: { value: "host_a" } });
+    await slot.findByLabelText("Provider");
     fireEvent.change(slot.getByLabelText("TypeSafe API key"), { target: { value: "synthetic-only" } });
     fireEvent.click(slot.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(successToast).toHaveBeenCalledWith("Settings saved"));
     expect(slot.queryByText("Settings saved.")).toBeNull();
-    expect(calls).toEqual([{ hostId: "host_a", provider: "jev", key: "synthetic-only" }]);
+    expect(calls).toEqual([{ provider: "jev", key: "synthetic-only" }]);
     expect(slot.inspection.rpcCalls.some((call) => JSON.stringify(call).includes("synthetic-only"))).toBe(false);
     slot.lifecycle.unmount();
   });
@@ -422,7 +347,7 @@ describe("Settings section", () => {
     fireEvent.change(slot.getByLabelText("OpenRouter API key"), { target: { value: "synthetic-openrouter" } });
     fireEvent.click(slot.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(successToast).toHaveBeenCalledWith("Settings saved"));
-    expect(calls).toEqual([{ hostId: null, provider: "openrouter", key: "synthetic-openrouter" }]);
+    expect(calls).toEqual([{ provider: "openrouter", key: "synthetic-openrouter" }]);
     slot.lifecycle.unmount();
   });
 });

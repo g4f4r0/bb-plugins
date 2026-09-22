@@ -46,7 +46,11 @@ export async function verifyObservationCheckpoint(
     const targets = findTargets(observation, checkpoint.target);
     if (targets.length === 1 && targets[0]!.valueSummary !== null) {
       const expected = await resolveData(checkpoint.expected, signal);
-      outcome = matches(targets[0]!.valueSummary!, expected, checkpoint.comparison === "equals" ? "exact" : "contains") ? "pass" : "fail";
+      const actual = targets[0]!.valueSummary!;
+      const redactedLength = /^\[redacted:(\d+)\]$/u.exec(actual)?.[1];
+      outcome = redactedLength !== undefined && checkpoint.comparison === "equals"
+        ? Number(redactedLength) === expected.length ? "pass" : "fail"
+        : matches(actual, expected, checkpoint.comparison === "equals" ? "exact" : "contains") ? "pass" : "fail";
       summary = outcome === "pass" ? "Field value predicate matches" : "Field value predicate differs";
     } else {
       summary = targets.length > 1 ? "Field query is ambiguous" : "Field value is unavailable";

@@ -17,7 +17,6 @@ import { LiveFrameRelay, createLiveFrameHandler, liveHttpRoutes } from "./src/me
 import {
   providerIdSchema,
   wayfinderSettingsRpcContract,
-  type HostSummary,
   type ProviderId,
   type WayfinderSettingsState,
 } from "./src/contracts/settings.js";
@@ -41,7 +40,7 @@ const PROVIDER_PROBE: Record<ProviderId, { url: string; header: string }> = {
 const MAX_KEY_BODY_BYTES = 8 * 1024;
 const saveKeyBodySchema = z.object({ provider: providerIdSchema, key: z.string().min(1).max(4_096) }).strict();
 const testKeyBodySchema = z.object({ provider: providerIdSchema }).strict();
-const saveSettingsBodySchema = z.object({ hostId: entityIdSchema.nullable(), provider: providerIdSchema, key: z.string().min(1).max(4_096).optional() }).strict();
+const saveSettingsBodySchema = z.object({ provider: providerIdSchema, key: z.string().min(1).max(4_096).optional() }).strict();
 
 const toolInput = z.object({ idempotencyKey: z.string().min(1).max(128), route: routeSchema }).strict();
 type RunIndex = { hostId: string; threadId: string; routeHash: string };
@@ -105,43 +104,17 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
    * live here or in `bb.storage.kv`; the provider key itself is never
    * persisted anywhere BB controls — see the /settings/key http route.
    */
-  type StoredSettings = { hostId: string | null; provider: ProviderId; model: string; lastTest: { ok: boolean; message: string; testedAt: number } | null };
-  const DEFAULT_SETTINGS: StoredSettings = { hostId: null, provider: "openrouter", model: "", lastTest: null };
+  type StoredSettings = { provider: ProviderId; model: string; lastTest: { ok: boolean; message: string; testedAt: number } | null };
+  const DEFAULT_SETTINGS: StoredSettings = { provider: "openrouter", model: "", lastTest: null };
   const readStoredSettings = async (): Promise<StoredSettings> => (await kv.get<StoredSettings>("settings")) ?? DEFAULT_SETTINGS;
   const writeStoredSettings = (next: StoredSettings) => kv.set("settings", next);
-
-  async function enrolledHosts(provider?: ProviderId): Promise<HostSummary[]> {
-    const hosts = await bb.sdk.hosts.list();
-    return Promise.all(hosts.map(async (entry) => {
-      let capabilities: HostCapabilities | null = null;
-      if (provider !== undefined && entry.status === "connected") {
-        capabilities = await host.call("capabilities.probe", { expectedHostId: entry.id, provider }, { hostId: entry.id, timeoutMs: 3_000 }).catch(() => null);
-      }
-      const nativeReady = capabilities !== null && ["darwin", "win32"].includes(capabilities.platform.os)
-        && (await desktopInstances(entry.id)).instances.length > 0;
-      return {
-        hostId: entry.id,
-        name: entry.name,
-        status: entry.status,
-        phase: entry.lifecycle.phase,
-        os: capabilities?.platform.os ?? null,
-        arch: capabilities?.platform.arch ?? null,
-        browserState: nativeReady ? "ready" : capabilities?.browser.state ?? null,
-        desktopState: capabilities?.desktop.state ?? null,
-        providerState: capabilities?.decisionProvider.state ?? null,
-      };
-    }));
-  }
 
   /** Real check against the verified Infisical scope; never a cached/assumed boolean. */
   async function settingsState(): Promise<WayfinderSettingsState> {
     const stored = await readStoredSettings();
-    const hosts = await enrolledHosts();
-    const stillEnrolled = stored.hostId !== null && hosts.some((entry) => entry.hostId === stored.hostId);
     const keyName = PROVIDER_KEY_NAME[stored.provider];
     const configured = await infisical.secretConfigured(INFISICAL_SCOPE, keyName).catch(() => null);
     return {
-      selectedHostId: stillEnrolled ? stored.hostId : null,
       provider: stored.provider,
       model: stored.model,
       keyStatus: configured === null ? "unknown" : configured ? "configured" : "missing",
@@ -210,13 +183,13 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     await bb.sdk.experimental_desktopBrowsers.releaseControl(binding).catch(() => undefined);
   }
 
-  async function selectExecutionHost(route: WayfinderRoute, threadHostId: string, fallbackHostId: string | null): Promise<string> {
+  async function selectExecutionHost(route: WayfinderRoute, threadHostId: string): Promise<string> {
     if ((route.hostSelection ?? "thread") === "thread" || !isPortableBrowserRoute(route)) return threadHostId;
     const enrolled = await bb.sdk.hosts.list();
     const connected = new Set(enrolled.filter((entry) => entry.status === "connected").map((entry) => entry.id));
     const provider = route.decisionProvider?.provider ?? "jev";
     const attempts: string[] = [];
-    for (const hostId of orderedHostCandidates(threadHostId, fallbackHostId, [...connected])) {
+    for (const hostId of orderedHostCandidates(threadHostId, [...connected])) {
       if (!connected.has(hostId)) { attempts.push(`${hostId}: disconnected`); continue; }
       const capabilities = await host.call("capabilities.probe", { expectedHostId: hostId, provider }, hostOptions(hostId)).catch(() => null);
       const browserReady = capabilities?.browser.state === "ready" || await nativeBrowserAvailable(hostId, capabilities);
@@ -248,7 +221,7 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
       if (stored.routeHash !== sha256(priorRoute)) throw new Error(`Idempotency key "${idempotencyKey}" was already used for a different route`);
       return { runId: stored.runId, routeHash: stored.routeHash, deduplicated: true };
     }
-    const executionHostId = await selectExecutionHost(configured, threadIdentity.hostId, settings.hostId);
+    const executionHostId = await selectExecutionHost(configured, threadIdentity.hostId);
     const route = routeSchema.parse({ ...configured, identity: { ...threadIdentity, hostId: executionHostId } });
     const routeHash = sha256(route);
     const runId = `run_${randomUUID().replaceAll("-", "")}`;
@@ -289,31 +262,36 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
       const result = await host.call("runs.cancel", { expectedHostId: entry.hostId, runId: input.runId, reason: input.reason }, hostOptions(entry.hostId));
       return result.run;
     },
+    async "computer.machines"(input) {
+      const [identity, enrolled] = await Promise.all([identityFor(input.threadId).catch(() => null), bb.sdk.hosts.list()]);
+      return { threadHostId: identity?.hostId ?? null, machines: enrolled.map((machine) => ({ hostId: machine.id, name: machine.name, status: machine.status, phase: machine.lifecycle.phase })) };
+    },
     async "computer.preview"(input) {
       const enrolled = await bb.sdk.hosts.list();
       if (!enrolled.some((candidate) => candidate.id === input.hostId && candidate.status === "connected")) return { frame: null, state: "unavailable" as const, message: "This computer is offline." };
       try {
-        const { frame } = await host.call("desktop.capture", { expectedHostId: input.hostId }, { hostId: input.hostId, timeoutMs: 15_000 });
+        const { frame } = await host.call("desktop.capture", { expectedHostId: input.hostId, clientId: input.clientId }, { hostId: input.hostId, timeoutMs: 15_000 });
         return { frame: { base64: frame.bytesBase64, mimeType: frame.mimeType, width: frame.width, height: frame.height, capturedAt: frame.capturedAt }, state: "ready" as const, message: null };
       } catch (error) {
         const message = error instanceof Error ? error.message : "Whole-desktop capture is unavailable.";
         return { frame: null, state: "setup-required" as const, message: message.slice(0, 1_000) };
       }
     },
+    async "computer.disconnect"(input) {
+      return host.call("desktop.disconnect", { expectedHostId: input.hostId, clientId: input.clientId }, { hostId: input.hostId, timeoutMs: 5_000 }).catch(() => ({ disconnected: true as const }));
+    },
     async "computer.control.acquire"(input) {
-      const entry = await requireRun(input.runId);
-      if (entry.hostId !== input.hostId) throw new Error("Run is assigned to another computer");
-      return host.call("computer.control.acquire", { expectedHostId: entry.hostId, runId: input.runId, clientId: input.clientId }, hostOptions(entry.hostId));
+      if (input.runId !== null) {
+        const entry = await requireRun(input.runId);
+        if (entry.hostId !== input.hostId) throw new Error("Run is assigned to another computer");
+      }
+      return host.call("computer.control.acquire", { expectedHostId: input.hostId, runId: input.runId, clientId: input.clientId }, hostOptions(input.hostId));
     },
     async "computer.control.release"(input) {
-      const entry = await requireRun(input.runId);
-      if (entry.hostId !== input.hostId) return { released: false };
-      return host.call("computer.control.release", { expectedHostId: entry.hostId, runId: input.runId, clientId: input.clientId }, hostOptions(entry.hostId));
+      return host.call("computer.control.release", { expectedHostId: input.hostId, runId: input.runId, clientId: input.clientId }, hostOptions(input.hostId)).catch(() => ({ released: false }));
     },
     async "computer.control.input"(input) {
-      const entry = await requireRun(input.runId);
-      if (entry.hostId !== input.hostId) throw new Error("Run is assigned to another computer");
-      return host.call("computer.control.input", { expectedHostId: entry.hostId, runId: input.runId, clientId: input.clientId, input: input.input }, hostOptions(entry.hostId));
+      return host.call("computer.control.input", { expectedHostId: input.hostId, runId: input.runId, clientId: input.clientId, input: input.input }, hostOptions(input.hostId));
     },
     async "computer.snapshot"(input) {
       const stored = await readStoredSettings();
@@ -365,29 +343,7 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
   });
 
   bb.rpc.register(wayfinderSettingsRpcContract, {
-    async "settings.hosts"() {
-      const stored = await readStoredSettings();
-      return enrolledHosts(stored.provider);
-    },
     "settings.get": () => settingsState(),
-    async "settings.hostForThread"(input) {
-      try {
-        const identity = await identityFor(input.threadId);
-        return { hostId: identity.hostId, source: "thread" as const };
-      } catch {
-        const stored = await readStoredSettings();
-        return stored.hostId === null ? { hostId: null, source: "none" as const } : { hostId: stored.hostId, source: "fallback" as const };
-      }
-    },
-    async "settings.selectHost"(input) {
-      const stored = await readStoredSettings();
-      if (input.hostId !== null) {
-        const hosts = await enrolledHosts();
-        if (!hosts.some((entry) => entry.hostId === input.hostId)) throw new Error("That host is not enrolled");
-      }
-      await writeStoredSettings({ ...stored, hostId: input.hostId });
-      return settingsState();
-    },
     async "settings.saveProvider"(input) {
       const stored = await readStoredSettings();
       await writeStoredSettings({
@@ -413,12 +369,6 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     } catch {
       return jsonResponse({ ok: false, message: "Invalid settings" }, 400);
     }
-    if (parsed.hostId !== null) {
-      const hosts = await enrolledHosts();
-      if (!hosts.some((host) => host.hostId === parsed.hostId && host.status === "connected")) {
-        return jsonResponse({ ok: false, message: "Select an available computer." }, 400);
-      }
-    }
     const keyName = PROVIDER_KEY_NAME[parsed.provider];
     if (parsed.key !== undefined) {
       const saved = await infisical.setSecret(INFISICAL_SCOPE, keyName, parsed.key).catch(() => false);
@@ -426,8 +376,9 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     }
     const configured = await infisical.secretConfigured(INFISICAL_SCOPE, keyName).catch(() => false);
     if (!configured) return jsonResponse({ ok: false, message: "Enter a TypeSafe API key." }, 400);
+    const stored = await readStoredSettings();
     await writeStoredSettings({
-      hostId: parsed.hostId,
+      ...stored,
       provider: parsed.provider,
       model: parsed.provider === "openrouter" ? "~typesafe/jev-latest" : "jev-latest",
       lastTest: null,

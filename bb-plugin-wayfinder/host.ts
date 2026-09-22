@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:http";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
@@ -26,6 +26,7 @@ import { JevDecisionProvider } from "./src/adapters/jev.js";
 import { createInfisicalClient, type InfisicalScope } from "./src/core/infisical.js";
 import { resolveFortressExecutable } from "./src/core/browser-runtime.js";
 import { DesktopRuntime } from "./src/core/desktop-runtime.js";
+import { ClipRecorder, encodeClip, selectH264Encoder } from "./src/media/video.js";
 const INFISICAL_SCOPE: InfisicalScope = {
   projectId: "bd53277c-43aa-4093-8aea-1e4040fc1962",
   env: "prod",
@@ -52,23 +53,41 @@ function runRoot(): string { if (runRootPath === null) throw new Error("Wayfinde
 function artifactStore(): ArtifactStore { if (artifacts === null) throw new Error("Wayfinder host storage is not initialized"); return artifacts; }
 const artifactRecords = new Map<string, ArtifactRecord>();
 let desktop: DesktopRuntime | null = null;
+const desktopControlGate = new ControlGate();
+const desktopViewers = new Set<string>();
 let desktopWorkerLease: { dispose(): void } | null = null;
 let desktopWorkerTimer: ReturnType<typeof setTimeout> | null = null;
 function desktopRuntime(dataDir: string): DesktopRuntime { desktop ??= new DesktopRuntime(join(dataDir, "desktop")); return desktop; }
-function retainDesktopWorker(context: { experimental_retainWorker(): { dispose(): void } }): void {
+async function stopDesktopRuntime(): Promise<void> {
+  if (desktopWorkerTimer !== null) clearTimeout(desktopWorkerTimer);
+  desktopWorkerTimer = null;
+  await desktop?.dispose();
+  desktop = null;
+  desktopWorkerLease?.dispose();
+  desktopWorkerLease = null;
+}
+function retainDesktopWorker(context: { experimental_retainWorker(): { dispose(): void } }, clientId?: string): void {
+  if (clientId) desktopViewers.add(clientId);
   desktopWorkerLease ??= context.experimental_retainWorker();
   if (desktopWorkerTimer !== null) clearTimeout(desktopWorkerTimer);
-  desktopWorkerTimer = setTimeout(() => {
-    desktopWorkerTimer = null;
-    void desktop?.dispose().finally(() => { desktop = null; desktopWorkerLease?.dispose(); desktopWorkerLease = null; });
-  }, 15_000);
+  desktopWorkerTimer = setTimeout(() => { desktopViewers.clear(); void stopDesktopRuntime(); }, 5_000);
   desktopWorkerTimer.unref?.();
 }
 const liveFrames = new Map<string, { sequence: number; capturedAt: number; bytes: Buffer }>();
 const setupError = (message: string, phase: "observe" | "cleanup" = "observe") => ({ code: "setup-required" as const, phase, message, retryable: false, details: [] });
+const persistQueues = new Map<string, Promise<void>>();
 function persistRun(run: RunRecord): void {
   const root = runRoot();
-  void mkdir(root, { recursive: true, mode: 0o700 }).then(() => writeFile(join(root, `${run.runId}.json`), JSON.stringify(run), { mode: 0o600 })).catch(() => undefined);
+  const previous = persistQueues.get(run.runId) ?? Promise.resolve();
+  const pending = previous.catch(() => undefined).then(async () => {
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const destination = join(root, `${run.runId}.json`);
+    const staging = `${destination}.${run.revision}.tmp`;
+    await writeFile(staging, JSON.stringify(run), { mode: 0o600 });
+    await rename(staging, destination);
+  });
+  persistQueues.set(run.runId, pending);
+  void pending.finally(() => { if (persistQueues.get(run.runId) === pending) persistQueues.delete(run.runId); }).catch(() => undefined);
 }
 function loadRun(runId: string): RunRecord | undefined {
   try { return runRecordSchema.parse(JSON.parse(readFileSync(join(runRoot(), `${runId}.json`), "utf8"))); } catch { return undefined; }
@@ -125,7 +144,9 @@ async function launch(route: WayfinderRoute, signal: AbortSignal, controlGate: C
   const profile = await mkdtemp(join(root, "profiles-"));
   const probe = net.createServer(); await new Promise<void>((resolve, reject) => { probe.once("error", reject); probe.listen(0, "127.0.0.1", () => resolve()); });
   const probeAddress = probe.address(); if (!probeAddress || typeof probeAddress === "string") throw new Error("Could not reserve a Fortress CDP port"); const cdpPort = probeAddress.port; await new Promise<void>((resolve) => probe.close(() => resolve()));
-  const child = spawn(fortress, ["--remote-debugging-address=127.0.0.1", `--remote-debugging-port=${cdpPort}`, `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--disable-dev-shm-usage", "--window-size=1280,800", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding", `${fixtureOrigin}/`], { stdio: "ignore", env: { ...process.env, DISPLAY: process.env.DISPLAY ?? ":99" } });
+  const initialUrl = route.decisionProvider?.provider === "fixture" ? `${fixtureOrigin}/` : route.browser.navigationOrigins[0]?.origin ?? `${fixtureOrigin}/`;
+  const initialOrigin = new URL(initialUrl).origin;
+  const child = spawn(fortress, ["--remote-debugging-address=127.0.0.1", `--remote-debugging-port=${cdpPort}`, `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--disable-dev-shm-usage", "--window-size=1280,800", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding", initialUrl], { stdio: "ignore", env: { ...process.env, DISPLAY: process.env.DISPLAY ?? ":99" } });
   const abort = () => { child.kill("SIGTERM"); server.close(); void rm(profile, { recursive: true, force: true }).catch(() => undefined); };
   signal.addEventListener("abort", abort, { once: true });
   try {
@@ -139,24 +160,21 @@ async function launch(route: WayfinderRoute, signal: AbortSignal, controlGate: C
       const tabs = await waitForJson(`http://127.0.0.1:${port}/json/list`, signal);
       const pages = Array.isArray(tabs) ? (tabs as unknown[]).filter((entry) => typeof entry === "object" && entry !== null && (entry as { type?: unknown }).type === "page") as Array<{ id?: unknown; url?: unknown }> : [];
       fallbackTab ??= pages[0];
-      tab = pages.find((entry) => typeof entry.url === "string" && entry.url.startsWith(fixtureOrigin));
+      tab = pages.find((entry) => typeof entry.url === "string" && entry.url.startsWith(initialOrigin));
       if (tab === undefined) await new Promise((resolve) => setTimeout(resolve, 100));
     }
     tab ??= fallbackTab;
     if (typeof tab?.id !== "string") throw wayfinderError("provider-unavailable", "observe", "Fortress did not expose a page target");
     await new Promise((resolve) => setTimeout(resolve, 250));
     const adapter = await BrowserAdapter.connectFortress({ route, hostId: route.identity.hostId, tabId: tab.id, resourceGeneration: `fortress_${Date.now()}`, wsEndpoint: ws, signal, controlGate });
-    if (route.decisionProvider?.provider === "fixture") {
-      const readyBy = Date.now() + 15_000;
-      while (Date.now() < readyBy) {
-        signal.throwIfAborted();
-        const observation = await Effect.runPromise(adapter.observe({ signal, expectedHostId: route.identity.hostId }));
-        if (observation.targets.some((target) => target.allowedOperations.includes("click"))) return { server, profile, child, adapter, fixtureOrigin };
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      throw wayfinderError("provider-unavailable", "observe", "Synthetic browser fixture did not become interactive", { retryable: true });
+    const readyBy = Date.now() + 15_000;
+    while (Date.now() < readyBy) {
+      signal.throwIfAborted();
+      const observation = await Effect.runPromise(adapter.observe({ signal, expectedHostId: route.identity.hostId }));
+      if (observation.targets.length > 0) return { server, profile, child, adapter, fixtureOrigin };
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    return { server, profile, child, adapter, fixtureOrigin };
+    throw wayfinderError("provider-unavailable", "observe", route.decisionProvider?.provider === "fixture" ? "Synthetic browser fixture did not become interactive" : "Browser page did not become interactive", { retryable: true });
   } catch (error) { child.kill("SIGTERM"); server.close(); await rm(profile, { recursive: true, force: true }).catch(() => undefined); throw error; }
 }
 
@@ -195,6 +213,8 @@ async function execute(run: RunRecord): Promise<void> {
   const job = jobs.get(run.runId)!; const signal = job.abort.signal;
   let lease: Awaited<ReturnType<SingleControllerQueue["acquire"]>> | null = null;
   let leaseHeartbeat: ReturnType<typeof setInterval> | null = null;
+  let recorder: ClipRecorder | null = null;
+  let recordingQueue = Promise.resolve();
   try {
     lease = await queue.acquire(run.runId, run.route.identity.threadId, signal);
     leaseHeartbeat = setInterval(() => { try { lease?.heartbeat(); } catch { job.abort.abort("Controller lease expired"); } }, 5_000);
@@ -210,10 +230,31 @@ async function execute(run: RunRecord): Promise<void> {
       for (const origin of effectiveRoute.browser.resourceOrigins) if (origin.purpose === "fixture") (origin as { origin: string }).origin = launched.fixtureOrigin;
       for (const checkpoint of effectiveRoute.checkpoints) if (checkpoint.kind === "url" || checkpoint.kind === "network-outcome") if (checkpoint.origin === "http://127.0.0.1:4173") (checkpoint as { origin: string }).origin = launched.fixtureOrigin;
     }
+    const recording = run.route.capture.recording;
+    if (recording.enabled) recorder = new ClipRecorder({ dir: join(artifactRoot(), "recordings", run.runId), maxFrames: Math.min(2_000, Math.max(2, Math.ceil(recording.maxDurationMs / 100))), maxBytes: run.route.limits.maxCaptureBufferBytes, maxDurationMs: recording.maxDurationMs });
+    const recordFrame = () => {
+      if (recorder === null) return;
+      const frame = capture(job);
+      recordingQueue = recordingQueue.then(async () => { const bytes = await frame; await recorder?.append({ capturedAt: Date.now(), bytes, mimeType: "image/png" }); }).catch(() => undefined);
+    };
+    recordFrame();
     const engine = new RunEngine({ queue, controllerLease: lease, journal, adapters: new Map([["browser", launched.adapter]]), provider, actionCatalog: new ObservedActionCatalog(), closeAdaptersOnFinish: false });
-    const result = await engine.run({ runId: run.runId, route: effectiveRoute, signal, onProgress: (progress) => { const current = runs.get(run.runId); if (current) runs.set(run.runId, update(current, { state: progress.phase === "verify" ? "verifying" : "running", activeController: true, checkpoints: [...progress.checkpoints] })); } });
+    const result = await engine.run({ runId: run.runId, route: effectiveRoute, signal, onProgress: (progress) => { const current = runs.get(run.runId); if (current) runs.set(run.runId, update(current, { state: progress.phase === "verify" ? "verifying" : "running", activeController: true, checkpoints: [...progress.checkpoints] })); if (progress.phase === "verify") recordFrame(); } });
+    recordFrame();
+    await recordingQueue;
     let artifact: ArtifactRecord | null = null;
     try { const png = await capture(job); liveFrames.set(run.runId, { sequence: (liveFrames.get(run.runId)?.sequence ?? 0) + 1, capturedAt: Date.now(), bytes: png }); const input: PutArtifactInput = { runId: run.runId, threadId: run.route.identity.threadId, projectId: run.route.identity.projectId, kind: "image", filename: "wayfinder-fixture.png", mimeType: "image/png", width: 1280, height: 800, durationMs: null, captureStartedAt: Date.now(), captureEndedAt: Date.now(), redacted: false, sanitized: true }; artifact = await artifactStore().put(input, png); artifactRecords.set(artifact.artifactId, artifact); job.artifact = artifact; job.emit("artifactChanged", { runId: run.runId, artifactId: artifact.artifactId }); } catch { /* evidence capture is best effort after verification */ }
+    if (recorder !== null && recorder.frameCount > 0) {
+      try {
+        const timeline = recorder.timeline();
+        const output = join(artifactRoot(), "recordings", run.runId, "flow.mp4");
+        const { encoder } = await selectH264Encoder();
+        await encodeClip({ recorder, outputPath: output, encoder, maxBytes: recording.maxBytes });
+        const bytes = await readFile(output);
+        const video = await artifactStore().put({ runId: run.runId, threadId: run.route.identity.threadId, projectId: run.route.identity.projectId, kind: "video", filename: "wayfinder-flow.mp4", mimeType: "video/mp4", width: 1280, height: 720, durationMs: timeline.startedAt !== null && timeline.endedAt !== null ? Math.max(500, timeline.endedAt - timeline.startedAt) : null, captureStartedAt: timeline.startedAt, captureEndedAt: timeline.endedAt, redacted: false, sanitized: true }, bytes);
+        artifactRecords.set(video.artifactId, video); job.emit("artifactChanged", { runId: run.runId, artifactId: video.artifactId });
+      } catch { /* video evidence is best effort */ }
+    }
     const current = runs.get(run.runId)!; if (current.state !== "cancelled") update(current, { state: result.state, activeController: true, finishedAt: Date.now(), error: result.error, cleanup: { state: "pending", message: null, completedAt: null }, checkpoints: result.checkpoints.map((checkpoint) => artifact ? { ...checkpoint, evidenceArtifactIds: [artifact.artifactId] } : checkpoint) });
   } catch (error) {
     const current = runs.get(run.runId)!;
@@ -222,7 +263,7 @@ async function execute(run: RunRecord): Promise<void> {
       ? candidate as RunRecord["error"]
       : setupError(error instanceof Error ? error.message : "Fortress run failed");
     if (current.state !== "cancelled") update(current, { state: signal.aborted ? "cancelled" : "blocked", activeController: true, finishedAt: Date.now(), error: failure, cleanup: { state: "pending", message: null, completedAt: null } });
-  } finally { if (leaseHeartbeat !== null) clearInterval(leaseHeartbeat); await cleanup(run.runId); lease?.release(); }
+  } finally { if (leaseHeartbeat !== null) clearInterval(leaseHeartbeat); await recorder?.dispose().catch(() => undefined); await cleanup(run.runId); lease?.release(); }
 }
 async function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
@@ -240,7 +281,7 @@ async function stopProcess(child: ChildProcess): Promise<boolean> {
   child.kill("SIGKILL");
   return waitForExit(child, 2_000);
 }
-async function cleanup(runId: string) { const job = jobs.get(runId); if (!job) return; job.controlGate.dispose(); let failure: string | null = null; try { if (job.adapter) await job.adapter.close({ signal: new AbortController().signal, expectedHostId: runs.get(runId)!.route.identity.hostId }); } catch (error) { failure = error instanceof Error ? error.message : "Browser cleanup failed"; } if (job.process && !await stopProcess(job.process)) failure = failure ?? "Fortress process did not exit after forced cleanup"; if (job.server) await new Promise<void>((resolve) => job.server!.close(() => resolve())); if (job.profile) await rm(job.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch((error) => { failure = failure ?? (error instanceof Error ? error.message : "Profile cleanup failed"); }); const run = runs.get(runId); if (run) runs.set(runId, update(run, { activeController: false, cleanup: { state: failure === null ? "completed" : "incomplete", message: failure, completedAt: failure === null ? Date.now() : null } })); jobs.delete(runId); }
+async function cleanup(runId: string) { const job = jobs.get(runId); if (!job) return; let failure: string | null = null; try { if (job.adapter) await job.adapter.close({ signal: new AbortController().signal, expectedHostId: runs.get(runId)!.route.identity.hostId }); } catch (error) { failure = error instanceof Error ? error.message : "Browser cleanup failed"; } if (job.process && !await stopProcess(job.process)) failure = failure ?? "Fortress process did not exit after forced cleanup"; if (job.server) await new Promise<void>((resolve) => job.server!.close(() => resolve())); if (job.profile) await rm(job.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch((error) => { failure = failure ?? (error instanceof Error ? error.message : "Profile cleanup failed"); }); const run = runs.get(runId); if (run) runs.set(runId, update(run, { activeController: false, cleanup: { state: failure === null ? "completed" : "incomplete", message: failure, completedAt: failure === null ? Date.now() : null } })); jobs.delete(runId); }
 
 async function probe(hostId: string, provider: "fixture" | "jev" | "openrouter", dataDir: string): Promise<HostCapabilities> {
   const fortressReady = await resolveFortressExecutable() !== null;
@@ -260,32 +301,35 @@ async function probe(hostId: string, provider: "fixture" | "jev" | "openrouter",
 }
 
 export default experimental_defineHostEntry({ contract: hostContract, experimental_signals: hostSignals, handlers: {
-  "capabilities.probe": async (input, context) => { retainDesktopWorker(context); return probe(input.expectedHostId, input.provider, context.experimental_paths.dataDir); },
-  "runs.start": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); context.signal.throwIfAborted(); if (runs.has(input.runId) || loadRun(input.runId)) return { accepted: true as const, runId: input.runId }; const run = initialRun(input.runId, input.routeHash, input.route); runs.set(input.runId, run); const abort = new AbortController(); const lease = context.experimental_retainWorker(); const emit: Emit = (signal, payload) => { void context.experimental_emitSignal(signal, payload as never).catch(() => undefined); }; const job = { abort, process: null, profile: null, server: null, adapter: null, artifact: null, emit, capture: null, controlGate: new ControlGate(), browserBinding: input.browserBinding }; jobs.set(input.runId, job); void execute(run).finally(() => lease.dispose()); emit("runChanged", { runId: input.runId, revision: run.revision }); return { accepted: true as const, runId: input.runId }; },
+  "capabilities.probe": async (input, context) => probe(input.expectedHostId, input.provider, context.experimental_paths.dataDir),
+  "runs.start": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); context.signal.throwIfAborted(); if (runs.has(input.runId) || loadRun(input.runId)) return { accepted: true as const, runId: input.runId }; const run = initialRun(input.runId, input.routeHash, input.route); runs.set(input.runId, run); const abort = new AbortController(); const lease = context.experimental_retainWorker(); const emit: Emit = (signal, payload) => { void context.experimental_emitSignal(signal, payload as never).catch(() => undefined); }; const job = { abort, process: null, profile: null, server: null, adapter: null, artifact: null, emit, capture: null, controlGate: desktopControlGate, browserBinding: input.browserBinding }; jobs.set(input.runId, job); void execute(run).finally(() => lease.dispose()); emit("runChanged", { runId: input.runId, revision: run.revision }); return { accepted: true as const, runId: input.runId }; },
   "runs.status": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); const run = runs.get(input.runId) ?? loadRun(input.runId); if (!run) throw new Error("Run not found"); runs.set(input.runId, run); return run; },
   "runs.cancel": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); const run = runs.get(input.runId); if (!run) throw new Error("Run not found"); if (["passed", "failed", "blocked", "cancelled", "timed_out", "interrupted"].includes(run.state)) return { accepted: false, run }; jobs.get(input.runId)?.abort.abort(input.reason); const cancelled = update(run, { state: "cancelled", error: { code: "cancelled", phase: "cleanup", message: input.reason, retryable: false, details: [] } }); runs.set(input.runId, cancelled); await context.experimental_emitSignal("runChanged", { runId: input.runId, revision: cancelled.revision }); return { accepted: true, run: cancelled }; },
   "desktop.capture": async (input, context) => {
     ensureStorage(context.experimental_paths.dataDir);
-    retainDesktopWorker(context);
+    retainDesktopWorker(context, input.clientId);
     const frame = await desktopRuntime(context.experimental_paths.dataDir).capture(context.signal);
     return { frame: { bytesBase64: frame.bytes.toString("base64"), mimeType: frame.mimeType, width: frame.width, height: frame.height, capturedAt: frame.capturedAt } };
   },
+  "desktop.disconnect": async (input) => {
+    desktopViewers.delete(input.clientId);
+    desktopControlGate.release(input.clientId);
+    if (desktopViewers.size === 0) await stopDesktopRuntime();
+    return { disconnected: true as const };
+  },
   "computer.control.acquire": async (input, context) => {
     ensureStorage(context.experimental_paths.dataDir);
-    const job = jobs.get(input.runId);
-    const run = runs.get(input.runId);
-    if (!job?.adapter || !run || !["running", "verifying"].includes(run.state)) throw new Error("The computer is not ready for control");
-    return { state: await job.controlGate.acquire(input.clientId, context.signal) };
+    if (!await desktopRuntime(context.experimental_paths.dataDir).available()) throw new Error("The computer is not ready for control");
+    return { state: await desktopControlGate.acquire(input.clientId, context.signal) };
   },
   "computer.control.release": async (input, context) => {
     ensureStorage(context.experimental_paths.dataDir);
-    return { released: jobs.get(input.runId)?.controlGate.release(input.clientId) ?? false };
+    return { released: desktopControlGate.release(input.clientId) };
   },
   "computer.control.input": async (input, context) => {
     ensureStorage(context.experimental_paths.dataDir);
-    const job = jobs.get(input.runId);
-    if (!job?.adapter || !job.controlGate.owns(input.clientId)) throw new Error("The computer is not ready for input");
-    job.controlGate.touch(input.clientId);
+    if (!desktopControlGate.owns(input.clientId)) throw new Error("The computer is not ready for input");
+    desktopControlGate.touch(input.clientId);
     await desktopRuntime(context.experimental_paths.dataDir).input(input.input, context.signal);
     return { accepted: true as const };
   },
@@ -293,4 +337,4 @@ export default experimental_defineHostEntry({ contract: hostContract, experiment
   "artifacts.list": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); return artifactStore().list({ threadId: input.threadId, runId: input.runId, cursor: input.cursor, limit: input.limit }); },
   "artifacts.get": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); return artifactStore().get(input.artifactId, { threadId: input.threadId }); },
   "artifacts.readRange": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); const known = artifactRecords.get(input.artifactId) ?? await artifactStore().getUnscoped(input.artifactId); if (!known) throw new Error("Artifact not found"); const range = await artifactStore().readRange(known, input.range.start, input.range.endInclusive); return { artifact: known, bytesBase64: range.bytes.toString("base64"), range: { start: range.start, endInclusive: range.endInclusive }, complete: range.endInclusive === known.media.sizeBytes - 1 }; },
-}, dispose: async () => { for (const job of jobs.values()) job.abort.abort("dispose"); await Promise.all([...jobs.keys()].map((runId) => cleanup(runId))); if (desktopWorkerTimer !== null) clearTimeout(desktopWorkerTimer); desktopWorkerTimer = null; desktopWorkerLease?.dispose(); desktopWorkerLease = null; await desktop?.dispose(); desktop = null; disposeHostControllerQueue("wayfinder-host"); runs.clear(); queue = hostControllerQueue("wayfinder-host"); if (process.env.WAYFINDER_DATA_DIR === undefined) { artifactRootPath = null; runRootPath = null; artifacts = null; } }});
+}, dispose: async () => { for (const job of jobs.values()) job.abort.abort("dispose"); await Promise.all([...jobs.keys()].map((runId) => cleanup(runId))); desktopControlGate.dispose(); desktopViewers.clear(); await stopDesktopRuntime(); disposeHostControllerQueue("wayfinder-host"); runs.clear(); queue = hostControllerQueue("wayfinder-host"); if (process.env.WAYFINDER_DATA_DIR === undefined) { artifactRootPath = null; runRootPath = null; artifacts = null; } }});

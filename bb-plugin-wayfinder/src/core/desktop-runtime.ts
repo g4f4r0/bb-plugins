@@ -103,10 +103,26 @@ export class DesktopRuntime {
   }
 
   async dispose(): Promise<void> {
-    this.#process?.kill("SIGTERM");
+    const child = this.#process;
     this.#process = null;
     this.#transport = null;
+    if (child !== null && child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGTERM");
+      if (!await this.#waitForExit(child, 1_000)) {
+        child.kill("SIGKILL");
+        await this.#waitForExit(child, 1_000);
+      }
+    }
     await rm(this.#socket, { force: true }).catch(() => undefined);
+  }
+
+  async #waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+    if (child.exitCode !== null || child.signalCode !== null) return true;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { child.removeListener("exit", exited); resolve(false); }, timeoutMs);
+      const exited = () => { clearTimeout(timer); resolve(true); };
+      child.once("exit", exited);
+    });
   }
 
   async #captureOnce(signal: AbortSignal): Promise<DesktopFrame> {
