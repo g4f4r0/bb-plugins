@@ -214,8 +214,8 @@ function MachinePicker({ ref, machines, threadHostId, error, onRefresh, onSelect
   const thread = machines?.filter((machine) => machine.hostId === threadHostId) ?? [];
   const others = machines?.filter((machine) => machine.hostId !== threadHostId) ?? [];
   return <div ref={ref} className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
-    <header className="flex h-12 shrink-0 items-center justify-between border-b px-4"><span className="text-sm font-medium">Computers</span><button type="button" aria-label="Refresh computers" onClick={() => void onRefresh()} className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><Icon name="RefreshCw" className="size-4" aria-hidden="true" /></button></header>
-    <div className="min-h-0 flex-1 overflow-auto"><div className="m-auto w-full max-w-3xl px-6 py-12">
+    <div className="min-h-0 flex-1 overflow-auto"><div className="relative m-auto w-full max-w-3xl px-6 py-12">
+      <button type="button" aria-label="Refresh computers" onClick={() => void onRefresh()} className="absolute right-6 top-4 grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><Icon name="RefreshCw" className="size-4" aria-hidden="true" /></button>
       {error ? <p role="alert" className="mb-4 text-sm text-destructive-text">{error}</p> : null}
       {machines === null ? <MachineListSkeleton /> : <>{thread.length > 0 ? <MachineGroup title="Thread computer" machines={thread} onSelect={onSelect} /> : null}<MachineGroup title={thread.length > 0 ? "Other computers" : "Available computers"} machines={others} onSelect={onSelect} />{machines.length === 0 ? <p className="text-sm text-muted-foreground">No computers enrolled.</p> : null}</>}
     </div></div>

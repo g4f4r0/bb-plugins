@@ -223,7 +223,8 @@ describe("Computer panel", () => {
   it("shows a recent-tabs-style skeleton while computers load", () => {
     const slot = renderSlot(panel, { threadId: "thr_a", params: null }, { rpc: { "computer.machines": () => new Promise(() => {}) } as never });
     expect(slot.getByRole("status", { name: "Loading computers" })).toBeDefined();
-    expect(slot.getByText("Computers")).toBeDefined();
+    expect(slot.queryByText("Computers")).toBeNull();
+    expect(slot.getByRole("button", { name: "Refresh computers" })).toBeDefined();
     slot.lifecycle.unmount();
   });
 
