@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-sidekick",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "description": "Create reusable Sidekick agents and start one agent-bound BB thread at a time.",
   "license": "MIT",
