@@ -115,7 +115,7 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     return Promise.all(hosts.map(async (entry) => {
       let capabilities: HostCapabilities | null = null;
       if (provider !== undefined && entry.status === "connected") {
-        capabilities = await host.call("capabilities.probe", { expectedHostId: entry.id, provider }, hostOptions(entry.id)).catch(() => null);
+        capabilities = await host.call("capabilities.probe", { expectedHostId: entry.id, provider }, { hostId: entry.id, timeoutMs: 3_000 }).catch(() => null);
       }
       const nativeReady = capabilities !== null && ["darwin", "win32"].includes(capabilities.platform.os)
         && (await desktopInstances(entry.id)).instances.length > 0;
