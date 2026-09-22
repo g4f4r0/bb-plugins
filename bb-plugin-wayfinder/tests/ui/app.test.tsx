@@ -353,7 +353,12 @@ describe("Settings section", () => {
     slot.lifecycle.unmount();
   });
 
-  it("does not pretend OpenRouter can provide Jev", async () => {
+  it("saves OpenRouter as a Jev provider through the same form action", async () => {
+    const calls: unknown[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      calls.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ ok: true, message: "Settings saved." }), { status: 200 });
+    });
     const slot = renderSlot(settingsSection, {}, {
       rpc: {
         "settings.hosts": () => [],
@@ -361,8 +366,10 @@ describe("Settings section", () => {
       } as never,
     });
     fireEvent.change(await slot.findByLabelText("Provider"), { target: { value: "openrouter" } });
-    expect(slot.getByText(/Jev is not currently available through OpenRouter/)).toBeDefined();
-    expect((slot.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(slot.getByLabelText("OpenRouter API key"), { target: { value: "synthetic-openrouter" } });
+    fireEvent.click(slot.getByRole("button", { name: "Save" }));
+    await slot.findByText("Settings saved.");
+    expect(calls).toEqual([{ hostId: null, provider: "openrouter", key: "synthetic-openrouter" }]);
     slot.lifecycle.unmount();
   });
 });

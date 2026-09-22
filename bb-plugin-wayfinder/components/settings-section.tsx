@@ -25,10 +25,9 @@ export function WayfinderSettingsSection() {
 
   if (saved === null || hosts === null) return <div role="status" aria-label="Loading settings" className="flex justify-center py-6"><Icon name="Loading" className="size-4 animate-spin text-muted-foreground" aria-hidden="true" /></div>;
 
-  const openRouterUnavailable = provider === "openrouter";
   const configured = provider === saved.provider && saved.keyStatus === "configured";
   const save = async () => {
-    if (busy || openRouterUnavailable) return;
+    if (busy) return;
     setBusy(true); setMessage(null);
     try {
       const response = await fetch(SAVE_URL, {
@@ -59,14 +58,13 @@ export function WayfinderSettingsSection() {
       <SettingRow label="Model" description="The decision model used by Wayfinder.">
         <div aria-label="Model" className="flex h-8 items-center text-sm">Jev</div>
       </SettingRow>
-      {openRouterUnavailable ? <p role="status" className="pb-3 text-xs text-destructive">Jev is not currently available through OpenRouter. Select TypeSafe to use Jev.</p> : null}
       <SettingRow label={<>API key <span className="ml-1 rounded border border-border px-1 py-0.5 text-[10px] text-muted-foreground">secret</span></>} description={`Your ${provider === "jev" ? "TypeSafe" : "OpenRouter"} API key.`}>
         <input type="password" autoComplete="off" aria-label={`${provider === "jev" ? "TypeSafe" : "OpenRouter"} API key`} className={controlClass}
-          placeholder={configured ? "[set]" : "Enter API key"} value={key} disabled={busy || openRouterUnavailable} onChange={(event) => setKey(event.target.value)} />
+          placeholder={configured ? "[set]" : "Enter API key"} value={key} disabled={busy} onChange={(event) => setKey(event.target.value)} />
       </SettingRow>
       <div className="flex items-center justify-between gap-3 pb-3 pt-1">
         <span className="text-xs text-muted-foreground">{configured ? "Configured" : "Not configured"}</span>
-        <button type="button" className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50" disabled={busy || openRouterUnavailable} onClick={() => void save()}>{busy ? "Saving…" : "Save"}</button>
+        <button type="button" className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50" disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : "Save"}</button>
       </div>
       {message ? <p role="status" className={`pb-3 text-xs ${message.ok ? "text-muted-foreground" : "text-destructive"}`}>{message.text}</p> : null}
     </div>

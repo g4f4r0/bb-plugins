@@ -23,7 +23,6 @@ import { ObservedActionCatalog } from "./worker/action-catalog.js";
 import { ArtifactStore, type PutArtifactInput } from "./src/artifacts/store.js";
 import type { ArtifactRecord } from "./src/contracts/artifact.js";
 import { JevDecisionProvider } from "./src/adapters/jev.js";
-import { OpenRouterDecisionProvider } from "./src/adapters/openrouter.js";
 import { createInfisicalClient, type InfisicalScope } from "./src/core/infisical.js";
 
 const FORTRESS = process.env.WAYFINDER_FORTRESS_PATH ?? "/home/g4f4r0/.bb/plugins/browse/host-data/browsers/fortress/v151.0.7908.0/linux-x64/tilion-fortress/tilion";
@@ -113,6 +112,17 @@ async function launch(route: WayfinderRoute, signal: AbortSignal) {
 }
 
 /** Resolves the decision provider's credential from the verified Infisical scope for this one call; never a static env var. */
+export function jevProviderTarget(provider: "jev" | "openrouter", config?: { endpoint?: string | null; model?: string | null }): { endpoint: string; model: string } {
+  return {
+    endpoint: config?.endpoint ?? (provider === "openrouter"
+      ? process.env.WAYFINDER_OPENROUTER_SYSTEMONE_ENDPOINT ?? "https://openrouter.ai/api/v1/systemone"
+      : process.env.WAYFINDER_TYPESAFE_ENDPOINT ?? "https://api.typesafe.ai/v1/systemone"),
+    model: config?.model || (provider === "openrouter"
+      ? process.env.WAYFINDER_OPENROUTER_JEV_MODEL ?? "~typesafe/jev-latest"
+      : process.env.WAYFINDER_TYPESAFE_MODEL ?? "jev-latest"),
+  };
+}
+
 async function providerFor(route: WayfinderRoute): Promise<DecisionProvider> {
   const selected = route.decisionProvider?.provider;
   if (!selected) throw wayfinderError("setup-required", "queue", "A decisionProvider must be explicitly selected; fixture mode is opt-in");
@@ -121,8 +131,8 @@ async function providerFor(route: WayfinderRoute): Promise<DecisionProvider> {
   const keyName = PROVIDER_KEY_NAME[selected];
   const apiKey = await infisical.resolveSecret(INFISICAL_SCOPE, keyName);
   if (apiKey === null) throw wayfinderError("setup-required", "queue", `Infisical secret ${keyName} did not resolve at the verified project/environment/path; confirm project membership and CLI authentication before a real provider run`);
-  if (selected === "jev") return new JevDecisionProvider({ endpoint: config?.endpoint ?? process.env.WAYFINDER_TYPESAFE_ENDPOINT ?? "https://api.typesafe.ai/v1/systemone", model: config?.model ?? process.env.WAYFINDER_TYPESAFE_MODEL ?? "", apiKey, maxCalls: route.limits.maxProviderCalls, maxApproxTokens: route.limits.maxProviderTokens, maxRetries: route.limits.maxRequestRetries });
-  return new OpenRouterDecisionProvider({ endpoint: config?.endpoint ?? process.env.WAYFINDER_OPENROUTER_ENDPOINT, model: config?.model ?? process.env.WAYFINDER_OPENROUTER_MODEL ?? "", apiKey });
+  const target = jevProviderTarget(selected, config);
+  return new JevDecisionProvider({ ...target, apiKey, maxCalls: route.limits.maxProviderCalls, maxApproxTokens: route.limits.maxProviderTokens, maxRetries: route.limits.maxRequestRetries });
 }
 
 /** One screenshot in flight per run; the engine's final capture and viewers share it. */

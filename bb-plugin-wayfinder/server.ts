@@ -243,7 +243,12 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     },
     async "settings.saveProvider"(input) {
       const stored = await readStoredSettings();
-      await writeStoredSettings({ ...stored, provider: input.provider, model: input.model, lastTest: null });
+      await writeStoredSettings({
+        ...stored,
+        provider: input.provider,
+        model: input.provider === "openrouter" ? "~typesafe/jev-latest" : "jev-latest",
+        lastTest: null,
+      });
       return settingsState();
     },
   });
@@ -261,9 +266,6 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     } catch {
       return jsonResponse({ ok: false, message: "Invalid settings" }, 400);
     }
-    if (parsed.provider === "openrouter") {
-      return jsonResponse({ ok: false, message: "Jev is not currently available through OpenRouter." }, 409);
-    }
     if (parsed.hostId !== null) {
       const hosts = await enrolledHosts();
       if (!hosts.some((host) => host.hostId === parsed.hostId && host.status === "connected")) {
@@ -277,7 +279,12 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     }
     const configured = await infisical.secretConfigured(INFISICAL_SCOPE, keyName).catch(() => false);
     if (!configured) return jsonResponse({ ok: false, message: "Enter a TypeSafe API key." }, 400);
-    await writeStoredSettings({ hostId: parsed.hostId, provider: "jev", model: "jev-latest", lastTest: null });
+    await writeStoredSettings({
+      hostId: parsed.hostId,
+      provider: parsed.provider,
+      model: parsed.provider === "openrouter" ? "~typesafe/jev-latest" : "jev-latest",
+      lastTest: null,
+    });
     return jsonResponse({ ok: true, message: "Settings saved." });
   });
 

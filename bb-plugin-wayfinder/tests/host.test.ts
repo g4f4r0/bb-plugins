@@ -1,11 +1,15 @@
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { describe, expect, it } from "vitest";
 
-import hostEntry from "../host.js";
+import hostEntry, { jevProviderTarget } from "../host.js";
 import { makeRoute } from "./contracts/fixtures.js";
 import { sha256 } from "../src/core/hash.js";
 
 describe("Wayfinder host integration", () => {
+  it("routes Jev through the selected provider's System One endpoint", () => {
+    expect(jevProviderTarget("jev")).toEqual({ endpoint: "https://api.typesafe.ai/v1/systemone", model: "jev-latest" });
+    expect(jevProviderTarget("openrouter")).toEqual({ endpoint: "https://openrouter.ai/api/v1/systemone", model: "~typesafe/jev-latest" });
+  });
   it("probes capabilities and validates strict input", async () => {
     const harness = experimental_createHostEntryHarness(hostEntry);
     const result = await harness.experimental_call("capabilities.probe", { expectedHostId: "host_test" });

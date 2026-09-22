@@ -56,7 +56,7 @@ describe("Wayfinder settings", () => {
       } }, { threadId: "thr_owner" });
       const call = harness.inspection.experimental_hostRpcCalls.find((entry) => entry.method === "runs.start");
       expect((call?.input as { route: { decisionProvider: unknown } }).route.decisionProvider)
-        .toEqual({ provider: "openrouter", model: "vendor/model", endpoint: null });
+        .toEqual({ provider: "openrouter", model: "~typesafe/jev-latest", endpoint: null });
     } finally { await harness.lifecycle.dispose(); }
   });
 
@@ -118,11 +118,13 @@ describe("Wayfinder settings", () => {
     await harness.lifecycle.dispose();
   });
 
-  it("saves provider and model as plain (non-secret) settings state", async () => {
+  it("keeps the model fixed to Jev when saving a provider", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "wayfinder", sdk: { hosts: { list: async () => [] } } });
     await plugin(bb, { infisicalClient: fakeInfisicalClient() });
-    const state = await harness.behavior.callRpc("settings.saveProvider", { provider: "jev", model: "systemone-v1" });
-    expect(state).toMatchObject({ provider: "jev", model: "systemone-v1" });
+    expect(await harness.behavior.callRpc("settings.saveProvider", { provider: "jev", model: "ignored" }))
+      .toMatchObject({ provider: "jev", model: "jev-latest" });
+    expect(await harness.behavior.callRpc("settings.saveProvider", { provider: "openrouter", model: "ignored" }))
+      .toMatchObject({ provider: "openrouter", model: "~typesafe/jev-latest" });
     await harness.lifecycle.dispose();
   });
 
@@ -141,14 +143,15 @@ describe("Wayfinder settings", () => {
     await harness.lifecycle.dispose();
   });
 
-  it("rejects OpenRouter rather than pretending it can provide Jev", async () => {
+  it("stores OpenRouter's Jev alias when OpenRouter is selected", async () => {
+    const client = fakeInfisicalClient({ OPENROUTER_API_KEY: "synthetic-only" });
     const { bb, harness } = createFakePluginHost({ pluginId: "wayfinder", sdk: { hosts: { list: async () => [HOST_A] } } });
-    plugin(bb, { infisicalClient: fakeInfisicalClient() });
+    plugin(bb, { infisicalClient: client });
     const response = await harness.fetchHttp("POST", "/settings/save", {
       headers: { "content-type": "application/json" }, body: JSON.stringify({ hostId: "host_a", provider: "openrouter" }),
     });
-    expect(response.status).toBe(409);
-    expect((await response.json()).message).toMatch(/not currently available/iu);
+    expect(response.status).toBe(200);
+    expect(await harness.callRpc("settings.get", {})).toMatchObject({ provider: "openrouter", model: "~typesafe/jev-latest", keyStatus: "configured" });
     await harness.lifecycle.dispose();
   });
 
