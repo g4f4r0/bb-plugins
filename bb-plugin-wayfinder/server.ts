@@ -328,7 +328,7 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
       const queued = runs.filter((run) => run.state === "queued");
       const activeRun = runs.find((run) => run.activeController) ?? null;
       const selectedRun = input.selectedRunId === null
-        ? runs.find((run) => run.runId !== activeRun?.runId) ?? null
+        ? runs.find((run) => run.runId !== activeRun?.runId && run.checkpoints.some((checkpoint) => checkpoint.evidenceArtifactIds.length > 0)) ?? runs.find((run) => run.runId !== activeRun?.runId) ?? null
         : (runs.find((run) => run.runId === input.selectedRunId) ?? (await hostStatus(input.selectedRunId).catch(() => null)));
       return {
         hostId: input.hostId,
