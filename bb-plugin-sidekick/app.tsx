@@ -261,7 +261,7 @@ function SidekickPage() {
 export default definePluginApp((app) => {
   app.slots.navPanel({
     id: "sidekick",
-    title: "Sidekick",
+    title: "Profiles",
     icon: "UserRound",
     path: PANEL_PATH,
     component: SidekickPage,
