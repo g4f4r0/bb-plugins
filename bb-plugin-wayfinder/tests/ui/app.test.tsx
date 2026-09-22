@@ -259,6 +259,21 @@ describe("Computer panel", () => {
     slot.lifecycle.unmount();
   });
 
+  it("keeps run details and queue badges off the desktop image", async () => {
+    const slot = renderSlot<PluginThreadPanelProps, UiRpcContract>(panel, { threadId: "thr_a", params: { hostId: "host_thread" } }, { rpc: {
+      "computer.machines": () => machines,
+      "computer.snapshot": () => ({ ...snapshot, activeRun: { runId: "run_demo", state: "verifying", route: { goal: "Private run goal" } }, queue: [{ runId: "run_next" }] }),
+      "computer.preview": () => preview,
+      "computer.disconnect": () => ({ disconnected: true }),
+      "computer.control.release": () => ({ released: false }),
+    } as never });
+    await slot.findByRole("img", { name: "Live view of the controlled desktop" });
+    expect(slot.queryByText("Private run goal")).toBeNull();
+    expect(slot.queryByText("1 queued")).toBeNull();
+    expect(slot.queryByRole("button", { name: "Cancel" })).toBeNull();
+    slot.lifecycle.unmount();
+  });
+
   it("allows control without an active run and disconnects immediately when hidden", async () => {
     const slot = renderSlot<PluginThreadPanelProps, UiRpcContract>(panel, { threadId: "thr_a", params: { hostId: "host_thread" } }, { rpc: {
       "computer.machines": () => machines,
