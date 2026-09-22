@@ -91,9 +91,10 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
   }, [releaseControl]);
 
   const active = snapshot?.activeRun ?? null;
+  const controllableRunId = active && ["running", "verifying"].includes(active.state) ? active.runId : null;
   useEffect(() => {
-    if (humanRunId !== null && humanRunId !== active?.runId) releaseControl(humanRunId);
-  }, [active?.runId, humanRunId, releaseControl]);
+    if (humanRunId !== null && humanRunId !== controllableRunId) releaseControl(humanRunId);
+  }, [controllableRunId, humanRunId, releaseControl]);
   useEffect(() => {
     if (humanRunId !== null) document.querySelector<HTMLElement>('[aria-label="Live computer; click, type, paste, or scroll"]')?.focus();
   }, [humanRunId]);
@@ -112,7 +113,7 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
     catch (cause) { toast.error("Could not cancel run", { description: errorMessage(cause) }); }
   };
   const takeControl = async () => {
-    if (active === null || takingControl) return;
+    if (active === null || controllableRunId === null || takingControl) return;
     setTakingControl(true);
     try {
       const result = await rpc.call("computer.control.acquire", { hostId, runId: active.runId, clientId: clientId.current });
@@ -122,25 +123,26 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
     finally { setTakingControl(false); }
   };
   const sendInput = (input: HumanInput) => {
-    if (active === null || humanRunId !== active.runId) return;
+    if (active === null || humanRunId !== controllableRunId) return;
     inputQueue.current = inputQueue.current.then(() => rpc.call("computer.control.input", { hostId, runId: active.runId, clientId: clientId.current, input })).catch((cause) => {
       setHumanRunId(null);
       toast.error("Computer input disconnected", { description: errorMessage(cause) });
     });
   };
-  const connected = error === null && connection === "connected" && (viewed === null || !["disconnected", "not-found"].includes(liveStatus));
-  const statusLabel = humanRunId === active?.runId ? "You’re controlling" : viewed === null ? (connection === "connected" ? "Connected" : "Disconnected") : liveStatus === "live" ? "Connected" : liveStatus === "paused" ? "Paused" : liveStatus === "redacted" ? "Hidden" : liveStatus === "disconnected" || liveStatus === "not-found" ? "Disconnected" : "Connecting";
+  const hasHumanControl = humanRunId !== null && humanRunId === controllableRunId;
+  const connected = hasHumanControl || (error === null && connection === "connected" && (viewed === null || !["disconnected", "not-found"].includes(liveStatus)));
+  const statusLabel = hasHumanControl ? "You’re controlling" : viewed === null ? (connection === "connected" ? "Connected" : "Disconnected") : liveStatus === "live" ? "Connected" : liveStatus === "paused" ? "Paused" : liveStatus === "redacted" ? "Hidden" : liveStatus === "disconnected" || liveStatus === "not-found" ? "Disconnected" : "Connecting";
 
   return <div className="group relative h-full min-h-0 overflow-hidden bg-black text-white">
-    {viewed !== null ? <LiveView runId={viewed.runId} fill interactive={humanRunId === active?.runId} onInput={sendInput} onStatusChange={setLiveStatus} /> : <IdleView />}
+    {viewed !== null ? <LiveView runId={viewed.runId} fill interactive={hasHumanControl} onInput={sendInput} onStatusChange={setLiveStatus} /> : <IdleView />}
 
-    {active !== null && humanRunId !== active.runId ? <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-black/0 opacity-0 transition-opacity group-hover:bg-black/25 group-hover:opacity-100 group-focus-within:bg-black/25 group-focus-within:opacity-100"><button type="button" onClick={() => void takeControl()} disabled={takingControl} className="pointer-events-auto inline-flex min-h-9 items-center gap-2 rounded-md bg-white px-3 text-xs font-medium text-black shadow-lg hover:bg-white/90 disabled:opacity-60">{takingControl ? <Icon name="Loading" className="size-4 animate-spin" aria-hidden="true" /> : <Icon name="Cursor" className="size-4" aria-hidden="true" />}{takingControl ? "Taking control…" : "Take control"}</button></div> : null}
+    {controllableRunId !== null && humanRunId !== controllableRunId ? <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-black/0 opacity-0 transition-opacity group-hover:bg-black/25 group-hover:opacity-100 group-focus-within:bg-black/25 group-focus-within:opacity-100"><button type="button" onClick={() => void takeControl()} disabled={takingControl} className="pointer-events-auto inline-flex min-h-9 items-center gap-2 rounded-md bg-white px-3 text-xs font-medium text-black shadow-lg hover:bg-white/90 disabled:opacity-60">{takingControl ? <Icon name="Loading" className="size-4 animate-spin" aria-hidden="true" /> : <Icon name="Cursor" className="size-4" aria-hidden="true" />}{takingControl ? "Taking control…" : "Take control"}</button></div> : null}
 
     {active !== null ? <div className="absolute left-3 top-3 z-20 flex max-w-[calc(100%-6rem)] items-center gap-3 rounded-lg bg-black/70 px-3 py-2 shadow backdrop-blur"><div className="min-w-0"><div className="text-[10px] font-medium uppercase tracking-wide text-white/50">{RUN_STATE_LABEL[active.state] ?? active.state}</div><p className="truncate text-xs">{active.route.goal}</p></div><button type="button" onClick={() => void cancel()} className="shrink-0 rounded-md bg-white/10 px-2 py-1 text-[11px] hover:bg-white/20">Cancel</button></div> : null}
     {snapshot.queue.length > 0 ? <div className="absolute right-3 top-3 z-20 rounded-full bg-black/70 px-3 py-1.5 text-xs shadow backdrop-blur">{snapshot.queue.length} queued</div> : null}
     {active === null && selectedRunId !== null ? <div className="absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-full bg-black/70 px-3 py-1.5 text-xs text-white/70 shadow backdrop-blur">Selected run is not controlling the computer.</div> : null}
 
-    <button type="button" disabled={humanRunId !== active?.runId} onClick={() => releaseControl()} title={humanRunId === active?.runId ? "Release control" : statusLabel} className="absolute bottom-3 left-3 z-20 flex items-center gap-2 rounded-full bg-black/75 px-3 py-1.5 text-xs shadow backdrop-blur disabled:pointer-events-none disabled:opacity-100"><span className={`size-1.5 rounded-full ${connected ? "bg-emerald-400" : liveStatus === "disconnected" ? "bg-red-400" : "bg-amber-400"}`} aria-hidden="true" /><span>{statusLabel}</span></button>
+    <button type="button" disabled={!hasHumanControl} onClick={() => releaseControl()} title={hasHumanControl ? "Release control" : statusLabel} className="absolute bottom-3 left-3 z-20 flex items-center gap-2 rounded-full bg-black/75 px-3 py-1.5 text-xs shadow backdrop-blur disabled:pointer-events-none disabled:opacity-100"><span className={`size-1.5 rounded-full ${connected ? "bg-emerald-400" : liveStatus === "disconnected" ? "bg-red-400" : "bg-amber-400"}`} aria-hidden="true" /><span>{statusLabel}</span></button>
     <div aria-label="Computer host" className="pointer-events-none absolute bottom-3 right-3 z-20 flex max-w-[45%] items-center gap-1.5 rounded-full bg-black/75 px-3 py-1.5 text-xs text-white/70 shadow backdrop-blur"><Icon name="Laptop" className="size-3.5 shrink-0" aria-hidden="true" /><span className="truncate">{hostName ?? hostId}</span></div>
   </div>;
 }

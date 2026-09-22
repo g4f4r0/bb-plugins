@@ -208,7 +208,8 @@ export default experimental_defineHostEntry({ contract: hostContract, experiment
   "computer.control.acquire": async (input, context) => {
     ensureStorage(context.experimental_paths.dataDir);
     const job = jobs.get(input.runId);
-    if (!job?.adapter) throw new Error("The computer is not ready for control");
+    const run = runs.get(input.runId);
+    if (!job?.adapter || !run || !["running", "verifying"].includes(run.state)) throw new Error("The computer is not ready for control");
     return { state: await job.controlGate.acquire(input.clientId, context.signal) };
   },
   "computer.control.release": async (input, context) => {
