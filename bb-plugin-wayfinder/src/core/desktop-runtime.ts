@@ -7,7 +7,7 @@ import type { HumanInput } from "../contracts/run.js";
 import { ProcessCuaTransport, type CuaToolResult } from "../adapters/cua-client.js";
 import { errorMessage } from "./errors.js";
 
-export const DESKTOP_CAPABILITY_TOOLS = ["get_desktop_state", "get_accessibility_tree", "get_window_state", "list_windows", "health_report", "click", "drag", "scroll", "type_text", "press_key", "move_cursor"] as const;
+export const DESKTOP_CAPABILITY_TOOLS = ["get_desktop_state", "get_accessibility_tree", "get_window_state", "list_windows", "health_report", "click", "drag", "scroll", "type_text", "press_key"] as const;
 const MANIFEST = JSON.stringify({
   version: 1,
   mode: "bounded",
@@ -150,13 +150,6 @@ export class DesktopRuntime {
     const transport = this.#transport!;
     const call = desktopInputCall(input);
     await transport.call(call.tool, call.payload, signal);
-  }
-
-  /** Move Cua's visible agent cursor without synthesizing a click or moving the user's pointer. */
-  async pointAt(x: number, y: number, signal: AbortSignal): Promise<void> {
-    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) return;
-    await this.#start(signal);
-    await this.#transport!.call("move_cursor", { target: DESKTOP_TARGET, x, y }, signal);
   }
 
   async dispose(): Promise<void> {

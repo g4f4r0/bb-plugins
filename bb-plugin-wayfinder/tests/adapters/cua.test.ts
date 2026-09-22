@@ -34,7 +34,7 @@ describe("Cua CLI responses", () => {
   });
 
   it("keeps capture, accessibility inspection, and bounded input in the reviewed manifest", () => {
-    expect(DESKTOP_CAPABILITY_TOOLS).toEqual(expect.arrayContaining(["get_desktop_state", "get_accessibility_tree", "get_window_state", "list_windows", "click", "drag", "type_text", "move_cursor"]));
+    expect(DESKTOP_CAPABILITY_TOOLS).toEqual(expect.arrayContaining(["get_desktop_state", "get_accessibility_tree", "get_window_state", "list_windows", "click", "drag", "type_text"]));
     expect(DESKTOP_CAPABILITY_TOOLS).not.toEqual(expect.arrayContaining(["launch_app", "kill_app", "clipboard_read"]));
   });
 

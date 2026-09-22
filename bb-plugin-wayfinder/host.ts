@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import process from "node:process";
 import { Effect } from "effect";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -132,9 +132,8 @@ async function waitForJson(url: string, signal: AbortSignal, timeoutMs = 10_000)
   throw wayfinderError("provider-unavailable", "observe", "Fortress CDP endpoint did not become ready", { retryable: true });
 }
 async function launch(route: WayfinderRoute, signal: AbortSignal, controlGate: ControlGate, binding: NativeBrowserBinding | null) {
-  const pointAt = (x: number, y: number, actionSignal: AbortSignal) => desktopRuntime(dirname(artifactRoot())).pointAt(x, y, actionSignal);
   if (binding !== null) {
-    const adapter = await BrowserAdapter.connectFortress({ route, hostId: route.identity.hostId, tabId: binding.tabId, resourceGeneration: `native_${Date.now()}`, wsEndpoint: binding.wsEndpoint, signal, controlGate, pointAt });
+    const adapter = await BrowserAdapter.connectFortress({ route, hostId: route.identity.hostId, tabId: binding.tabId, resourceGeneration: `native_${Date.now()}`, wsEndpoint: binding.wsEndpoint, signal, controlGate });
     return { server: null, profile: null, child: null, adapter, fixtureOrigin: null };
   }
   const fortress = await resolveFortressExecutable();
@@ -170,7 +169,7 @@ async function launch(route: WayfinderRoute, signal: AbortSignal, controlGate: C
     tab ??= fallbackTab;
     if (typeof tab?.id !== "string") throw wayfinderError("provider-unavailable", "observe", "Fortress did not expose a page target");
     await new Promise((resolve) => setTimeout(resolve, 250));
-    const adapter = await BrowserAdapter.connectFortress({ route, hostId: route.identity.hostId, tabId: tab.id, resourceGeneration: `fortress_${Date.now()}`, wsEndpoint: ws, signal, controlGate, pointAt });
+    const adapter = await BrowserAdapter.connectFortress({ route, hostId: route.identity.hostId, tabId: tab.id, resourceGeneration: `fortress_${Date.now()}`, wsEndpoint: ws, signal, controlGate });
     const readyBy = Date.now() + 15_000;
     while (Date.now() < readyBy) {
       signal.throwIfAborted();
@@ -285,7 +284,7 @@ async function stopProcess(child: ChildProcess): Promise<boolean> {
   child.kill("SIGKILL");
   return waitForExit(child, 2_000);
 }
-async function cleanup(runId: string) { const job = jobs.get(runId); if (!job) return; let failure: string | null = null; try { if (job.adapter) await job.adapter.close({ signal: new AbortController().signal, expectedHostId: runs.get(runId)!.route.identity.hostId }); } catch (error) { failure = error instanceof Error ? error.message : "Browser cleanup failed"; } if (job.process && !await stopProcess(job.process)) failure = failure ?? "Fortress process did not exit after forced cleanup"; if (job.server) await new Promise<void>((resolve) => job.server!.close(() => resolve())); if (job.profile) await rm(job.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch((error) => { failure = failure ?? (error instanceof Error ? error.message : "Profile cleanup failed"); }); const run = runs.get(runId); if (run) runs.set(runId, update(run, { activeController: false, cleanup: { state: failure === null ? "completed" : "incomplete", message: failure, completedAt: failure === null ? Date.now() : null } })); jobs.delete(runId); if (jobs.size === 0 && desktopViewers.size === 0) await stopDesktopRuntime(); }
+async function cleanup(runId: string) { const job = jobs.get(runId); if (!job) return; let failure: string | null = null; try { if (job.adapter) await job.adapter.close({ signal: new AbortController().signal, expectedHostId: runs.get(runId)!.route.identity.hostId }); } catch (error) { failure = error instanceof Error ? error.message : "Browser cleanup failed"; } if (job.process && !await stopProcess(job.process)) failure = failure ?? "Fortress process did not exit after forced cleanup"; if (job.server) await new Promise<void>((resolve) => job.server!.close(() => resolve())); if (job.profile) await rm(job.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch((error) => { failure = failure ?? (error instanceof Error ? error.message : "Profile cleanup failed"); }); const run = runs.get(runId); if (run) runs.set(runId, update(run, { activeController: false, cleanup: { state: failure === null ? "completed" : "incomplete", message: failure, completedAt: failure === null ? Date.now() : null } })); jobs.delete(runId); }
 
 async function probe(hostId: string, provider: "fixture" | "jev" | "openrouter", dataDir: string): Promise<HostCapabilities> {
   const fortressReady = await resolveFortressExecutable() !== null;
