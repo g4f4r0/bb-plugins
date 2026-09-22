@@ -11,6 +11,8 @@ describe("Wayfinder server integration", () => {
     expect(harness.inspection.registrations.rpcMethods).toContain("runs.start");
     expect(harness.inspection.registrations.httpRoutes.map((route) => route.path)).toContain("/v1/artifacts/inline");
     expect(harness.inspection.registrations.agentTools.map((tool) => tool.name)).toContain("wayfinder_start");
+    expect(harness.inspection.registrations.cli?.name).toBe("wayfinder");
+    expect(harness.inspection.registrations.cli?.commands.map((command) => command.name)).toEqual(["doctor", "setup"]);
     await harness.lifecycle.dispose();
   });
 

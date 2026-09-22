@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { CuaAdapter } from "../../src/adapters/cua.js";
 import { parseCuaResult, type CuaToolResult, type CuaTransport } from "../../src/adapters/cua-client.js";
+import { DESKTOP_CAPABILITY_TOOLS } from "../../src/core/desktop-runtime.js";
 import { sha256 } from "../../src/core/hash.js";
 import { makeRoute } from "../contracts/fixtures.js";
 
@@ -19,6 +20,11 @@ class FakeCua implements CuaTransport {
 }
 
 describe("Cua CLI responses", () => {
+  it("keeps capture, accessibility inspection, and bounded input in the reviewed manifest", () => {
+    expect(DESKTOP_CAPABILITY_TOOLS).toEqual(expect.arrayContaining(["get_desktop_state", "get_accessibility_tree", "get_window_state", "list_windows", "click", "type_text"]));
+    expect(DESKTOP_CAPABILITY_TOOLS).not.toEqual(expect.arrayContaining(["launch_app", "kill_app", "clipboard_read"]));
+  });
+
   it("accepts direct desktop-state output and fails closed on manifest refusals", () => {
     expect(parseCuaResult(JSON.stringify({ screen_width: 1280, screenshot_png_b64: "YWJj" }))).toMatchObject({ structuredContent: { screen_width: 1280, screenshot_png_b64: "YWJj" } });
     expect(parseCuaResult(JSON.stringify({ status: "refused", refusal: { code: "outside_manifest", message: "desktop denied" } }))).toMatchObject({ isError: true, content: [{ type: "text", text: "desktop denied" }] });

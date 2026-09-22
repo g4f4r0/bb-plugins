@@ -211,6 +211,19 @@ Browser-only agent runs may still use BB's isolated built-in browser on macOS/Wi
 
 No responsive, annotation, or duplicate browser-management layer was added.
 
+## Cross-platform computer setup update (2026-09-22)
+
+Wayfinder now treats the operating system's logged-in desktop as an external prerequisite. It never installs a desktop environment, creates desktop shortcuts, or substitutes a browser window for the computer. The plugin owns only its private embedded Cua Driver process, reviewed bounded capability manifest, capture/input requests, and private evidence pipeline.
+
+`bb wayfinder doctor [--machine <hostId>] [--json]` performs host-native checks for the graphical session, pinned Cua Driver, a real whole-desktop screenshot, accessibility-tree response, bounded input readiness, functional H.264 encoding, and optional Fortress availability. `bb wayfinder setup` installs the supported Cua Driver 0.28.2 from the canonical fixed `https://cua.ai/driver/install.sh` or `install.ps1` endpoint when missing or mismatched, launches the macOS permission flow without blocking the CLI, and reruns the same checks. Installer downloads are HTTPS-only, capped at 1 MiB, written to a private temporary directory, and removed after execution. Windows installation disables persistent autostart because Wayfinder owns a private embedded daemon.
+
+The reviewed Cua manifest now includes whole-desktop capture, accessibility-tree/window inspection, health checks, and bounded keyboard/pointer input. It still excludes application launch/kill, clipboard reads, shell access, history, and unrestricted permissions.
+
+Live verification:
+
+- Debian 13 `server`: Cua 0.28.2, 1280x720 desktop capture in 133 ms, libx264 functional, Fortress available. The machine correctly reports not ready for semantic desktop automation because its Xvfb/Openbox session has no AT-SPI session bus.
+- macOS ARM64 `pro`: `bb wayfinder setup` installed Cua 0.28.2 through the canonical installer. Graphical session, accessibility-tree response, and libx264 pass. Screen capture remains blocked until the user approves the macOS Screen Recording prompt opened by setup; the command returns instead of waiting indefinitely for that approval.
+
 ### Deferred follow-up
 
 A real BB browser lease, Jev credential resolution through Infisical, native accessibility, and verified HTTPS sharing are prerequisites for the remaining live-provider gates. No speculative fallback or external mutation was added.

@@ -7,6 +7,23 @@ import { routeSchema } from "./route.js";
 import { humanInputSchema, runRecordSchema } from "./run.js";
 
 const capabilityStateSchema = z.enum(["ready", "setup-required", "unavailable"]);
+const diagnosticStateSchema = z.enum(["ready", "warning", "missing"]);
+const diagnosticCheckSchema = z.object({ state: diagnosticStateSchema, detail: z.string().min(1).max(1_000) }).strict();
+
+export const computerDiagnosticsSchema = z.object({
+  platform: z.object({ os: z.string().min(1).max(100), arch: z.string().min(1).max(100) }).strict(),
+  graphicalSession: diagnosticCheckSchema,
+  cua: diagnosticCheckSchema.extend({ version: z.string().min(1).max(100).nullable() }).strict(),
+  capture: diagnosticCheckSchema.extend({ latencyMs: z.number().int().nonnegative().max(60_000).nullable(), width: z.number().int().positive().max(16_384).nullable(), height: z.number().int().positive().max(16_384).nullable() }).strict(),
+  accessibility: diagnosticCheckSchema,
+  input: diagnosticCheckSchema,
+  video: diagnosticCheckSchema.extend({ encoder: z.string().min(1).max(100).nullable() }).strict(),
+  browser: diagnosticCheckSchema,
+  ready: z.boolean(),
+  checkedAt: unixMsSchema,
+}).strict();
+
+export type ComputerDiagnostics = z.infer<typeof computerDiagnosticsSchema>;
 
 export const hostCapabilitiesSchema = z
   .object({
@@ -65,6 +82,14 @@ export const hostCapabilitiesSchema = z
   .strict();
 
 export const hostContract = defineRpcContract({
+  "setup.inspect": {
+    input: z.object({ expectedHostId: entityIdSchema }).strict(),
+    output: computerDiagnosticsSchema,
+  },
+  "setup.apply": {
+    input: z.object({ expectedHostId: entityIdSchema, requestPermissions: z.boolean() }).strict(),
+    output: computerDiagnosticsSchema,
+  },
   "capabilities.probe": {
     input: z.object({ expectedHostId: entityIdSchema, provider: z.enum(["fixture", "jev", "openrouter"]) }).strict(),
     output: hostCapabilitiesSchema,

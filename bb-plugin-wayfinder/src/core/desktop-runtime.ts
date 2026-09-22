@@ -6,13 +6,14 @@ import { spawn, type ChildProcess } from "node:child_process";
 import type { HumanInput } from "../contracts/run.js";
 import { ProcessCuaTransport } from "../adapters/cua-client.js";
 
+export const DESKTOP_CAPABILITY_TOOLS = ["get_desktop_state", "get_accessibility_tree", "get_window_state", "list_windows", "health_report", "click", "scroll", "type_text", "press_key"] as const;
 const MANIFEST = JSON.stringify({
   version: 1,
   mode: "bounded",
   expires_after: "12h",
   idle_timeout: "10m",
   resources: { desktop: { display: true } },
-  allow: { tools: ["get_desktop_state", "click", "scroll", "type_text", "press_key"] },
+  allow: { tools: DESKTOP_CAPABILITY_TOOLS },
 });
 const MAX_FRAME_BYTES = 1_100_000;
 const DESKTOP_TARGET = { kind: "desktop", display_id: "primary" } as const;
@@ -25,9 +26,15 @@ export interface DesktopFrame {
   readonly capturedAt: number;
 }
 
-async function executable(): Promise<string | null> {
+export async function resolveCuaExecutable(): Promise<string | null> {
   const name = process.platform === "win32" ? "cua-driver.exe" : "cua-driver";
-  const candidates = [process.env.WAYFINDER_CUA_DRIVER, join(homedir(), ".local", "bin", name), ...(process.env.PATH ?? "").split(process.platform === "win32" ? ";" : ":").filter(Boolean).map((directory) => join(directory, name))].filter((value): value is string => Boolean(value));
+  const candidates = [
+    process.env.WAYFINDER_CUA_DRIVER,
+    join(homedir(), ".local", "bin", name),
+    join(homedir(), ".cua-driver", "packages", "current", name),
+    ...(process.platform === "darwin" ? ["/Applications/CuaDriver.app/Contents/MacOS/cua-driver"] : []),
+    ...(process.env.PATH ?? "").split(process.platform === "win32" ? ";" : ":").filter(Boolean).map((directory) => join(directory, name)),
+  ].filter((value): value is string => Boolean(value));
   for (const candidate of candidates) {
     try { await access(candidate); return candidate; } catch { /* next */ }
   }
@@ -78,12 +85,24 @@ export class DesktopRuntime {
 
   constructor(dataDir: string) { this.#dataDir = dataDir; }
 
-  async available(): Promise<boolean> { return await executable() !== null; }
+  async available(): Promise<boolean> { return await resolveCuaExecutable() !== null; }
 
   async capture(signal: AbortSignal): Promise<DesktopFrame> {
     if (this.#capture) return this.#capture;
     this.#capture = this.#captureOnce(signal).finally(() => { this.#capture = null; });
     return this.#capture;
+  }
+
+  async inspectAccessibility(signal: AbortSignal): Promise<{ available: boolean; detail: string }> {
+    await this.#start(signal);
+    const result = await this.#transport!.call("get_accessibility_tree", {}, signal);
+    const data = result.structuredContent ?? {};
+    const windows = Array.isArray(data.windows) ? data.windows.length : null;
+    const processes = Array.isArray(data.processes) ? data.processes.length : null;
+    if (windows !== null || processes !== null) {
+      return { available: true, detail: `Accessibility tree responded (${windows ?? 0} windows, ${processes ?? 0} processes).` };
+    }
+    return { available: Object.keys(data).length > 0, detail: Object.keys(data).length > 0 ? "Accessibility tree responded." : "Accessibility tree returned no data." };
   }
 
   async input(input: HumanInput, signal: AbortSignal): Promise<void> {
@@ -147,7 +166,7 @@ export class DesktopRuntime {
     if (this.#transport !== null) return;
     if (this.#starting) return this.#starting;
     this.#starting = (async () => {
-      this.#binary = await executable();
+      this.#binary = await resolveCuaExecutable();
       if (this.#binary === null) throw new Error(`Cua Driver is not installed for ${process.platform}/${process.arch}`);
       await mkdir(this.#dataDir, { recursive: true, mode: 0o700 });
       const manifest = join(this.#dataDir, "desktop-capabilities.json");

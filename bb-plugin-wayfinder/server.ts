@@ -460,6 +460,76 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
   const liveHandler = createLiveFrameHandler({ relay, authorize: async (runId) => (await runIndex(runId)) !== undefined });
   bb.http.route("GET", liveHttpRoutes.frame, (c) => liveHandler(c.req.raw).catch(artifactErrorResponse));
 
+  function parseComputerCommand(argv: readonly string[]): { command: "doctor" | "setup"; machine: string | null; json: boolean; requestPermissions: boolean } {
+    const command = argv[0];
+    if (command !== "doctor" && command !== "setup") throw new Error("Usage: bb wayfinder <doctor|setup> [--machine <hostId>] [--json] [--no-permissions]");
+    let machine: string | null = null;
+    let json = false;
+    let requestPermissions = true;
+    for (let index = 1; index < argv.length; index += 1) {
+      const argument = argv[index];
+      if (argument === "--machine") {
+        const value = argv[index + 1];
+        if (!value) throw new Error("--machine requires a host ID");
+        machine = entityIdSchema.parse(value);
+        index += 1;
+      } else if (argument === "--json") json = true;
+      else if (argument === "--no-permissions" && command === "setup") requestPermissions = false;
+      else throw new Error(`Unknown option: ${argument}`);
+    }
+    return { command, machine, json, requestPermissions };
+  }
+
+  const formatDiagnostics = (machine: { id: string; name: string }, report: import("./src/contracts/host.js").ComputerDiagnostics): string => {
+    const rows = [
+      ["Graphical session", report.graphicalSession],
+      ["Cua Driver", report.cua],
+      ["Desktop capture", report.capture],
+      ["Accessibility tree", report.accessibility],
+      ["Keyboard and pointer", report.input],
+      ["H.264 video", report.video],
+      ["Browser", report.browser],
+    ] as const;
+    const mark = { ready: "OK", warning: "WARN", missing: "MISSING" } as const;
+    return [
+      `Wayfinder computer: ${machine.name} (${machine.id})`,
+      `Platform: ${report.platform.os}/${report.platform.arch}`,
+      ...rows.map(([label, check]) => `${mark[check.state].padEnd(7)} ${label}: ${check.detail}`),
+      report.ready ? "READY   Computer control, screenshots, accessibility, and H.264 video are ready." : "NOT READY   Fix the WARN or MISSING checks, then run bb wayfinder doctor again.",
+    ].join("\n") + "\n";
+  };
+
+  bb.cli.register({
+    name: "wayfinder",
+    summary: "Set up and diagnose Wayfinder computer control",
+    commands: [
+      { name: "doctor", summary: "Verify the current computer, Cua Driver, permissions, screenshots, accessibility, input, and video", usage: "bb wayfinder doctor [--machine <hostId>] [--json]" },
+      { name: "setup", summary: "Install the supported Cua Driver and verify the current computer without replacing its desktop", usage: "bb wayfinder setup [--machine <hostId>] [--json] [--no-permissions]" },
+    ],
+    async run(argv, context) {
+      try {
+        const options = parseComputerCommand(argv);
+        const machines = await bb.sdk.hosts.list();
+        let hostId = options.machine;
+        if (hostId === null && context.threadId) hostId = (await identityFor(context.threadId)).hostId;
+        if (hostId === null) {
+          const connected = machines.filter((machine) => machine.status === "connected");
+          if (connected.length === 1) hostId = connected[0]!.id;
+          else throw new Error("Choose a computer with --machine <hostId>, or run this command from a thread with an environment.");
+        }
+        const machine = machines.find((candidate) => candidate.id === hostId);
+        if (!machine) throw new Error(`Computer ${hostId} is not enrolled.`);
+        if (machine.status !== "connected") throw new Error(`Computer ${machine.name} is offline.`);
+        const report = options.command === "doctor"
+          ? await host.call("setup.inspect", { expectedHostId: hostId }, { hostId, signal: context.signal, timeoutMs: 30_000 })
+          : await host.call("setup.apply", { expectedHostId: hostId, requestPermissions: options.requestPermissions }, { hostId, signal: context.signal, timeoutMs: 240_000 });
+        return { exitCode: report.ready ? 0 : 1, stdout: options.json ? `${JSON.stringify({ hostId, hostName: machine.name, ...report }, null, 2)}\n` : formatDiagnostics(machine, report) };
+      } catch (error) {
+        return { exitCode: 2, stderr: `${error instanceof Error ? error.message : "Wayfinder computer command failed"}\n` };
+      }
+    },
+  });
+
   bb.agents.registerTool({
     name: "wayfinder_start",
     description: "Start one bounded Wayfinder browser or filesystem verification run. The computer host and environment come from this thread, not from the route.",

@@ -26,6 +26,7 @@ import { JevDecisionProvider } from "./src/adapters/jev.js";
 import { createInfisicalClient, type InfisicalScope } from "./src/core/infisical.js";
 import { resolveFortressExecutable } from "./src/core/browser-runtime.js";
 import { DesktopRuntime } from "./src/core/desktop-runtime.js";
+import { inspectComputer, setupComputer } from "./src/core/computer-setup.js";
 import { ClipRecorder, encodeClip, selectH264Encoder } from "./src/media/video.js";
 const INFISICAL_SCOPE: InfisicalScope = {
   projectId: "bd53277c-43aa-4093-8aea-1e4040fc1962",
@@ -303,6 +304,8 @@ async function probe(hostId: string, provider: "fixture" | "jev" | "openrouter",
 }
 
 export default experimental_defineHostEntry({ contract: hostContract, experimental_signals: hostSignals, handlers: {
+  "setup.inspect": async (_input, context) => inspectComputer(join(context.experimental_paths.dataDir, "computer-setup"), context.signal),
+  "setup.apply": async (input, context) => setupComputer(join(context.experimental_paths.dataDir, "computer-setup"), { requestPermissions: input.requestPermissions }, context.signal),
   "capabilities.probe": async (input, context) => probe(input.expectedHostId, input.provider, context.experimental_paths.dataDir),
   "runs.start": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); context.signal.throwIfAborted(); if (runs.has(input.runId) || loadRun(input.runId)) return { accepted: true as const, runId: input.runId }; const run = initialRun(input.runId, input.routeHash, input.route); runs.set(input.runId, run); const abort = new AbortController(); const lease = context.experimental_retainWorker(); const emit: Emit = (signal, payload) => { void context.experimental_emitSignal(signal, payload as never).catch(() => undefined); }; const job = { abort, process: null, profile: null, server: null, adapter: null, artifact: null, emit, capture: null, controlGate: desktopControlGate, browserBinding: input.browserBinding }; jobs.set(input.runId, job); void execute(run).finally(() => lease.dispose()); emit("runChanged", { runId: input.runId, revision: run.revision }); return { accepted: true as const, runId: input.runId }; },
   "runs.status": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); const run = runs.get(input.runId) ?? loadRun(input.runId); if (!run) throw new Error("Run not found"); runs.set(input.runId, run); return run; },
