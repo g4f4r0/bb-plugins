@@ -224,7 +224,7 @@ describe("Computer panel", () => {
     const slot = renderSlot(panel, { threadId: "thr_a", params: null }, { rpc: { "computer.machines": () => new Promise(() => {}) } as never });
     expect(slot.getByRole("status", { name: "Loading computers" })).toBeDefined();
     expect(slot.queryByText("Computers")).toBeNull();
-    expect(slot.getByRole("button", { name: "Refresh computers" })).toBeDefined();
+    expect(slot.queryByRole("button", { name: "Refresh computers" })).toBeNull();
     slot.lifecycle.unmount();
   });
 

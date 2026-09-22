@@ -101,7 +101,11 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
     const timer = setInterval(() => { if (panelVisible.current && document.visibilityState !== "hidden") void refresh(); }, SNAPSHOT_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [hostId, refresh]);
-  useRealtime(COMPUTER_REALTIME_CHANNEL, () => { if (panelVisible.current) void refresh(); });
+  useRealtime(COMPUTER_REALTIME_CHANNEL, () => {
+    if (!panelVisible.current) return;
+    if (hostId === null) void refreshMachines().catch((cause) => setError(errorMessage(cause)));
+    else void refresh();
+  });
 
   useEffect(() => {
     const node = panelRoot.current;
@@ -187,7 +191,7 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
     catch (cause) { toast.error("Could not cancel run", { description: errorMessage(cause) }); }
   };
 
-  if (hostId === null) return <MachinePicker ref={panelRoot} machines={machines} threadHostId={threadHostId} error={error} onRefresh={refreshMachines} onSelect={selectMachine} />;
+  if (hostId === null) return <MachinePicker ref={panelRoot} machines={machines} threadHostId={threadHostId} error={error} onSelect={selectMachine} />;
   const machine = machines?.find((item) => item.hostId === hostId);
   const hostName = machine?.name ?? hostId;
   const connected = error === null && connection === "connected" && liveStatus === "live";
@@ -210,12 +214,11 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
   </div>;
 }
 
-function MachinePicker({ ref, machines, threadHostId, error, onRefresh, onSelect }: { ref: Ref<HTMLDivElement>; machines: Machine[] | null; threadHostId: string | null; error: string | null; onRefresh: () => Promise<void>; onSelect: (hostId: string) => void }) {
+function MachinePicker({ ref, machines, threadHostId, error, onSelect }: { ref: Ref<HTMLDivElement>; machines: Machine[] | null; threadHostId: string | null; error: string | null; onSelect: (hostId: string) => void }) {
   const thread = machines?.filter((machine) => machine.hostId === threadHostId) ?? [];
   const others = machines?.filter((machine) => machine.hostId !== threadHostId) ?? [];
   return <div ref={ref} className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
-    <div className="min-h-0 flex-1 overflow-auto"><div className="relative m-auto w-full max-w-3xl px-6 py-12">
-      <button type="button" aria-label="Refresh computers" onClick={() => void onRefresh()} className="absolute right-6 top-4 grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><Icon name="RefreshCw" className="size-4" aria-hidden="true" /></button>
+    <div className="min-h-0 flex-1 overflow-auto"><div className="m-auto w-full max-w-3xl px-6 py-12">
       {error ? <p role="alert" className="mb-4 text-sm text-destructive-text">{error}</p> : null}
       {machines === null ? <MachineListSkeleton /> : <>{thread.length > 0 ? <MachineGroup title="Thread computer" machines={thread} onSelect={onSelect} /> : null}<MachineGroup title={thread.length > 0 ? "Other computers" : "Available computers"} machines={others} onSelect={onSelect} />{machines.length === 0 ? <p className="text-sm text-muted-foreground">No computers enrolled.</p> : null}</>}
     </div></div>
