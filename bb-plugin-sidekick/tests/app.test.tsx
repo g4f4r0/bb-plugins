@@ -54,6 +54,7 @@ describe("Sidekick frontend", () => {
     expect(slot.getByRole("dialog")).toBeDefined();
     expect(slot.getByText("New Sidekick agent")).toBeDefined();
     expect(slot.getByText("Agent instructions")).toBeDefined();
+    expect(slot.getByRole("textbox", { name: /^Agent instructions/u }).getAttribute("maxlength")).toBe("4096");
     expect(slot.getByText("Provider and model")).toBeDefined();
     expect(slot.getByRole("button", { name: "Choose provider and model" })).toBeDefined();
     expect(slot.getByRole("textbox", { name: "Search skills" })).toBeDefined();

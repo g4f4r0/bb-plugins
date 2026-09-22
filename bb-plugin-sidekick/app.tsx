@@ -129,8 +129,8 @@ function ProfileEditor({ initial, skillOptions, defaultExecution, busy, onCancel
         </Field>
       </div>
       <Field label="Description"><Input value={draft.description} maxLength={300} onChange={(event) => set("description", event.target.value)} /></Field>
-      <Field label="Agent instructions" hint="Identity, responsibilities, boundaries, and working style injected when the provider session starts.">
-        <textarea className={textareaClass} rows={11} maxLength={3500} value={draft.instructions} onChange={(event) => set("instructions", event.target.value)} />
+      <Field label="Agent instructions" hint="Up to 4,096 characters. The combined shared and agent instructions currently truncate above 4,000 characters when the provider session starts.">
+        <textarea className={textareaClass} rows={11} maxLength={4096} value={draft.instructions} onChange={(event) => set("instructions", event.target.value)} />
       </Field>
       <Field complex label="Provider and model" hint="Uses BB's live provider catalog and the same model and reasoning picker as the composer.">
         {pickerValue ? (

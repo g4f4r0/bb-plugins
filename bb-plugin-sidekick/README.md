@@ -33,9 +33,11 @@ presets, visual workflows, handoffs, live-agent objects, or automations.
    working style. There is no separate behavior field; behavior belongs in the
    agent's instructions.
 
-The shared field accepts up to 1,200 characters. BB limits the combined dynamic
-instruction block to 4,096 characters. Setting changes take effect when the
-provider session next starts.
+Each instruction field accepts up to 4,096 characters. BB currently limits
+Sidekick's combined dynamic instruction block to 4,096 characters, and Sidekick
+currently truncates that block to 4,000. Do not rely on instructions past that
+combined limit until the runtime instruction path is updated. Setting changes
+take effect when the provider session next starts.
 
 ```sh
 bb plugin config sidekick set sharedInstructions "Your shared instructions"
