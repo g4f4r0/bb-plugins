@@ -6,24 +6,26 @@ import {
   PROFILE_SLUG_RE,
   PROFILES_CHANGED,
   REASONING_LEVELS,
+  SERVICE_TIERS,
   SKILL_NAME_RE,
   parseSkillNames,
 } from "./shared.js";
 
 const slugSchema = z.string().regex(PROFILE_SLUG_RE, "use lowercase letters, digits, and dashes; maximum 40 characters");
-const skillNameSchema = z.string().regex(SKILL_NAME_RE, "use lowercase letters, digits, and dashes; maximum 64 characters");
+const skillNameSchema = z.string().regex(SKILL_NAME_RE, "use lowercase letters, digits, dashes, underscores, and namespace colons; maximum 128 characters");
+const AGENT_INSTRUCTIONS_MAX_CHARS = 3_500;
 
 const profileInputShape = {
   slug: slugSchema,
   name: z.string().trim().min(1).max(80),
   description: z.string().trim().max(300).default(""),
-  instructions: z.string().trim().min(1).max(2_800),
+  instructions: z.string().trim().min(1).max(AGENT_INSTRUCTIONS_MAX_CHARS),
   providerId: z.string().trim().min(1).max(100).nullable().default(null),
   model: z.string().trim().min(1).max(200).nullable().default(null),
   reasoningLevel: z.enum(REASONING_LEVELS).nullable().default(null),
+  serviceTier: z.enum(SERVICE_TIERS).nullable().default(null),
   permissionMode: z.enum(PERMISSION_MODES).nullable().default(null),
   skills: z.array(skillNameSchema).max(12).default([]),
-  behavior: z.string().trim().max(600).default(""),
 };
 
 export const profileInputSchema = z
@@ -35,6 +37,13 @@ export const profileInputSchema = z
         code: "custom",
         path: [profile.providerId === null ? "providerId" : "model"],
         message: "providerId and model must both be set or both inherit",
+      });
+    }
+    if (profile.providerId === null && profile.serviceTier !== null) {
+      context.addIssue({
+        code: "custom",
+        path: ["serviceTier"],
+        message: "serviceTier requires an explicit provider and model",
       });
     }
     if (new Set(profile.skills).size !== profile.skills.length) {
@@ -57,13 +66,13 @@ const profilePatchSchema = z
     slug: slugSchema.optional(),
     name: z.string().trim().min(1).max(80).optional(),
     description: z.string().trim().max(300).optional(),
-    instructions: z.string().trim().min(1).max(2_800).optional(),
+    instructions: z.string().trim().min(1).max(AGENT_INSTRUCTIONS_MAX_CHARS).optional(),
     providerId: z.string().trim().min(1).max(100).nullable().optional(),
     model: z.string().trim().min(1).max(200).nullable().optional(),
     reasoningLevel: z.enum(REASONING_LEVELS).nullable().optional(),
+    serviceTier: z.enum(SERVICE_TIERS).nullable().optional(),
     permissionMode: z.enum(PERMISSION_MODES).nullable().optional(),
     skills: z.array(skillNameSchema).max(12).optional(),
-    behavior: z.string().trim().max(600).optional(),
   })
   .strict();
 
@@ -77,6 +86,17 @@ const spawnInputSchema = z
   .strict();
 
 const projectSchema = z.object({ id: z.string(), name: z.string() }).strict();
+const skillOptionSchema = z.object({
+  name: skillNameSchema,
+  description: z.string().max(500).nullable(),
+}).strict();
+const executionSelectionSchema = z.object({
+  providerId: z.string().min(1),
+  model: z.string().min(1),
+  reasoningLevel: z.enum(REASONING_LEVELS),
+  serviceTier: z.enum(SERVICE_TIERS).nullable(),
+  permissionMode: z.enum(PERMISSION_MODES),
+}).strict();
 const okSchema = z.object({ ok: z.literal(true) }).strict();
 
 export const rpcContract = defineRpcContract({
@@ -86,6 +106,8 @@ export const rpcContract = defineRpcContract({
   "profiles.delete": { input: z.object({ id: z.string().min(1) }).strict(), output: okSchema },
   "profiles.spawn": { input: spawnInputSchema, output: z.object({ threadId: z.string() }).strict() },
   "projects.list": { input: z.null(), output: z.object({ projects: z.array(projectSchema) }).strict() },
+  "skills.list": { input: z.null(), output: z.object({ skills: z.array(skillOptionSchema) }).strict() },
+  "execution.default": { input: z.null(), output: executionSelectionSchema },
 });
 
 /** Migration indexes are durable IDs. Never edit or reorder shipped entries; append only. */
@@ -108,6 +130,13 @@ export const STORAGE_MIGRATIONS = [
    )`,
   `CREATE INDEX IF NOT EXISTS sidekick_profiles_sort_idx
      ON sidekick_profiles(sort_order, created_at)`,
+  `UPDATE sidekick_profiles
+     SET instructions = instructions || CASE
+       WHEN TRIM(behavior) = '' THEN ''
+       ELSE CHAR(10) || CHAR(10) || behavior
+     END,
+     behavior = ''`,
+  `ALTER TABLE sidekick_profiles ADD COLUMN service_tier TEXT`,
 ] as const;
 
 interface ProfileRow {
@@ -119,9 +148,9 @@ interface ProfileRow {
   provider_id: string | null;
   model: string | null;
   reasoning_level: string | null;
+  service_tier: string | null;
   permission_mode: string | null;
   skills_json: string;
-  behavior: string;
   sort_order: number;
   created_at: number;
   updated_at: number;
@@ -132,17 +161,16 @@ const DYNAMIC_INSTRUCTIONS_MAX_CHARS = 4_000;
 
 function renderProfileInstructions(profile: Profile, sharedInstructions: string): string {
   const sections = [
-    sharedInstructions ? "# Instructions for all Sidekick profiles\n" + sharedInstructions : "",
-    "# Sidekick profile",
-    `Profile name (data): ${JSON.stringify(profile.name)}`,
-    profile.description ? `Profile description (data): ${JSON.stringify(profile.description)}` : "",
+    sharedInstructions ? "# Instructions for all Sidekick agents\n" + sharedInstructions : "",
+    "# Sidekick agent",
+    `Agent name (data): ${JSON.stringify(profile.name)}`,
+    profile.description ? `Agent description (data): ${JSON.stringify(profile.description)}` : "",
     profile.skills.length > 0
       ? `Preferred skills (data): ${JSON.stringify(profile.skills)}. Apply these named skills when they are available in this session; do not claim unavailable skills were loaded.`
       : "",
     "",
-    "## Profile instructions",
+    "## Agent instructions",
     profile.instructions,
-    profile.behavior ? "\n## Behavior defaults\n" + profile.behavior : "",
   ].filter((line) => line !== "");
   const rendered = sections.join("\n");
   return rendered.length <= DYNAMIC_INSTRUCTIONS_MAX_CHARS
@@ -190,12 +218,12 @@ export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
     sharedInstructions: {
       type: "string",
-      label: "Instructions for all profiles",
-      description: "Up to 1,200 characters, injected first into every Sidekick profile thread. Profile-specific instructions follow. Changes apply when the provider session next starts.",
+      label: "Instructions for all agents",
+      description: "Up to 1,200 characters, injected first into every Sidekick agent thread. Agent-specific instructions follow. Changes apply when the provider session next starts.",
       experimental_multiline: true,
       experimental_schema: z.string().max(
         SHARED_INSTRUCTIONS_MAX_CHARS,
-        `Instructions for all profiles must be at most ${SHARED_INSTRUCTIONS_MAX_CHARS} characters`,
+        `Instructions for all agents must be at most ${SHARED_INSTRUCTIONS_MAX_CHARS} characters`,
       ),
       default: "",
     },
@@ -214,12 +242,12 @@ export default async function plugin(bb: BbPluginApi) {
     bySlug: db.prepare("SELECT * FROM sidekick_profiles WHERE slug = ?"),
     maxSort: db.prepare("SELECT COALESCE(MAX(sort_order), -1) AS value FROM sidekick_profiles"),
     insert: db.prepare(`INSERT INTO sidekick_profiles
-      (id, slug, name, description, instructions, provider_id, model, reasoning_level, permission_mode, skills_json, behavior, sort_order, created_at, updated_at)
-      VALUES (@id, @slug, @name, @description, @instructions, @providerId, @model, @reasoningLevel, @permissionMode, @skillsJson, @behavior, @sortOrder, @now, @now)`),
+      (id, slug, name, description, instructions, provider_id, model, reasoning_level, service_tier, permission_mode, skills_json, sort_order, created_at, updated_at)
+      VALUES (@id, @slug, @name, @description, @instructions, @providerId, @model, @reasoningLevel, @serviceTier, @permissionMode, @skillsJson, @sortOrder, @now, @now)`),
     update: db.prepare(`UPDATE sidekick_profiles SET
       slug=@slug, name=@name, description=@description, instructions=@instructions,
       provider_id=@providerId, model=@model, reasoning_level=@reasoningLevel,
-      permission_mode=@permissionMode, skills_json=@skillsJson, behavior=@behavior,
+      service_tier=@serviceTier, permission_mode=@permissionMode, skills_json=@skillsJson,
       updated_at=@now WHERE id=@id`),
     remove: db.prepare("DELETE FROM sidekick_profiles WHERE id = ?"),
   };
@@ -233,9 +261,9 @@ export default async function plugin(bb: BbPluginApi) {
     providerId: row.provider_id,
     model: row.model,
     reasoningLevel: row.reasoning_level,
+    serviceTier: row.service_tier,
     permissionMode: row.permission_mode,
     skills: JSON.parse(row.skills_json) as unknown,
-    behavior: row.behavior,
     sortOrder: row.sort_order,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -260,7 +288,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   const createProfile = (raw: z.input<typeof profileInputSchema>): Profile => {
     const input = profileInputSchema.parse(raw);
-    if (profileBySlug(input.slug)) throw new Error(`Profile slug "${input.slug}" already exists`);
+    if (profileBySlug(input.slug)) throw new Error(`Agent slug "${input.slug}" already exists`);
     const id = `profile_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
     const { value } = statements.maxSort.get() as { value: number };
     statements.insert.run({ ...input, id, skillsJson: JSON.stringify(input.skills), sortOrder: value + 1, now: Date.now() });
@@ -270,30 +298,31 @@ export default async function plugin(bb: BbPluginApi) {
 
   const updateProfile = (id: string, patch: Omit<z.infer<typeof profilePatchSchema>, "id">): Profile => {
     const current = getProfile(id);
-    if (!current) throw new Error(`No profile with id ${id}`);
+    if (!current) throw new Error(`No agent with id ${id}`);
     const { id: _id, sortOrder: _sortOrder, createdAt: _createdAt, updatedAt: _updatedAt, ...currentInput } = current;
     const input = profileInputSchema.parse({ ...currentInput, ...patch });
     const conflict = profileBySlug(input.slug);
-    if (conflict && conflict.id !== id) throw new Error(`Profile slug "${input.slug}" already exists`);
+    if (conflict && conflict.id !== id) throw new Error(`Agent slug "${input.slug}" already exists`);
     statements.update.run({ ...input, id, skillsJson: JSON.stringify(input.skills), now: Date.now() });
     publishProfiles();
     return getProfile(id)!;
   };
 
   const deleteProfile = (id: string): void => {
-    if (statements.remove.run(id).changes === 0) throw new Error(`No profile with id ${id}`);
+    if (statements.remove.run(id).changes === 0) throw new Error(`No agent with id ${id}`);
     publishProfiles();
   };
 
   const spawnProfile = async (raw: z.input<typeof spawnInputSchema>): Promise<string> => {
     const input = spawnInputSchema.parse(raw);
     const profile = findProfile(input.profile);
-    if (!profile) throw new Error(`No profile "${input.profile}". Run "bb sidekick list".`);
+    if (!profile) throw new Error(`No agent "${input.profile}". Run "bb sidekick list".`);
     const executionInputSources: Record<string, "explicit"> = {};
     const executionDefaults: {
       providerId?: string;
       model?: string;
       reasoningLevel?: (typeof REASONING_LEVELS)[number];
+      serviceTier?: (typeof SERVICE_TIERS)[number];
       permissionMode?: (typeof PERMISSION_MODES)[number];
       executionInputSources?: Record<string, "explicit">;
     } = {};
@@ -306,6 +335,10 @@ export default async function plugin(bb: BbPluginApi) {
     if (profile.reasoningLevel) {
       executionDefaults.reasoningLevel = profile.reasoningLevel;
       executionInputSources.reasoningLevel = "explicit";
+    }
+    if (profile.serviceTier) {
+      executionDefaults.serviceTier = profile.serviceTier;
+      executionInputSources.serviceTier = "explicit";
     }
     if (profile.permissionMode) {
       executionDefaults.permissionMode = profile.permissionMode;
@@ -351,21 +384,55 @@ export default async function plugin(bb: BbPluginApi) {
       const projects = await bb.sdk.projects.list();
       return { projects: projects.map(({ id, name }) => ({ id, name })) };
     },
+    "skills.list": async () => {
+      const projects = await bb.sdk.projects.list({ includePersonal: true });
+      const project = projects.find(({ kind }) => kind === "personal") ?? projects[0];
+      if (!project) return { skills: [] };
+      const { skills } = await bb.sdk.skills.list({ projectId: project.id, environmentId: null });
+      const unique = new Map<string, { name: string; description: string | null }>();
+      for (const skill of skills) {
+        if (!SKILL_NAME_RE.test(skill.name) || unique.has(skill.name)) continue;
+        unique.set(skill.name, {
+          name: skill.name,
+          description: skill.description?.slice(0, 500) ?? null,
+        });
+      }
+      return { skills: [...unique.values()].sort((left, right) => left.name.localeCompare(right.name)) };
+    },
+    "execution.default": async () => {
+      const directory = await bb.sdk.system.executionOptions();
+      const provider = directory.providers.find(({ available }) => available);
+      if (!provider) throw new Error("No available agent provider");
+      const options = await bb.sdk.system.executionOptions({ providerId: provider.id });
+      const model = options.models.find(({ isDefault }) => isDefault) ?? options.models[0];
+      if (!model) throw new Error(`Provider ${provider.displayName} has no available models`);
+      const permissionMode = provider.capabilities.permissionModes.includes(options.permissionCeiling)
+        ? options.permissionCeiling
+        : provider.capabilities.permissionModes.at(-1);
+      if (!permissionMode) throw new Error(`Provider ${provider.displayName} has no available permission mode`);
+      return {
+        providerId: provider.id,
+        model: model.model,
+        reasoningLevel: model.defaultReasoningEffort,
+        serviceTier: provider.capabilities.supportsServiceTier ? "default" as const : null,
+        permissionMode,
+      };
+    },
   });
 
   const usage = [
     "Usage:",
     "  bb sidekick list [--json]",
-    "  bb sidekick show <profile> [--json]",
-    "  bb sidekick create --slug <slug> --name <name> --instructions <text> [profile defaults] [--json]",
-    "  bb sidekick update <profile> [profile fields] [--json]",
-    "  bb sidekick delete <profile> [--json]",
-    "  bb sidekick spawn <profile> --prompt <task> --project <projectId> [--title <title>] [--wait] [--json]",
+    "  bb sidekick show <agent> [--json]",
+    "  bb sidekick create --slug <slug> --name <name> --instructions <text> [agent defaults] [--json]",
+    "  bb sidekick update <agent> [agent fields] [--json]",
+    "  bb sidekick delete <agent> [--json]",
+    "  bb sidekick spawn <agent> --prompt <task> --project <projectId> [--title <title>] [--wait] [--json]",
     "",
-    "Profile defaults:",
+    "Agent defaults:",
     "  --description <text> --provider <id|inherit> --model <id|inherit>",
-    "  --reasoning <level|inherit> --permission <mode|inherit>",
-    "  --skills <comma-separated names> --behavior <text>",
+    "  --reasoning <level|inherit> --service-tier <default|fast|inherit>",
+    "  --permission <mode|inherit> --skills <comma-separated names>",
     "",
     "Spawn always requires --project and creates exactly one visible BB thread.",
   ].join("\n");
@@ -373,8 +440,8 @@ export default async function plugin(bb: BbPluginApi) {
   const allowedByCommand: Record<string, Set<string>> = {
     list: new Set(["json"]),
     show: new Set(["json"]),
-    create: new Set(["slug", "name", "description", "instructions", "provider", "model", "reasoning", "permission", "skills", "behavior", "json"]),
-    update: new Set(["slug", "name", "description", "instructions", "provider", "model", "reasoning", "permission", "skills", "behavior", "json"]),
+    create: new Set(["slug", "name", "description", "instructions", "provider", "model", "reasoning", "service-tier", "permission", "skills", "json"]),
+    update: new Set(["slug", "name", "description", "instructions", "provider", "model", "reasoning", "service-tier", "permission", "skills", "json"]),
     delete: new Set(["json"]),
     spawn: new Set(["prompt", "project", "title", "wait", "json"]),
   };
@@ -388,7 +455,7 @@ export default async function plugin(bb: BbPluginApi) {
   };
   const profileFields = (flags: Map<string, string | true>, requireAll: boolean): Record<string, unknown> => {
     const result: Record<string, unknown> = {};
-    const direct = ["slug", "name", "description", "instructions", "behavior"] as const;
+    const direct = ["slug", "name", "description", "instructions"] as const;
     for (const key of direct) {
       const value = asString(flags.get(key));
       if (value !== undefined) result[key] = value;
@@ -396,10 +463,12 @@ export default async function plugin(bb: BbPluginApi) {
     const provider = nullableDefault(asString(flags.get("provider")));
     const model = nullableDefault(asString(flags.get("model")));
     const reasoningLevel = nullableDefault(asString(flags.get("reasoning")));
+    const serviceTier = nullableDefault(asString(flags.get("service-tier")));
     const permissionMode = nullableDefault(asString(flags.get("permission")));
     if (provider !== undefined) result.providerId = provider;
     if (model !== undefined) result.model = model;
     if (reasoningLevel !== undefined) result.reasoningLevel = reasoningLevel;
+    if (serviceTier !== undefined) result.serviceTier = serviceTier;
     if (permissionMode !== undefined) result.permissionMode = permissionMode;
     const skills = asString(flags.get("skills"));
     if (skills !== undefined) result.skills = parseSkillNames(skills);
@@ -409,23 +478,23 @@ export default async function plugin(bb: BbPluginApi) {
       result.providerId ??= null;
       result.model ??= null;
       result.reasoningLevel ??= null;
+      result.serviceTier ??= null;
       result.permissionMode ??= null;
       result.skills ??= [];
-      result.behavior ??= "";
     }
     return result;
   };
 
   bb.cli.register({
     name: "sidekick",
-    summary: "Manage reusable Sidekick profiles and start one profile-bound thread",
+    summary: "Manage reusable Sidekick agents and start one agent-bound thread",
     commands: [
-      { name: "list", summary: "List Sidekick profiles", usage: "bb sidekick list [--json]" },
-      { name: "show", summary: "Show one Sidekick profile", usage: "bb sidekick show <profile> [--json]" },
-      { name: "create", summary: "Create a Sidekick profile", usage: "bb sidekick create --slug <slug> --name <name> --instructions <text> [profile defaults] [--json]" },
-      { name: "update", summary: "Update a Sidekick profile", usage: "bb sidekick update <profile> [profile fields] [--json]" },
-      { name: "delete", summary: "Delete a Sidekick profile", usage: "bb sidekick delete <profile> [--json]" },
-      { name: "spawn", summary: "Start exactly one profile-bound thread in an explicit project", usage: "bb sidekick spawn <profile> --prompt <task> --project <projectId> [--title <title>] [--wait] [--json]" },
+      { name: "list", summary: "List Sidekick agents", usage: "bb sidekick list [--json]" },
+      { name: "show", summary: "Show one Sidekick agent", usage: "bb sidekick show <agent> [--json]" },
+      { name: "create", summary: "Create a Sidekick agent", usage: "bb sidekick create --slug <slug> --name <name> --instructions <text> [agent defaults] [--json]" },
+      { name: "update", summary: "Update a Sidekick agent", usage: "bb sidekick update <agent> [agent fields] [--json]" },
+      { name: "delete", summary: "Delete a Sidekick agent", usage: "bb sidekick delete <agent> [--json]" },
+      { name: "spawn", summary: "Start exactly one agent-bound thread in an explicit project", usage: "bb sidekick spawn <agent> --prompt <task> --project <projectId> [--title <title>] [--wait] [--json]" },
     ],
     async run(argv, context) {
       try {
@@ -440,40 +509,40 @@ export default async function plugin(bb: BbPluginApi) {
           if (reference) return fail(`Unexpected argument: ${reference}`);
           const profiles = listProfiles();
           const text = profiles.length === 0
-            ? "No Sidekick profiles."
+            ? "No Sidekick agents."
             : profiles.map((profile) => `${profile.slug.padEnd(16)} ${profile.name}`).join("\n");
           return print(json, profiles, text);
         }
         if (command === "show") {
-          if (!reference) return fail("Profile is required");
+          if (!reference) return fail("Agent is required");
           const profile = findProfile(reference);
-          if (!profile) return fail(`No profile "${reference}".`);
-          const text = `${profile.name} (${profile.slug})\n${profile.description}\nprovider/model: ${profile.providerId ?? "inherit"}/${profile.model ?? "inherit"}\nreasoning: ${profile.reasoningLevel ?? "inherit"}\npermission: ${profile.permissionMode ?? "inherit"}\nskills: ${profile.skills.join(", ") || "none"}\nbehavior: ${profile.behavior || "none"}\n\n${profile.instructions}`;
+          if (!profile) return fail(`No agent "${reference}".`);
+          const text = `${profile.name} (${profile.slug})\n${profile.description}\nprovider/model: ${profile.providerId ?? "inherit"}/${profile.model ?? "inherit"}\nreasoning: ${profile.reasoningLevel ?? "inherit"}\nservice tier: ${profile.serviceTier ?? "inherit"}\npermission: ${profile.permissionMode ?? "inherit"}\nskills: ${profile.skills.join(", ") || "none"}\n\n${profile.instructions}`;
           return print(json, profile, text);
         }
         if (command === "create") {
           if (reference) return fail(`Unexpected argument: ${reference}`);
           const profile = createProfile(profileFields(flags, true) as z.input<typeof profileInputSchema>);
-          return print(json, profile, `Created Sidekick profile ${profile.slug}.`);
+          return print(json, profile, `Created Sidekick agent ${profile.slug}.`);
         }
         if (command === "update") {
-          if (!reference) return fail("Profile is required");
+          if (!reference) return fail("Agent is required");
           const profile = findProfile(reference);
-          if (!profile) return fail(`No profile "${reference}".`);
+          if (!profile) return fail(`No agent "${reference}".`);
           const fields = profileFields(flags, false);
-          if (Object.keys(fields).length === 0) return fail("Pass at least one profile field to update");
+          if (Object.keys(fields).length === 0) return fail("Pass at least one agent field to update");
           const updated = updateProfile(profile.id, fields);
-          return print(json, updated, `Updated Sidekick profile ${updated.slug}.`);
+          return print(json, updated, `Updated Sidekick agent ${updated.slug}.`);
         }
         if (command === "delete") {
-          if (!reference) return fail("Profile is required");
+          if (!reference) return fail("Agent is required");
           const profile = findProfile(reference);
-          if (!profile) return fail(`No profile "${reference}".`);
+          if (!profile) return fail(`No agent "${reference}".`);
           deleteProfile(profile.id);
-          return print(json, { deleted: profile.id }, `Deleted Sidekick profile ${profile.slug}.`);
+          return print(json, { deleted: profile.id }, `Deleted Sidekick agent ${profile.slug}.`);
         }
         if (command === "spawn") {
-          if (!reference) return fail("Profile is required");
+          if (!reference) return fail("Agent is required");
           const prompt = asString(flags.get("prompt"));
           const projectId = asString(flags.get("project"));
           if (!prompt) return fail("--prompt is required");
@@ -493,5 +562,5 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
-  bb.log.info("Sidekick loaded with an empty-by-default profile store");
+  bb.log.info("Sidekick loaded with an empty-by-default agent store");
 }

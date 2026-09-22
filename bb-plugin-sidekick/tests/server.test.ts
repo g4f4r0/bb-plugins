@@ -15,9 +15,9 @@ const profileInput = {
   providerId: "codex",
   model: "gpt-5.3-codex",
   reasoningLevel: "high" as const,
+  serviceTier: "fast" as const,
   permissionMode: "accept-edits" as const,
   skills: ["research", "reporting"],
-  behavior: "Be concise and cite file paths.",
 };
 
 describe("Sidekick backend", () => {
@@ -28,7 +28,7 @@ describe("Sidekick backend", () => {
     expect(harness.inspection.registrations.cli).toMatchObject({ name: "sidekick" });
     expect(harness.inspection.registrations.settingsDescriptors.sharedInstructions).toMatchObject({
       type: "string",
-      label: "Instructions for all profiles",
+      label: "Instructions for all agents",
       default: "",
       experimental_multiline: true,
     });
@@ -39,11 +39,65 @@ describe("Sidekick backend", () => {
       "profiles.delete",
       "profiles.spawn",
       "projects.list",
+      "skills.list",
+      "execution.default",
     ]);
     expect(harness.inspection.registrations.services).toEqual([]);
     expect(harness.inspection.registrations.schedules).toEqual([]);
     expect(harness.inspection.registrations.agentTools).toEqual([]);
     expect(harness.inspection.registrations.agentConfigurationProvider).not.toBeNull();
+    await harness.lifecycle.dispose();
+  });
+
+  it("returns live execution defaults and a deduplicated skill catalog", async () => {
+    const projects = [{ id: "proj_personal", name: "Personal", kind: "personal" }];
+    const providers = [{
+      id: "pi",
+      displayName: "Pi",
+      available: true,
+      capabilities: {
+        permissionModes: ["full"],
+        supportsServiceTier: false,
+      },
+    }];
+    const models = [{
+      model: "openai-codex/gpt-5.5",
+      isDefault: true,
+      defaultReasoningEffort: "medium",
+    }];
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "sidekick",
+      sdk: {
+        projects: { list: async () => projects as never },
+        skills: {
+          list: async () => ({ skills: [
+            { name: "research", description: "Research evidence." },
+            { name: "research", description: "Duplicate provider copy." },
+            { name: "reporting", description: "R".repeat(600) },
+            { name: "data-analytics:build-report", description: "Build a report." },
+          ] }) as never,
+        },
+        system: {
+          executionOptions: async () => ({ providers, models, permissionCeiling: "full" }) as never,
+        },
+      },
+    });
+    await plugin(bb);
+    expect(await harness.behavior.callRpc("execution.default", null)).toEqual({
+      providerId: "pi",
+      model: "openai-codex/gpt-5.5",
+      reasoningLevel: "medium",
+      serviceTier: null,
+      permissionMode: "full",
+    });
+    expect(await harness.behavior.callRpc("skills.list", null)).toEqual({
+      skills: [
+        { name: "data-analytics:build-report", description: "Build a report." },
+        { name: "reporting", description: "R".repeat(500) },
+        { name: "research", description: "Research evidence." },
+      ],
+    });
+    expect(harness.inspection.sdk.callsTo("system.executionOptions")).toHaveLength(2);
     await harness.lifecycle.dispose();
   });
 
@@ -57,10 +111,10 @@ describe("Sidekick backend", () => {
       name: "Updated Sidekick",
       providerId: null,
       model: null,
+      serviceTier: null,
       skills: [],
-      behavior: "",
     }) as Profile;
-    expect(updated).toMatchObject({ name: "Updated Sidekick", providerId: null, model: null, skills: [], behavior: "" });
+    expect(updated).toMatchObject({ name: "Updated Sidekick", providerId: null, model: null, serviceTier: null, skills: [] });
 
     const reloaded = await first.harness.lifecycle.reload(plugin);
     expect(await reloaded.harness.behavior.callRpc("profiles.list", null)).toMatchObject({
@@ -70,9 +124,12 @@ describe("Sidekick backend", () => {
     expect(await reloaded.harness.behavior.callRpc("profiles.list", null)).toEqual({ profiles: [] });
     await reloaded.harness.lifecycle.dispose();
 
-    expect(STORAGE_MIGRATIONS).toHaveLength(2);
+    expect(STORAGE_MIGRATIONS).toHaveLength(4);
     expect(STORAGE_MIGRATIONS[0]).toContain("CREATE TABLE IF NOT EXISTS sidekick_profiles");
     expect(STORAGE_MIGRATIONS[1]).toContain("sidekick_profiles_sort_idx");
+    expect(STORAGE_MIGRATIONS[2]).toContain("instructions = instructions");
+    expect(STORAGE_MIGRATIONS[2]).toContain("behavior = ''");
+    expect(STORAGE_MIGRATIONS[3]).toContain("ADD COLUMN service_tier");
   });
 
   it("spawns exactly one thread with profile defaults and Sidekick-owned metadata", async () => {
@@ -101,11 +158,13 @@ describe("Sidekick backend", () => {
       providerId: "codex",
       model: "gpt-5.3-codex",
       reasoningLevel: "high",
+      serviceTier: "fast",
       permissionMode: "accept-edits",
       executionInputSources: {
         providerId: "explicit",
         model: "explicit",
         reasoningLevel: "explicit",
+        serviceTier: "explicit",
         permissionMode: "explicit",
       },
       pluginMetadata: {
@@ -143,12 +202,12 @@ describe("Sidekick backend", () => {
     const selected = await harness.behavior.resolveAgentConfiguration(context);
     expect(selected.tools).toEqual([]);
     expect(selected.skills).toEqual([]);
-    expect(selected.instructions).toContain("# Instructions for all Sidekick profiles\nFollow the shared release policy.");
+    expect(selected.instructions).toContain("# Instructions for all Sidekick agents\nFollow the shared release policy.");
     expect(selected.instructions).toContain("Inspect the release and report concrete blockers.");
-    expect(selected.instructions).toContain("Behavior defaults");
+    expect(selected.instructions).not.toContain("Behavior defaults");
     expect(selected.instructions).toContain('["research","reporting"]');
     expect(selected.instructions!.indexOf("Follow the shared release policy.")).toBeLessThan(
-      selected.instructions!.indexOf("## Profile instructions"),
+      selected.instructions!.indexOf("## Agent instructions"),
     );
 
     await harness.behavior.setSettings({ sharedInstructions: "Use the updated shared policy." });
@@ -226,7 +285,7 @@ describe("Sidekick backend", () => {
     expect(harness.inspection.sdk.callsTo("threads.output")).toHaveLength(1);
 
     const help = await harness.behavior.runCli(["help"]);
-    expect(help.stdout).toContain("bb sidekick spawn <profile> --prompt <task> --project <projectId>");
+    expect(help.stdout).toContain("bb sidekick spawn <agent> --prompt <task> --project <projectId>");
     expect(help.stdout).toContain("creates exactly one visible BB thread");
     expect(help.stdout).not.toContain("team");
     expect(help.stdout).not.toContain("workflow");

@@ -10,9 +10,10 @@ export const REASONING_LEVELS = [
 ] as const;
 
 export const PERMISSION_MODES = ["accept-edits", "auto", "full"] as const;
+export const SERVICE_TIERS = ["default", "fast"] as const;
 
 export const PROFILE_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,39}$/u;
-export const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/u;
+export const SKILL_NAME_RE = /^[a-z0-9][a-z0-9:_-]{0,127}$/u;
 export const PROFILES_CHANGED = "profiles-changed";
 
 const CYRILLIC: Record<string, string> = {

@@ -1,55 +1,54 @@
 ---
 name: sidekick
-description: Manage reusable Sidekick profiles and start exactly one profile-bound BB thread in an explicit project.
+description: Manage reusable Sidekick agents and start exactly one agent-bound BB thread in an explicit project.
 ---
 
 # Sidekick
 
-Sidekick stores reusable profiles. Each profile can define hidden instructions,
-behavior preferences, preferred skill names, and optional provider, model,
-reasoning, and permission defaults. Sidekick also has an **Instructions for all
-profiles** field under **Settings → Installed plugins → Sidekick**. That shared
-block is injected before each profile's own instructions.
+Sidekick stores reusable agents. Each agent has one instruction field for its
+identity, responsibilities, boundaries, and working style, plus optional
+provider, model, reasoning, service-tier, permission, and skill defaults.
+
+Shared rules live under **Settings → Installed plugins → Sidekick → Instructions
+for all agents** and are injected before agent-specific instructions. The
+sidebar editor uses BB's native provider/model picker and a searchable catalog
+of skills discovered by BB.
 
 Sidekick does not orchestrate teams or workflows. One spawn command creates one
-visible BB thread. Always pass the target BB project explicitly.
+visible BB thread. Always pass the target project explicitly.
 
 ## Commands
 
 ```text
 bb sidekick list [--json]
-bb sidekick show <profile> [--json]
-bb sidekick create --slug <slug> --name <name> --instructions <text> [profile defaults] [--json]
-bb sidekick update <profile> [profile fields] [--json]
-bb sidekick delete <profile> [--json]
-bb sidekick spawn <profile> --prompt <task> --project <projectId> [--title <title>] [--wait] [--json]
+bb sidekick show <agent> [--json]
+bb sidekick create --slug <slug> --name <name> --instructions <text> [agent defaults] [--json]
+bb sidekick update <agent> [agent fields] [--json]
+bb sidekick delete <agent> [--json]
+bb sidekick spawn <agent> --prompt <task> --project <projectId> [--title <title>] [--wait] [--json]
 ```
 
-Profile defaults:
+Agent defaults:
 
 ```text
 --description <text>
 --provider <id|inherit>
 --model <id|inherit>
 --reasoning <none|low|medium|high|xhigh|max|ultra|ultracode|inherit>
+--service-tier <default|fast|inherit>
 --permission <accept-edits|auto|full|inherit>
 --skills <comma-separated skill names>
---behavior <text>
 ```
 
-Provider and model must both be set or both inherit. On update, pass `inherit`
-to clear provider, model, reasoning, or permission defaults. Pass an empty
-`--skills ""` or `--behavior ""` value to clear those fields.
+Provider and model must both be set or both inherit. Service tier requires an
+explicit provider/model pair. On update, pass `inherit` to clear execution
+defaults. Pass `--skills ""` to clear skills.
 
-Shared settings, profile instructions, and behavior are injected through
-`bb.agents.configure` when the provider session starts; they are not added to
-the task message. The two instruction levels apply only to Sidekick-created
-profile threads. Shared setting changes take effect when a provider session
-next starts. Preferred skill names are included in that hidden instruction
-block as a request to use the skills when available. The current Plugin SDK does not let
-one plugin activate another plugin's skill registration.
+Shared and agent instructions are injected through `bb.agents.configure` when
+the provider session starts; they are not added to the task message. Selected
+skill names are included as a request to use those skills when available. The
+Plugin SDK does not let one plugin activate another plugin's skill registration.
 
 `--wait` waits for the spawned thread to become idle and prints its last output.
-Without `--wait`, the command prints the new thread ID. Sidekick never infers a
-project from the invoking thread: `--project` is mandatory even when the
-command runs inside a project thread.
+Without it, the command prints the new thread ID. Sidekick never infers a project
+from the invoking thread: `--project` is mandatory.

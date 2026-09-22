@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { definePluginApp, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import {
+  definePluginApp,
+  experimental_PermissionModePicker as PermissionModePicker,
+  experimental_ProviderModelPicker as ProviderModelPicker,
+  useBbNavigate,
+  useRealtime,
+  useRpc,
+} from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { Profile, rpcContract } from "./server.js";
 import {
-  PERMISSION_MODES,
   PROFILE_SLUG_RE,
   PROFILES_CHANGED,
-  REASONING_LEVELS,
-  parseSkillNames,
   slugifyProfileName,
 } from "./shared.js";
 import { Button } from "@/components/ui/button";
@@ -20,6 +24,14 @@ const textareaClass = "w-full rounded-md border border-input bg-transparent px-3
 const selectClass = "h-9 rounded-md border border-input bg-transparent px-2 text-sm text-foreground";
 
 type ProfileDraft = Omit<Profile, "id" | "sortOrder" | "createdAt" | "updatedAt">;
+type SkillOption = { name: string; description: string | null };
+type ExecutionSelection = {
+  providerId: string;
+  model: string;
+  reasoningLevel: NonNullable<Profile["reasoningLevel"]>;
+  serviceTier: Profile["serviceTier"];
+  permissionMode: NonNullable<Profile["permissionMode"]>;
+};
 
 const emptyProfile = (): ProfileDraft => ({
   slug: "",
@@ -29,9 +41,9 @@ const emptyProfile = (): ProfileDraft => ({
   providerId: null,
   model: null,
   reasoningLevel: null,
+  serviceTier: null,
   permissionMode: null,
   skills: [],
-  behavior: "",
 });
 
 function errorMessage(cause: unknown): string {
@@ -42,33 +54,68 @@ function errorMessage(cause: unknown): string {
     : cause.message;
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
-  return (
-    <label className="block">
+function Field({ label, hint, complex = false, children }: { label: string; hint?: string; complex?: boolean; children: ReactNode }) {
+  const content = (
+    <>
       <span className="mb-1.5 block text-xs font-medium text-muted-foreground">{label}</span>
       {children}
       {hint ? <span className="mt-1 block text-[11px] text-muted-foreground">{hint}</span> : null}
-    </label>
+    </>
   );
+  return complex ? <div className="block">{content}</div> : <label className="block">{content}</label>;
 }
 
-function ProfileEditor({ initial, busy, onCancel, onSave }: {
+function ProfileEditor({ initial, skillOptions, defaultExecution, busy, onCancel, onSave }: {
   initial: ProfileDraft;
+  skillOptions: SkillOption[];
+  defaultExecution: ExecutionSelection | null;
   busy: boolean;
   onCancel: () => void;
   onSave: (draft: ProfileDraft) => void;
 }) {
   const [draft, setDraft] = useState(initial);
   const [slugTouched, setSlugTouched] = useState(initial.slug !== "");
-  const [skillText, setSkillText] = useState(initial.skills.join(", "));
+  const [skillQuery, setSkillQuery] = useState("");
   const set = <Key extends keyof ProfileDraft>(key: Key, value: ProfileDraft[Key]) => setDraft((current) => ({ ...current, [key]: value }));
-  const modelPairValid = (draft.providerId === null) === (draft.model === null);
+  const hasAnyExplicitExecution = draft.providerId !== null || draft.model !== null;
+  const hasExplicitExecution = draft.providerId !== null && draft.model !== null;
+  const executionValid = !hasAnyExplicitExecution
+    || (hasExplicitExecution && draft.reasoningLevel !== null && draft.permissionMode !== null);
   const valid = draft.name.trim() !== ""
     && PROFILE_SLUG_RE.test(draft.slug)
     && draft.instructions.trim() !== ""
-    && modelPairValid;
+    && executionValid;
+  const query = skillQuery.trim().toLowerCase();
+  const visibleSkills = skillOptions
+    .filter((skill) => !query || skill.name.toLowerCase().includes(query) || skill.description?.toLowerCase().includes(query))
+    .slice(0, 50);
+  const toggleSkill = (name: string) => {
+    setDraft((current) => {
+      const selected = current.skills.includes(name);
+      if (!selected && current.skills.length >= 12) return current;
+      return { ...current, skills: selected ? current.skills.filter((skill) => skill !== name) : [...current.skills, name] };
+    });
+  };
+  const chooseExecution = () => {
+    if (!defaultExecution) return;
+    setDraft((current) => ({ ...current, ...defaultExecution }));
+  };
+  const inheritExecution = () => setDraft((current) => ({
+    ...current,
+    providerId: null,
+    model: null,
+    reasoningLevel: null,
+    serviceTier: null,
+    permissionMode: null,
+  }));
+  const pickerValue = hasExplicitExecution ? {
+    providerId: draft.providerId!,
+    model: draft.model!,
+    reasoningLevel: draft.reasoningLevel ?? "medium" as const,
+    ...(draft.serviceTier ? { serviceTier: draft.serviceTier } : {}),
+  } : null;
   return (
-    <form className="flex flex-col gap-5" onSubmit={(event) => { event.preventDefault(); if (valid && !busy) onSave({ ...draft, skills: parseSkillNames(skillText) }); }}>
+    <form className="flex flex-col gap-5" onSubmit={(event) => { event.preventDefault(); if (valid && !busy) onSave(draft); }}>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Name">
           <Input autoFocus value={draft.name} onChange={(event) => {
@@ -82,37 +129,72 @@ function ProfileEditor({ initial, busy, onCancel, onSave }: {
         </Field>
       </div>
       <Field label="Description"><Input value={draft.description} maxLength={300} onChange={(event) => set("description", event.target.value)} /></Field>
-      <Field label="Profile instructions" hint="Injected as hidden instructions when the provider session starts.">
-        <textarea className={textareaClass} rows={8} maxLength={2800} value={draft.instructions} onChange={(event) => set("instructions", event.target.value)} />
+      <Field label="Agent instructions" hint="Identity, responsibilities, boundaries, and working style injected when the provider session starts.">
+        <textarea className={textareaClass} rows={11} maxLength={3500} value={draft.instructions} onChange={(event) => set("instructions", event.target.value)} />
       </Field>
-      <Field label="Behavior defaults" hint="Optional working style and response preferences, also injected as hidden instructions.">
-        <textarea className={textareaClass} rows={3} maxLength={600} value={draft.behavior} onChange={(event) => set("behavior", event.target.value)} />
+      <Field complex label="Provider and model" hint="Uses BB's live provider catalog and the same model and reasoning picker as the composer.">
+        {pickerValue ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-border p-3">
+            <ProviderModelPicker
+              value={pickerValue}
+              onChange={(value) => setDraft((current) => ({
+                ...current,
+                providerId: value.providerId,
+                model: value.model,
+                reasoningLevel: value.reasoningLevel,
+                serviceTier: value.serviceTier ?? null,
+              }))}
+            />
+            <PermissionModePicker
+              providerId={pickerValue.providerId}
+              value={draft.permissionMode ?? "full"}
+              onChange={(permissionMode) => set("permissionMode", permissionMode)}
+            />
+            <Button type="button" variant="ghost" size="sm" onClick={inheritExecution}>Use project defaults</Button>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between gap-3 rounded-md border border-border p-3">
+            <span className="text-sm text-muted-foreground">Inherits the target project's provider, model, reasoning, and permission.</span>
+            <Button type="button" variant="outline" size="sm" onClick={chooseExecution} disabled={!defaultExecution}>Choose provider and model</Button>
+          </div>
+        )}
       </Field>
-      <Field label="Preferred skills" hint="Comma-separated skill names. Sidekick requests their use when available; BB's SDK does not let one plugin activate another plugin's skills.">
-        <Input value={skillText} onChange={(event) => setSkillText(event.target.value)} placeholder="research, reporting" />
+      <Field complex label="Skills" hint="Choose up to 12 skills discovered by BB. The agent is asked to use selected skills when they are available in its session.">
+        <div className="space-y-2 rounded-md border border-border p-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="mr-1 text-xs text-muted-foreground">Selected {draft.skills.length}/12</span>
+            {draft.skills.map((skill) => (
+              <Button key={skill} type="button" variant="outline" size="sm" onClick={() => toggleSkill(skill)} aria-label={`Remove ${skill}`}>
+                {skill} <span aria-hidden="true">×</span>
+              </Button>
+            ))}
+          </div>
+          <Input aria-label="Search skills" placeholder="Search available skills…" value={skillQuery} onChange={(event) => setSkillQuery(event.target.value)} />
+          <div className="max-h-56 overflow-y-auto rounded-md border border-border">
+            {visibleSkills.length === 0 ? (
+              <p className="px-3 py-4 text-sm text-muted-foreground">No matching skills.</p>
+            ) : visibleSkills.map((skill) => (
+              <label key={skill.name} className="flex cursor-pointer items-start gap-2 border-b border-border px-3 py-2 last:border-b-0">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={draft.skills.includes(skill.name)}
+                  disabled={!draft.skills.includes(skill.name) && draft.skills.length >= 12}
+                  onChange={() => toggleSkill(skill.name)}
+                />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium">{skill.name}</span>
+                  {skill.description ? <span className="block text-xs text-muted-foreground">{skill.description}</span> : null}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
       </Field>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Provider ID" hint="Leave both provider and model empty to inherit project defaults.">
-          <Input value={draft.providerId ?? ""} onChange={(event) => set("providerId", event.target.value.trim() || null)} placeholder="inherit" />
-        </Field>
-        <Field label="Model"><Input value={draft.model ?? ""} onChange={(event) => set("model", event.target.value.trim() || null)} placeholder="inherit" /></Field>
-        <Field label="Reasoning">
-          <select className={selectClass} value={draft.reasoningLevel ?? ""} onChange={(event) => set("reasoningLevel", (event.target.value || null) as ProfileDraft["reasoningLevel"])}>
-            <option value="">inherit</option>
-            {REASONING_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
-          </select>
-        </Field>
-        <Field label="Permission">
-          <select className={selectClass} value={draft.permissionMode ?? ""} onChange={(event) => set("permissionMode", (event.target.value || null) as ProfileDraft["permissionMode"])}>
-            <option value="">inherit</option>
-            {PERMISSION_MODES.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
-          </select>
-        </Field>
-      </div>
-      {!modelPairValid ? <p role="alert" className="text-xs text-destructive">Provider and model must both be set or both inherit.</p> : null}
+      {!executionValid ? <p role="alert" className="text-xs text-destructive">Choose a valid provider, model, reasoning level, and permission mode.</p> : null}
       <div className="flex items-center justify-end gap-2 border-t border-border pt-4">
         <Button type="button" variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
-        <Button type="submit" disabled={!valid || busy}>Save profile</Button>
+        <Button type="submit" disabled={!valid || busy}>Save agent</Button>
       </div>
     </form>
   );
@@ -168,6 +250,8 @@ function SidekickPage() {
   const rpc = useRpc<typeof rpcContract>();
   const [profiles, setProfiles] = useState<Profile[] | null>(null);
   const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
+  const [skillOptions, setSkillOptions] = useState<SkillOption[]>([]);
+  const [defaultExecution, setDefaultExecution] = useState<ExecutionSelection | null>(null);
   const [editing, setEditing] = useState<"new" | string | null>(null);
   const [spawning, setSpawning] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -177,6 +261,8 @@ function SidekickPage() {
   useEffect(() => {
     refresh();
     void rpc.call("projects.list").then((result) => setProjects(result.projects)).catch(() => setProjects([]));
+    void rpc.call("skills.list").then((result) => setSkillOptions(result.skills)).catch(() => setSkillOptions([]));
+    void rpc.call("execution.default").then(setDefaultExecution).catch(() => setDefaultExecution(null));
   }, [refresh, rpc]);
   useRealtime(PROFILES_CHANGED, refresh);
 
@@ -187,7 +273,7 @@ function SidekickPage() {
       else if (editing) await rpc.call("profiles.update", { id: editing, ...draft });
       setEditing(null);
       refresh();
-      toast.success("Sidekick profile saved");
+      toast.success("Sidekick agent saved");
     } catch (cause) {
       toast.error(errorMessage(cause));
     } finally {
@@ -196,12 +282,12 @@ function SidekickPage() {
   };
 
   const remove = async (profile: Profile) => {
-    if (!window.confirm(`Delete Sidekick profile "${profile.name}"?`)) return;
+    if (!window.confirm(`Delete Sidekick agent "${profile.name}"?`)) return;
     setBusy(true);
     try {
       await rpc.call("profiles.delete", { id: profile.id });
       refresh();
-      toast.success("Sidekick profile deleted");
+      toast.success("Sidekick agent deleted");
     } catch (cause) {
       toast.error(errorMessage(cause));
     } finally {
@@ -215,17 +301,17 @@ function SidekickPage() {
       <div className="mx-auto box-border flex w-full max-w-3xl flex-col gap-6 px-5 pb-16 pt-6 md:px-8 md:pt-8">
         <header className="flex items-start justify-between gap-6">
           <div>
-            <h1 className="text-xl font-semibold">Sidekick</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Reusable profiles for starting exactly one focused BB thread at a time.</p>
+            <h1 className="text-xl font-semibold">Agents</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Reusable agents for starting exactly one focused BB thread at a time.</p>
           </div>
-          <Button variant="outline" size="sm" onClick={() => setEditing("new")}><Icon name="Plus" className="size-4" /> New profile</Button>
+          <Button variant="outline" size="sm" onClick={() => setEditing("new")}><Icon name="Plus" className="size-4" /> New agent</Button>
         </header>
         {profiles === null ? (
-          <div role="status" className="rounded-lg border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">Loading profiles…</div>
+          <div role="status" className="rounded-lg border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">Loading agents…</div>
         ) : profiles.length === 0 ? (
           <div role="status" className="rounded-lg border border-dashed border-border px-4 py-10 text-center">
-            <p className="font-medium">No Sidekick profiles yet</p>
-            <p className="mt-1 text-sm text-muted-foreground">Create the first profile when you are ready. Sidekick does not seed examples.</p>
+            <p className="font-medium">No Sidekick agents yet</p>
+            <p className="mt-1 text-sm text-muted-foreground">Create the first agent when you are ready. Sidekick does not seed examples.</p>
           </div>
         ) : (
           <ul className="divide-y divide-border">
@@ -249,9 +335,19 @@ function SidekickPage() {
       </div>
       <Dialog open={editing !== null} onOpenChange={(open) => { if (!open && !busy) setEditing(null); }}>
         <DialogContent className="max-h-[92dvh] w-[96vw] max-w-3xl overflow-y-auto" hideCloseButton={busy}>
-          <DialogTitle>{editing === "new" ? "New Sidekick profile" : "Edit Sidekick profile"}</DialogTitle>
-          <DialogDescription>Set hidden instructions and optional execution defaults.</DialogDescription>
-          {editing === "new" || editingProfile ? <ProfileEditor key={editing} initial={editing === "new" ? emptyProfile() : editingProfile!} busy={busy} onCancel={() => setEditing(null)} onSave={(draft) => void save(draft)} /> : null}
+          <DialogTitle>{editing === "new" ? "New Sidekick agent" : "Edit Sidekick agent"}</DialogTitle>
+          <DialogDescription>Set instructions, execution defaults, and available skills.</DialogDescription>
+          {editing === "new" || editingProfile ? (
+            <ProfileEditor
+              key={editing}
+              initial={editing === "new" ? emptyProfile() : editingProfile!}
+              skillOptions={skillOptions}
+              defaultExecution={defaultExecution}
+              busy={busy}
+              onCancel={() => setEditing(null)}
+              onSave={(draft) => void save(draft)}
+            />
+          ) : null}
         </DialogContent>
       </Dialog>
     </main>
@@ -261,7 +357,7 @@ function SidekickPage() {
 export default definePluginApp((app) => {
   app.slots.navPanel({
     id: "sidekick",
-    title: "Profiles",
+    title: "Agents",
     icon: "UserRound",
     path: PANEL_PATH,
     component: SidekickPage,
