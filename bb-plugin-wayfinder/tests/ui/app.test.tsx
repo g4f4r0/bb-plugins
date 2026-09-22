@@ -241,12 +241,7 @@ describe("Computer panel", () => {
     ]));
   });
 
-  it("shows readiness, queue, and owner, and separates a selected historical run from the controller", async () => {
-    const run = {
-      runId: "run_old",
-      routeHash: SHA,
-      state: "passed",
-    };
+  it("keeps the Computer panel viewport-first with compact status overlays", async () => {
     const slot = renderSlot<PluginThreadPanelProps, UiRpcContract>(
       panel,
       { threadId: "thr_a", params: { runId: "run_old" } },
@@ -277,14 +272,13 @@ describe("Computer panel", () => {
         } as never,
       },
     );
-    await slot.findByText("Fortress browser lease unavailable");
-    expect(slot.getByText("No run is controlling the computer.")).toBeDefined();
-    expect(slot.getByText("run_q")).toBeDefined();
-    expect(slot.getByText("Selected run (not controlling)")).toBeDefined();
-    expect(slot.getByText(`Run ${run.runId} was not found.`)).toBeDefined();
+    await slot.findByText("Computer is idle");
+    expect(slot.getByText("Connected")).toBeDefined();
+    expect(slot.getByText("1 queued")).toBeDefined();
+    expect(slot.getByText("Selected run is not controlling the computer.")).toBeDefined();
+    expect(slot.queryByText("Current controller")).toBeNull();
+    expect(slot.queryByText("Queue (1)")).toBeNull();
     expect(slot.inspection.rpcCalls).toContainEqual({ method: "computer.snapshot", input: { hostId: "host_thread", selectedRunId: "run_old" } });
-    fireEvent.click(slot.getByText("run_q"));
-    await waitFor(() => expect(slot.inspection.rpcCalls.at(-1)).toEqual({ method: "computer.snapshot", input: { hostId: "host_thread", selectedRunId: "run_q" } }));
     expect(slot.inspection.navigateCalls).toEqual([]);
     slot.lifecycle.unmount();
   });

@@ -23,9 +23,11 @@ const STATUS_TEXT: Record<LiveViewState["status"], string> = {
 export function LiveView({
   runId,
   pollerOptions,
+  fill = false,
 }: {
   runId: string;
   pollerOptions?: Partial<Omit<LiveFramePollerOptions, "runId" | "onState">>;
+  fill?: boolean;
 }) {
   const [state, setState] = useState<LiveViewState>(INITIAL_LIVE_STATE);
   const [clock, setClock] = useState(() => Date.now());
@@ -48,8 +50,8 @@ export function LiveView({
   const stale = state.status === "live" && ageMs !== null && ageMs > STALE_FRAME_MS;
 
   return (
-    <div className="space-y-2">
-      <div className="relative flex aspect-video w-full items-center justify-center overflow-hidden rounded-lg border border-border bg-muted">
+    <div className={fill ? "h-full min-h-0 w-full" : "space-y-2"}>
+      <div className={fill ? "relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden bg-black" : "relative flex aspect-video w-full items-center justify-center overflow-hidden rounded-lg border border-border bg-muted"}>
         {state.imageUrl !== null && state.status === "live" ? (
           <img
             src={state.imageUrl}
@@ -58,10 +60,10 @@ export function LiveView({
             className={`h-full w-full select-none object-contain ${stale ? "opacity-50" : ""}`}
           />
         ) : (
-          <p className="px-6 text-center text-sm text-muted-foreground">{STATUS_TEXT[state.status]}</p>
+          <p className={`px-6 text-center text-sm ${fill ? "text-white/55" : "text-muted-foreground"}`}>{STATUS_TEXT[state.status]}</p>
         )}
       </div>
-      <dl className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground" aria-live="polite">
+      {!fill ? <dl className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground" aria-live="polite">
         <div className="flex gap-1">
           <dt>View</dt>
           <dd className="text-foreground">{stale ? "Stale" : STATUS_TEXT[state.status].split(".")[0]}</dd>
@@ -74,7 +76,7 @@ export function LiveView({
           <dt>Mode</dt>
           <dd className="text-foreground">Read-only</dd>
         </div>
-      </dl>
+      </dl> : null}
     </div>
   );
 }

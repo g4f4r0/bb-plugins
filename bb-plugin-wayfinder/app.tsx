@@ -19,6 +19,8 @@ export default definePluginApp((app) => {
   app.slots.messageDirective({ id: ARTIFACT_DIRECTIVE_ID, component: ArtifactDirective });
   app.slots.settingsSection({
     id: "wayfinder-settings",
+    title: "Wayfinder on your machines",
+    description: "Check readiness and configure Jev for the machines that can run browser tasks.",
     component: WayfinderSettingsSection,
   });
 });
