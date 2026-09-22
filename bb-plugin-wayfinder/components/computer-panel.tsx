@@ -39,6 +39,7 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
   const [nativeFrame, setNativeFrame] = useState<string | null>(null);
   const panelRoot = useRef<HTMLDivElement>(null);
   const panelVisible = useRef(true);
+  const nativeInflight = useRef(false);
   const [humanRunId, setHumanRunId] = useState<string | null>(null);
   const [takingControl, setTakingControl] = useState(false);
   const inflight = useRef(false);
@@ -108,11 +109,13 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
     if (hostId === null || active !== null) { setNativeFrame(null); return; }
     let stopped = false;
     const poll = async () => {
-      if (stopped || !panelVisible.current || document.visibilityState === "hidden") return;
+      if (stopped || nativeInflight.current || !panelVisible.current || document.visibilityState === "hidden") return;
+      nativeInflight.current = true;
       try {
         const result = await rpc.call("computer.preview", { hostId, threadId });
         if (!stopped && result.frame) { setNativeFrame(`data:image/jpeg;base64,${result.frame.base64}`); setLiveStatus("live"); }
       } catch { /* Built-in browser is optional; retained run evidence remains the fallback. */ }
+      finally { nativeInflight.current = false; }
     };
     void poll();
     const timer = setInterval(() => void poll(), 1_000);

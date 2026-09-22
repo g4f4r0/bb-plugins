@@ -90,6 +90,12 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
   host.experimental_onSignal("runChanged", (payload) => { publish(); void releaseNativeIfDone(payload.payload.runId); });
   for (const signal of ["frameAvailable", "artifactChanged"] as const) host.experimental_onSignal(signal, publish);
 
+  const within = <T>(promise: Promise<T>, fallback: T, timeoutMs = 1_500): Promise<T> => new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), timeoutMs);
+    timer.unref?.();
+    promise.then((value) => { clearTimeout(timer); resolve(value); }, () => { clearTimeout(timer); resolve(fallback); });
+  });
+  const desktopInstances = (hostId: string, timeoutMs?: number) => within(bb.sdk.experimental_desktopBrowsers.listInstances({ hostId }), { instances: [] }, timeoutMs);
   const runIndex = (runId: string) => kv.get<RunIndex>(`run:${runId}`);
   const knownHosts = async () => (await kv.get<string[]>("hosts")) ?? [];
 
@@ -112,7 +118,7 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
         capabilities = await host.call("capabilities.probe", { expectedHostId: entry.id, provider }, hostOptions(entry.id)).catch(() => null);
       }
       const nativeReady = capabilities !== null && ["darwin", "win32"].includes(capabilities.platform.os)
-        && await bb.sdk.experimental_desktopBrowsers.listInstances({ hostId: entry.id }).then(({ instances }) => instances.length > 0).catch(() => false);
+        && (await desktopInstances(entry.id)).instances.length > 0;
       return {
         hostId: entry.id,
         name: entry.name,
@@ -157,7 +163,7 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
 
   async function nativeBrowserAvailable(hostId: string, capabilities: HostCapabilities | null): Promise<boolean> {
     if (capabilities === null || !["darwin", "win32"].includes(capabilities.platform.os)) return false;
-    return bb.sdk.experimental_desktopBrowsers.listInstances({ hostId }).then(({ instances }) => instances.length > 0).catch(() => false);
+    return (await desktopInstances(hostId, 3_000)).instances.length > 0;
   }
 
   async function prepareNativeBrowser(route: WayfinderRoute, hostId: string): Promise<{ hostBinding: { kind: "native"; tabId: string; wsEndpoint: string }; runBinding: NativeRunBinding } | null> {
@@ -166,7 +172,7 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     const capabilities = await host.call("capabilities.probe", { expectedHostId: hostId, provider }, hostOptions(hostId)).catch(() => null);
     if (!await nativeBrowserAvailable(hostId, capabilities)) return null;
     const browser = bb.sdk.experimental_desktopBrowsers;
-    const { instances } = await browser.listInstances({ hostId });
+    const { instances } = await desktopInstances(hostId, 3_000);
     const instance = instances[0];
     if (!instance) return null;
     const base = { hostId, threadId: route.identity.threadId, instanceId: instance.instanceId, generation: instance.generation };
@@ -285,14 +291,14 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
       const enrolled = await bb.sdk.hosts.list();
       if (!enrolled.some((candidate) => candidate.id === input.hostId && candidate.status === "connected")) return { frame: null };
       const browser = bb.sdk.experimental_desktopBrowsers;
-      const { instances } = await browser.listInstances({ hostId: input.hostId }).catch(() => ({ instances: [] }));
+      const { instances } = await desktopInstances(input.hostId);
       const instance = instances[0];
       if (!instance) return { frame: null };
       const base = { hostId: input.hostId, threadId: input.threadId, instanceId: instance.instanceId, generation: instance.generation };
-      const { tabs } = await browser.listTabs(base).catch(() => ({ tabs: [] }));
+      const { tabs } = await within(browser.listTabs(base), { tabs: [] });
       const tab = [...tabs].reverse().find((candidate) => candidate.profile.kind === "automation") ?? tabs.at(-1);
       if (!tab) return { frame: null };
-      const capture = await browser.captureTab({ ...base, tabId: tab.tabId }).catch(() => null);
+      const capture = await within(browser.captureTab({ ...base, tabId: tab.tabId }), null);
       return capture ? { frame: { base64: capture.base64, width: capture.width, height: capture.height, capturedAt: Date.now() } } : { frame: null };
     },
     async "computer.control.acquire"(input) {
