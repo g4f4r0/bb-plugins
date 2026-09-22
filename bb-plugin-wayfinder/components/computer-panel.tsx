@@ -191,14 +191,10 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
   const connected = error === null && connection === "connected" && liveStatus === "live";
   const statusLabel = human ? "You’re controlling" : liveStatus === "live" ? "Connected" : liveStatus === "disconnected" ? "Disconnected" : "Connecting";
 
+  const ratio = desktopSize.width / desktopSize.height;
   return <div ref={panelRoot} className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
-    <header className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
-      <button type="button" aria-label="All computers" onClick={() => selectMachine(null)} className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><Icon name="ArrowLeft" className="size-4" aria-hidden="true" /></button>
-      <Icon name="Laptop" className="size-4 text-muted-foreground" aria-hidden="true" />
-      <span className="min-w-0 flex-1 truncate text-sm font-medium">{hostName}</span>
-    </header>
-    <main className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden p-3">
-      <div className="group relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden rounded-md border border-border bg-black text-white" style={{ aspectRatio: `${desktopSize.width} / ${desktopSize.height}` }}>
+    <main className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden" style={{ containerType: "size" }}>
+      <div className="group relative flex min-h-0 items-center justify-center overflow-hidden rounded-md border border-border bg-black text-white" style={{ width: `min(${desktopSize.width}px, calc(100cqw - 24px), calc((100cqh - 24px) * ${ratio}))`, aspectRatio: `${desktopSize.width} / ${desktopSize.height}` }}>
         {desktopFrame !== null ? <DesktopView imageUrl={desktopFrame} interactive={human} onInput={sendInput} /> : desktopState === "setup-required" || desktopState === "unavailable" ? <Notice title="Desktop unavailable">{desktopMessage ?? "Install Cua Driver and grant screen-recording permission on this computer."}</Notice> : <ViewportSkeleton />}
 
         {desktopFrame !== null && !human ? <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-black/0 opacity-0 transition-opacity group-hover:bg-black/25 group-hover:opacity-100 group-focus-within:bg-black/25 group-focus-within:opacity-100"><button type="button" onClick={() => void takeControl()} disabled={takingControl} className="pointer-events-auto inline-flex min-h-9 items-center gap-2 rounded-md bg-white px-3 text-xs font-medium text-black shadow-lg hover:bg-white/90 disabled:opacity-60">{takingControl ? <Icon name="Loading" className="size-4 animate-spin" aria-hidden="true" /> : <Icon name="Cursor" className="size-4" aria-hidden="true" />}{takingControl ? "Taking control…" : "Take control"}</button></div> : null}
@@ -206,7 +202,7 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
         {active !== null ? <div className="absolute left-3 top-3 z-20 flex max-w-[calc(100%-6rem)] items-center gap-3 rounded-lg bg-black/70 px-3 py-2 shadow backdrop-blur"><div className="min-w-0"><div className="text-[10px] font-medium uppercase tracking-wide text-white/50">{RUN_STATE_LABEL[active.state] ?? active.state}</div><p className="truncate text-xs">{active.route.goal}</p></div><button type="button" onClick={() => void cancel()} className="shrink-0 rounded-md bg-white/10 px-2 py-1 text-[11px] hover:bg-white/20">Cancel</button></div> : null}
         {snapshot?.queue.length ? <div className="absolute right-3 top-3 z-20 rounded-full bg-black/70 px-3 py-1.5 text-xs shadow backdrop-blur">{snapshot.queue.length} queued</div> : null}
         <button type="button" disabled={!human} onClick={releaseControl} title={human ? "Release control" : statusLabel} className="absolute bottom-3 left-3 z-20 flex items-center gap-2 rounded-full bg-black/75 px-3 py-1.5 text-xs shadow backdrop-blur disabled:pointer-events-none disabled:opacity-100"><span className={`size-1.5 rounded-full ${connected ? "bg-emerald-400" : liveStatus === "disconnected" ? "bg-red-400" : "bg-amber-400"}`} aria-hidden="true" /><span>{statusLabel}</span></button>
-        <div aria-label="Computer host" className="pointer-events-none absolute bottom-3 right-3 z-20 flex max-w-[45%] items-center gap-1.5 rounded-full bg-black/75 px-3 py-1.5 text-xs text-white/70 shadow backdrop-blur"><Icon name="Laptop" className="size-3.5 shrink-0" aria-hidden="true" /><span className="truncate">{hostName}</span></div>
+        <button type="button" aria-label="All computers" onClick={() => selectMachine(null)} className="absolute bottom-3 right-3 z-20 flex max-w-[45%] items-center gap-1.5 rounded-full bg-black/75 px-3 py-1.5 text-xs text-white/70 shadow backdrop-blur hover:bg-black/90 hover:text-white"><Icon name="Laptop" className="size-3.5 shrink-0" aria-hidden="true" /><span className="truncate">{hostName}</span></button>
       </div>
     </main>
   </div>;

@@ -235,7 +235,7 @@ describe("Computer panel", () => {
     slot.lifecycle.unmount();
   });
 
-  it("opens a selected whole desktop inside the padded rounded viewport", async () => {
+  it("opens a selected whole desktop inside the aspect-preserving rounded viewport", async () => {
     const slot = renderSlot<PluginThreadPanelProps, UiRpcContract>(panel, { threadId: "thr_a", params: { hostId: "host_thread" } }, { rpc: {
       "computer.machines": () => machines,
       "computer.snapshot": () => snapshot,
@@ -245,9 +245,12 @@ describe("Computer panel", () => {
     } as never });
     const image = await slot.findByRole("img", { name: "Live view of the controlled desktop" }) as HTMLImageElement;
     expect(image.src).toBe("data:image/png;base64,YWJj");
-    expect(image.closest("main")?.className).toContain("p-3");
-    expect(image.parentElement?.parentElement?.className).toContain("rounded-md");
-    expect(slot.getByLabelText("Computer host").textContent).toContain("Thread Mac");
+    const viewport = image.parentElement?.parentElement as HTMLDivElement;
+    expect(viewport.className).toContain("rounded-md");
+    expect(viewport.style.width).toContain("100cqw - 24px");
+    expect(viewport.style.aspectRatio).toBe("1280 / 720");
+    expect(slot.getByRole("button", { name: "All computers" }).textContent).toContain("Thread Mac");
+    expect(slot.queryByRole("banner")).toBeNull();
     slot.lifecycle.unmount();
   });
 
