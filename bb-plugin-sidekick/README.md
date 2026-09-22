@@ -1,77 +1,80 @@
 # Sidekick
 
-Sidekick is an isolated v1 fork of Dmitrii Kapustin's MIT-licensed Agent Roles
-plugin. It keeps the reusable-profile idea and removes teams, DAGs, task
-presets, file synchronization, visual workflows, and agent-to-agent handoffs.
+Sidekick is an isolated fork of Dmitrii Kapustin's MIT-licensed Agent Roles
+plugin. It keeps reusable agents and removes teams, DAGs, task presets, file
+synchronization, visual workflows, and agent-to-agent handoffs.
 
-The installed store starts empty. Sidekick never seeds example profiles.
+New installations start with an empty agent store. Sidekick never seeds
+examples automatically.
 
 ## Scope
 
-- Create, read, update, and delete reusable profiles in Sidekick-owned SQLite.
-- Store profile-specific hidden instructions plus provider, model, reasoning,
-  permission, preferred-skill, and behavior defaults.
+- Create, read, update, and delete reusable agents in Sidekick-owned SQLite.
+- Store agent instructions, provider/model/reasoning/service-tier/permission
+  defaults, and preferred skills.
 - Store one shared instruction block in Sidekick's plugin settings for every
-  Sidekick profile.
-- Start exactly one visible, profile-bound BB thread in an explicitly selected
+  agent.
+- Choose execution defaults with BB's native live provider/model picker, the
+  same picker used by the composer.
+- Search and select skills discovered by BB instead of typing skill names.
+- Start exactly one visible, agent-bound BB thread in an explicitly selected
   project.
-- Inject shared instructions first and the selected profile's instructions
-  second with `bb.agents.configure` when the provider session starts.
-- Record profile identity in Sidekick's thread metadata namespace.
-- Use the sidebar page or an automation-friendly `bb sidekick` command.
+- Inject shared instructions first and the selected agent's instructions second
+  when the provider session starts.
 
 Sidekick does not provide an orchestrator conversation, teams, DAGs, task
-presets, visual workflows, handoffs, live agents, or automations.
+presets, visual workflows, handoffs, live-agent objects, or automations.
 
 ## Two instruction levels
 
 1. Open **Settings → Installed plugins → Sidekick** and set **Instructions for
-   all profiles** for rules every Sidekick should follow.
-2. Set **Profile instructions** in each profile for that Sidekick's identity,
-   responsibilities, and working style.
+   all agents** for shared rules.
+2. Set **Agent instructions** for identity, responsibilities, boundaries, and
+   working style. There is no separate behavior field; behavior belongs in the
+   agent's instructions.
 
-Shared instructions are injected before profile instructions, matching a
-shared-then-specific composition model. They apply only to Sidekick-created
-profile threads. The shared field accepts up to 1,200 characters; BB limits the
-combined dynamic instruction block to 4,096 characters. Setting changes take
-effect when a provider session next starts; they do not rewrite existing task
-messages.
-
-The same shared setting can be managed from the CLI:
+The shared field accepts up to 1,200 characters. BB limits the combined dynamic
+instruction block to 4,096 characters. Setting changes take effect when the
+provider session next starts.
 
 ```sh
 bb plugin config sidekick set sharedInstructions "Your shared instructions"
 ```
 
+## UI
+
+Open **Agents** in the app sidebar. The editor uses BB's live provider catalog
+for provider, model, reasoning, service tier, and permission controls. Its skill
+picker lists skills BB discovers on this installation and stores up to 12 names
+per agent.
+
+The Plugin SDK cannot activate skills owned by another plugin or provider.
+Sidekick therefore includes selected names in hidden instructions and asks the
+agent to use them when they are available in that session.
+
 ## CLI
 
 ```sh
 bb sidekick list
-bb sidekick show <profile>
+bb sidekick show <agent>
 bb sidekick create --slug <slug> --name <name> --instructions <text>
-bb sidekick update <profile> --behavior <text>
-bb sidekick delete <profile>
-bb sidekick spawn <profile> \
+bb sidekick update <agent> \
+  --provider pi \
+  --model openai-codex/gpt-5.5 \
+  --reasoning medium \
+  --permission full \
+  --skills research,reporting
+bb sidekick delete <agent>
+bb sidekick spawn <agent> \
   --prompt "Do the focused task" \
   --project proj_123 \
   --title "Optional title" \
   --wait
 ```
 
-`--project` is always required for `spawn`; Sidekick does not infer it from the
-current thread. Omit `--wait` to return immediately with the new thread ID.
-Add `--json` to any command for machine-readable output.
-
-Run `bb sidekick help` or read [the bundled skill](skills/sidekick/SKILL.md) for
-all profile fields.
-
-## Skills limitation
-
-Profiles retain preferred skill names. Sidekick places those names in the
-hidden profile instruction block and asks the agent to use them when available.
-The current BB Plugin SDK only lets a plugin select skills from its own static
-manifest, so Sidekick cannot directly activate skills owned by another plugin
-or user directory.
+`--project` is always required for `spawn`; Sidekick never infers it from the
+current thread. Omit `--wait` to return immediately with the new thread ID. Add
+`--json` to any command for machine-readable output.
 
 ## Development
 
