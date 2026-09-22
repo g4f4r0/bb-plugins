@@ -77,6 +77,11 @@ describe("Wayfinder host integration", () => {
     expect(media.frame?.bytesBase64.length).toBeGreaterThan(1_000);
     const range = await harness.experimental_call("artifacts.readRange", { expectedHostId: route.identity.hostId, artifactId: artifactId!, range: { start: 0, endInclusive: 31 } });
     expect(range.bytesBase64.length).toBeGreaterThan(0);
+    for (let attempt = 0; attempt < 100 && status.cleanup.state === "pending"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      status = await harness.experimental_call("runs.status", { expectedHostId: route.identity.hostId, runId });
+    }
+    expect(status.cleanup).toMatchObject({ state: "completed", message: null });
     await harness.experimental_dispose();
   }, 20_000);
 });

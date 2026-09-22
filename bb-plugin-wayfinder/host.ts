@@ -182,7 +182,22 @@ async function execute(run: RunRecord): Promise<void> {
     if (current.state !== "cancelled") update(current, { state: signal.aborted ? "cancelled" : "blocked", activeController: true, finishedAt: Date.now(), error: failure, cleanup: { state: "pending", message: null, completedAt: null } });
   } finally { await cleanup(run.runId); lease?.release(); }
 }
-async function cleanup(runId: string) { const job = jobs.get(runId); if (!job) return; job.controlGate.dispose(); let failure: string | null = null; try { if (job.adapter) await job.adapter.close({ signal: new AbortController().signal, expectedHostId: runs.get(runId)!.route.identity.hostId }); } catch (error) { failure = error instanceof Error ? error.message : "Browser cleanup failed"; } if (job.process) { if (!job.process.killed) job.process.kill("SIGTERM"); let exited = job.process.exitCode !== null; await new Promise<void>((resolve) => { if (exited) return resolve(); const timer = setTimeout(resolve, 5_000); job.process!.once("exit", () => { exited = true; clearTimeout(timer); resolve(); }); }); if (!exited) failure = failure ?? "Fortress process did not exit before cleanup deadline"; } if (job.server) await new Promise<void>((resolve) => job.server!.close(() => resolve())); if (job.profile) await rm(job.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch((error) => { failure = failure ?? (error instanceof Error ? error.message : "Profile cleanup failed"); }); const run = runs.get(runId); if (run) runs.set(runId, update(run, { activeController: false, cleanup: { state: failure === null ? "completed" : "incomplete", message: failure, completedAt: failure === null ? Date.now() : null } })); jobs.delete(runId); }
+async function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return true;
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => { child.removeListener("exit", exited); resolve(false); }, timeoutMs);
+    const exited = () => { clearTimeout(timer); resolve(true); };
+    child.once("exit", exited);
+  });
+}
+async function stopProcess(child: ChildProcess): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return true;
+  if (!child.killed) child.kill("SIGTERM");
+  if (await waitForExit(child, 5_000)) return true;
+  child.kill("SIGKILL");
+  return waitForExit(child, 2_000);
+}
+async function cleanup(runId: string) { const job = jobs.get(runId); if (!job) return; job.controlGate.dispose(); let failure: string | null = null; try { if (job.adapter) await job.adapter.close({ signal: new AbortController().signal, expectedHostId: runs.get(runId)!.route.identity.hostId }); } catch (error) { failure = error instanceof Error ? error.message : "Browser cleanup failed"; } if (job.process && !await stopProcess(job.process)) failure = failure ?? "Fortress process did not exit after forced cleanup"; if (job.server) await new Promise<void>((resolve) => job.server!.close(() => resolve())); if (job.profile) await rm(job.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch((error) => { failure = failure ?? (error instanceof Error ? error.message : "Profile cleanup failed"); }); const run = runs.get(runId); if (run) runs.set(runId, update(run, { activeController: false, cleanup: { state: failure === null ? "completed" : "incomplete", message: failure, completedAt: failure === null ? Date.now() : null } })); jobs.delete(runId); }
 
 async function probe(hostId: string, provider: "fixture" | "jev" | "openrouter"): Promise<HostCapabilities> {
   const fortressReady = await resolveFortressExecutable() !== null;
