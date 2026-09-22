@@ -127,8 +127,12 @@ interface ProfileRow {
   updated_at: number;
 }
 
-function renderProfileInstructions(profile: Profile): string {
+const SHARED_INSTRUCTIONS_MAX_CHARS = 1_200;
+const DYNAMIC_INSTRUCTIONS_MAX_CHARS = 4_000;
+
+function renderProfileInstructions(profile: Profile, sharedInstructions: string): string {
   const sections = [
+    sharedInstructions ? "# Instructions for all Sidekick profiles\n" + sharedInstructions : "",
     "# Sidekick profile",
     `Profile name (data): ${JSON.stringify(profile.name)}`,
     profile.description ? `Profile description (data): ${JSON.stringify(profile.description)}` : "",
@@ -141,7 +145,9 @@ function renderProfileInstructions(profile: Profile): string {
     profile.behavior ? "\n## Behavior defaults\n" + profile.behavior : "",
   ].filter((line) => line !== "");
   const rendered = sections.join("\n");
-  return rendered.length <= 4_000 ? rendered : rendered.slice(0, 3_980) + "\n[…truncated]";
+  return rendered.length <= DYNAMIC_INSTRUCTIONS_MAX_CHARS
+    ? rendered
+    : rendered.slice(0, DYNAMIC_INSTRUCTIONS_MAX_CHARS - 20) + "\n[…truncated]";
 }
 
 export interface ParsedCliArgs {
@@ -180,7 +186,25 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
   return { positional, flags };
 }
 
-export default function plugin(bb: BbPluginApi) {
+export default async function plugin(bb: BbPluginApi) {
+  const settings = bb.settings.define({
+    sharedInstructions: {
+      type: "string",
+      label: "Instructions for all profiles",
+      description: "Up to 1,200 characters, injected first into every Sidekick profile thread. Profile-specific instructions follow. Changes apply when the provider session next starts.",
+      experimental_multiline: true,
+      experimental_schema: z.string().max(
+        SHARED_INSTRUCTIONS_MAX_CHARS,
+        `Instructions for all profiles must be at most ${SHARED_INSTRUCTIONS_MAX_CHARS} characters`,
+      ),
+      default: "",
+    },
+  });
+  let sharedInstructions = (await settings.get()).sharedInstructions.trim();
+  settings.onChange((next) => {
+    sharedInstructions = next.sharedInstructions.trim();
+  });
+
   const db = bb.storage.database();
   bb.storage.migrate(db, [...STORAGE_MIGRATIONS]);
 
@@ -314,7 +338,7 @@ export default function plugin(bb: BbPluginApi) {
     if (typeof metadata.profileId !== "string" || typeof metadata.profileSlug !== "string") return { tools: [], skills: [] };
     const profile = getProfile(metadata.profileId);
     if (!profile || profile.slug !== metadata.profileSlug) return { tools: [], skills: [] };
-    return { tools: [], skills: [], instructions: renderProfileInstructions(profile) };
+    return { tools: [], skills: [], instructions: renderProfileInstructions(profile, sharedInstructions) };
   });
 
   bb.rpc.register(rpcContract, {

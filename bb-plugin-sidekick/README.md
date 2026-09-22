@@ -9,17 +9,39 @@ The installed store starts empty. Sidekick never seeds example profiles.
 ## Scope
 
 - Create, read, update, and delete reusable profiles in Sidekick-owned SQLite.
-- Store hidden instructions plus provider, model, reasoning, permission,
-  preferred-skill, and behavior defaults.
+- Store profile-specific hidden instructions plus provider, model, reasoning,
+  permission, preferred-skill, and behavior defaults.
+- Store one shared instruction block in Sidekick's plugin settings for every
+  Sidekick profile.
 - Start exactly one visible, profile-bound BB thread in an explicitly selected
   project.
-- Inject the selected profile's instructions with `bb.agents.configure` when
-  the provider session starts.
+- Inject shared instructions first and the selected profile's instructions
+  second with `bb.agents.configure` when the provider session starts.
 - Record profile identity in Sidekick's thread metadata namespace.
 - Use the sidebar page or an automation-friendly `bb sidekick` command.
 
 Sidekick does not provide an orchestrator conversation, teams, DAGs, task
 presets, visual workflows, handoffs, live agents, or automations.
+
+## Two instruction levels
+
+1. Open **Settings → Installed plugins → Sidekick** and set **Instructions for
+   all profiles** for rules every Sidekick should follow.
+2. Set **Profile instructions** in each profile for that Sidekick's identity,
+   responsibilities, and working style.
+
+Shared instructions are injected before profile instructions, matching a
+shared-then-specific composition model. They apply only to Sidekick-created
+profile threads. The shared field accepts up to 1,200 characters; BB limits the
+combined dynamic instruction block to 4,096 characters. Setting changes take
+effect when a provider session next starts; they do not rewrite existing task
+messages.
+
+The same shared setting can be managed from the CLI:
+
+```sh
+bb plugin config sidekick set sharedInstructions "Your shared instructions"
+```
 
 ## CLI
 
