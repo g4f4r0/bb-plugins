@@ -58,6 +58,17 @@ function probeDetail(probe: CuaDoctorProbe | undefined, fallback: string): strin
   return [probe.message, probe.detail].filter(Boolean).join(" ").slice(0, 1_000) || fallback;
 }
 
+async function probeLinuxAtSpi(signal: AbortSignal): Promise<{ available: boolean; detail: string }> {
+  if (process.platform !== "linux") return { available: false, detail: "AT-SPI probing applies only to Linux." };
+  const address = await runCommand("dbus-send", ["--session", "--dest=org.a11y.Bus", "--type=method_call", "--print-reply", "/org/a11y/bus", "org.a11y.Bus.GetAddress"], signal, 5_000).catch(() => null);
+  const match = address?.code === 0 ? /string\s+"([^"]+)"/u.exec(address.stdout) : null;
+  if (!match?.[1]) return { available: false, detail: "The session D-Bus did not publish an AT-SPI bus address." };
+  const registry = await runCommand("busctl", ["--address", match[1], "call", "org.a11y.atspi.Registry", "/org/a11y/atspi/registry", "org.a11y.atspi.Registry", "GetRegisteredEvents"], signal, 5_000).catch(() => null);
+  return registry?.code === 0
+    ? { available: true, detail: "AT-SPI registry responded on the graphical session bus." }
+    : { available: false, detail: "The AT-SPI registry did not respond on the published accessibility bus." };
+}
+
 function permissionSummary(stdout: string): string | null {
   try {
     const root = JSON.parse(stdout) as unknown;
@@ -132,8 +143,11 @@ export async function inspectComputer(dataDir: string, signal: AbortSignal): Pro
   }
   try {
     tree = await runtime.inspectAccessibility(signal);
+    if (!tree.available && process.platform === "linux") tree = await probeLinuxAtSpi(signal);
   } catch (error) {
-    tree = { available: false, detail: error instanceof Error ? error.message.slice(0, 1_000) : "Accessibility tree probe failed." };
+    tree = process.platform === "linux"
+      ? await probeLinuxAtSpi(signal)
+      : { available: false, detail: error instanceof Error ? error.message.slice(0, 1_000) : "Accessibility tree probe failed." };
   } finally {
     await runtime.dispose().catch(() => undefined);
   }
@@ -145,7 +159,7 @@ export async function inspectComputer(dataDir: string, signal: AbortSignal): Pro
   const accessibilityReady = tree.available;
   const accessibility = {
     state: accessibilityReady ? "ready" as const : capture.state === "ready" ? "warning" as const : "missing" as const,
-    detail: !accessibilityReady && explicitAccessibilityFailure ? probeDetail(accessibilityProbe, tree.detail) : tree.detail,
+    detail: !accessibilityReady && explicitAccessibilityFailure ? `${probeDetail(accessibilityProbe, tree.detail)} Functional probe: ${tree.detail}`.slice(0, 1_000) : tree.detail,
   };
   const inputBlocked = process.platform === "darwin" && !accessibilityReady;
   const input = {
