@@ -3,14 +3,15 @@ import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
 import type { UiRpcContract } from "../../components/rpc.js";
 import { artifactRecordSchema, type ArtifactRecord } from "../../src/contracts/artifact.js";
 
 // Everything that touches the SDK app runtime loads after the test runtime is installed.
 const app = await loadPluginApp(() => import("../../app.js"));
-const { selectedRunFromSubPath } = await import("../../components/computer-panel.js");
+const { selectedRunFromParams } = await import("../../components/computer-panel.js");
 const directive = app.messageDirectives.find((registration) => registration.id === "wayfinder-artifact")!;
-const panel = app.navPanels.find((registration) => registration.id === "computer")!;
+const panel = app.threadPanelActions.find((registration) => registration.id === "computer")!;
 
 afterEach(cleanup);
 
@@ -59,16 +60,17 @@ function renderDirective(attributes: Record<string, string>, threadId: string, r
 }
 
 describe("app registration", () => {
-  it("registers the Computer nav panel and the inline artifact directive through SDK slots", () => {
-    expect(panel).toMatchObject({ title: "Computer", path: "computer" });
+  it("registers Computer only as a right thread-panel tab, plus the inline artifact directive", () => {
+    expect(app.navPanels).toHaveLength(0);
+    expect(panel).toMatchObject({ title: "Computer", layout: "flush" });
     expect(directive).toBeDefined();
   });
 
-  it("parses only well-formed run deep links", () => {
-    expect(selectedRunFromSubPath("runs/run_a")).toBe("run_a");
-    expect(selectedRunFromSubPath("runs/../etc")).toBeNull();
-    expect(selectedRunFromSubPath("runs/a/b")).toBeNull();
-    expect(selectedRunFromSubPath("")).toBeNull();
+  it("parses only well-formed run tab parameters", () => {
+    expect(selectedRunFromParams({ runId: "run_a" })).toBe("run_a");
+    expect(selectedRunFromParams({ runId: "../etc" })).toBeNull();
+    expect(selectedRunFromParams({ runId: "a/b" })).toBeNull();
+    expect(selectedRunFromParams(null)).toBeNull();
   });
 });
 
@@ -204,7 +206,7 @@ describe("inline artifact card", () => {
 
 describe("Computer panel", () => {
   it("shows setup required instead of a fake view when no host is configured", async () => {
-    const slot = renderSlot(panel, { subPath: "" }, { rpc: {} });
+    const slot = renderSlot(panel, { threadId: "thr_a", params: null }, { rpc: {} });
     await slot.findByText("Setup required");
     expect(slot.inspection.rpcCalls).toEqual([]);
   });
@@ -215,9 +217,9 @@ describe("Computer panel", () => {
       routeHash: SHA,
       state: "passed",
     };
-    const slot = renderSlot<{ subPath: string }, UiRpcContract>(
+    const slot = renderSlot<PluginThreadPanelProps, UiRpcContract>(
       panel,
-      { subPath: "runs/run_old" },
+      { threadId: "thr_a", params: { runId: "run_old" } },
       {
         settings: { hostId: "host_1" },
         rpc: {
@@ -244,7 +246,8 @@ describe("Computer panel", () => {
     expect(slot.getByText(`Run ${run.runId} was not found.`)).toBeDefined();
     expect(slot.inspection.rpcCalls[0]).toEqual({ method: "computer.snapshot", input: { hostId: "host_1", selectedRunId: "run_old" } });
     fireEvent.click(slot.getByText("run_q"));
-    expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "computer", options: { subPath: "runs/run_q" } });
+    await waitFor(() => expect(slot.inspection.rpcCalls.at(-1)).toEqual({ method: "computer.snapshot", input: { hostId: "host_1", selectedRunId: "run_q" } }));
+    expect(slot.inspection.navigateCalls).toEqual([]);
     slot.lifecycle.unmount();
   });
 });

@@ -1,10 +1,9 @@
 import {
-  useBbNavigate,
   useRealtime,
   useRealtimeConnectionState,
   useRpc,
   useSettings,
-  type PluginNavPanelProps,
+  type PluginThreadPanelProps,
 } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -16,24 +15,23 @@ import { errorMessage, formatDuration, RUN_STATE_LABEL, TERMINAL_RUN_STATES } fr
 import { LiveView } from "./live-view.js";
 import { COMPUTER_REALTIME_CHANNEL, type UiRpcContract } from "./rpc.js";
 
-export const COMPUTER_PANEL_PATH = "computer";
 const SNAPSHOT_INTERVAL_MS = 2_000;
 
-/** `runs/<runId>` selects a historical or queued run without confusing it with the current controller. */
-export function selectedRunFromSubPath(subPath: string): string | null {
-  const match = /^runs\/([^/]+)$/u.exec(subPath);
-  const parsed = entityIdSchema.safeParse(match?.[1]);
+export function selectedRunFromParams(params: unknown): string | null {
+  const parsed = entityIdSchema.safeParse(
+    params && typeof params === "object" && "runId" in params ? params.runId : null,
+  );
   return parsed.success ? parsed.data : null;
 }
 
-export function ComputerPanel({ subPath }: PluginNavPanelProps) {
+export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
   const rpc = useRpc<UiRpcContract>();
-  const navigate = useBbNavigate();
   const connection = useRealtimeConnectionState();
   const settings = useSettings();
   const hostSetting = settings.values?.hostId;
   const hostId = typeof hostSetting === "string" && entityIdSchema.safeParse(hostSetting).success ? hostSetting : null;
-  const selectedRunId = selectedRunFromSubPath(subPath);
+  const [selectedRunId, selectRun] = useState(() => selectedRunFromParams(params));
+  useEffect(() => { selectRun(selectedRunFromParams(params)); }, [threadId, params]);
   const [snapshot, setSnapshot] = useState<ComputerSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inflight = useRef(false);
@@ -81,8 +79,6 @@ export function ComputerPanel({ subPath }: PluginNavPanelProps) {
 
   const active = snapshot?.activeRun ?? null;
   const selected = snapshot?.selectedRun ?? null;
-  const selectRun = (runId: string | null) =>
-    navigate.toPluginPanel(COMPUTER_PANEL_PATH, runId === null ? { subPath: "" } : { subPath: `runs/${runId}` });
 
   return (
     <Page>
