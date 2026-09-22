@@ -135,7 +135,8 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
         const result = await rpcRef.current.call("computer.preview", { hostId, threadId, clientId: clientId.current });
         if (!stopped) {
           setDesktopState(result.state);
-          setDesktopMessage(result.message);
+          const message: unknown = result.message;
+          setDesktopMessage(message === null ? null : typeof message === "string" ? message : errorMessage(message));
           if (result.frame) {
             const next = frameUrl(result.frame.base64, result.frame.mimeType);
             setDesktopFrame((current) => { if (current?.startsWith("blob:")) URL.revokeObjectURL(current); return next; });

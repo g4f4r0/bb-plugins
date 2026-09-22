@@ -40,5 +40,17 @@ export const RUN_STATE_LABEL: Record<string, string> = {
 };
 
 export function errorMessage(error: unknown): string {
-  return error instanceof Error && error.message.length > 0 ? error.message.slice(0, 300) : "Request failed";
+  const seen = new Set<unknown>();
+  const extract = (value: unknown): string | null => {
+    if (typeof value === "string") return value.trim() || null;
+    if (value === null || typeof value !== "object" || seen.has(value)) return null;
+    seen.add(value);
+    const record = value as Record<string, unknown>;
+    for (const key of ["message", "detail", "error", "cause"]) {
+      const message = extract(record[key]);
+      if (message !== null) return message;
+    }
+    return null;
+  };
+  return (extract(error) ?? "Request failed").slice(0, 300);
 }

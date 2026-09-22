@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
 import type { HumanInput } from "../contracts/run.js";
-import { ProcessCuaTransport } from "../adapters/cua-client.js";
+import { ProcessCuaTransport, type CuaToolResult } from "../adapters/cua-client.js";
+import { errorMessage } from "./errors.js";
 
 export const DESKTOP_CAPABILITY_TOOLS = ["get_desktop_state", "get_accessibility_tree", "get_window_state", "list_windows", "health_report", "click", "scroll", "type_text", "press_key"] as const;
 const MANIFEST = JSON.stringify({
@@ -149,7 +150,16 @@ export class DesktopRuntime {
 
   async #captureOnce(signal: AbortSignal): Promise<DesktopFrame> {
     await this.#start(signal);
-    const result = await this.#transport!.call("get_desktop_state", {}, signal);
+    let result: CuaToolResult;
+    try {
+      result = await this.#transport!.call("get_desktop_state", {}, signal);
+    } catch (error) {
+      const detail = errorMessage(error);
+      if (process.platform === "darwin") {
+        throw new Error(`Desktop capture failed. Grant Screen Recording to Cua Driver in System Settings > Privacy & Security, then reopen Computer. ${detail}`);
+      }
+      throw new Error(`Desktop capture failed. ${detail}`);
+    }
     const data = result.structuredContent ?? {};
     const encoded = data.screenshot_png_b64;
     if (typeof encoded !== "string" || encoded.length === 0) throw new Error("Cua did not return a desktop screenshot");
