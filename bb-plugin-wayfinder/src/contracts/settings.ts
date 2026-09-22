@@ -46,10 +46,6 @@ export const wayfinderSettingsRpcContract = defineRpcContract({
     input: z.object({ hostId: entityIdSchema.nullable() }).strict(),
     output: wayfinderSettingsStateSchema,
   },
-  "settings.models": {
-    input: z.object({ provider: providerIdSchema }).strict(),
-    output: z.array(z.object({ id: z.string().min(1).max(200), name: z.string().max(300) }).strict()).max(2000),
-  },
   "settings.saveProvider": {
     input: z.object({ provider: providerIdSchema, model: z.string().min(1).max(200) }).strict(),
     output: wayfinderSettingsStateSchema,

@@ -126,6 +126,32 @@ describe("Wayfinder settings", () => {
     await harness.lifecycle.dispose();
   });
 
+  it("saves computer, TypeSafe provider, fixed Jev model, and key through one endpoint", async () => {
+    const client = fakeInfisicalClient();
+    const { bb, harness } = createFakePluginHost({ pluginId: "wayfinder", sdk: { hosts: { list: async () => [HOST_A] } } });
+    plugin(bb, { infisicalClient: client });
+    const response = await harness.fetchHttp("POST", "/settings/save", {
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hostId: "host_a", provider: "jev", key: "synthetic-only" }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, message: "Settings saved." });
+    expect(client.secrets.TYPESAFE_API_KEY).toBe("synthetic-only");
+    expect(await harness.callRpc("settings.get", {})).toMatchObject({ selectedHostId: "host_a", provider: "jev", model: "jev-latest", keyStatus: "configured" });
+    await harness.lifecycle.dispose();
+  });
+
+  it("rejects OpenRouter rather than pretending it can provide Jev", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "wayfinder", sdk: { hosts: { list: async () => [HOST_A] } } });
+    plugin(bb, { infisicalClient: fakeInfisicalClient() });
+    const response = await harness.fetchHttp("POST", "/settings/save", {
+      headers: { "content-type": "application/json" }, body: JSON.stringify({ hostId: "host_a", provider: "openrouter" }),
+    });
+    expect(response.status).toBe(409);
+    expect((await response.json()).message).toMatch(/not currently available/iu);
+    await harness.lifecycle.dispose();
+  });
+
   it("exposes the key routes as narrowly scoped POSTs, not rpc or an agent tool", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "wayfinder", sdk: { hosts: { list: async () => [] } } });
     await plugin(bb, { infisicalClient: fakeInfisicalClient() });

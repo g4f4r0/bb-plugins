@@ -1,142 +1,81 @@
 import { experimental_Icon as Icon, useRpc } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { wayfinderSettingsRpcContract, HostSummary, ProviderId, WayfinderSettingsState } from "../src/contracts/settings.js";
-import type { ProviderModel } from "../src/core/provider-models.js";
 import { errorMessage } from "./format.js";
 
-const HTTP_BASE = "/api/v1/plugins/wayfinder/http";
+const SAVE_URL = "/api/v1/plugins/wayfinder/http/settings/save";
 const controlClass = "h-8 w-full rounded-md border border-input bg-background px-3 text-sm sm:w-64";
-const buttonClass = "rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-50";
-const labels: Record<ProviderId, string> = { jev: "TypeSafe (Jev)", openrouter: "OpenRouter" };
 type SettingsRpcContract = typeof wayfinderSettingsRpcContract;
-
-async function postJson(path: string, body: unknown): Promise<Record<string, unknown>> {
-  const response = await fetch(`${HTTP_BASE}${path}`, {
-    method: "POST", credentials: "same-origin",
-    headers: { "content-type": "application/json" }, body: JSON.stringify(body),
-  });
-  const parsed = (await response.json()) as Record<string, unknown>;
-  if (!response.ok) throw new Error(typeof parsed.message === "string" ? parsed.message : `Request failed (${response.status})`);
-  return parsed;
-}
 
 export function WayfinderSettingsSection() {
   const rpc = useRpc<SettingsRpcContract>();
   const [hosts, setHosts] = useState<HostSummary[] | null>(null);
-  const [state, setState] = useState<WayfinderSettingsState | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<WayfinderSettingsState | null>(null);
+  const [hostId, setHostId] = useState<string | null>(null);
+  const [provider, setProvider] = useState<ProviderId>("jev");
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
   const refresh = useCallback(async () => {
-    try {
-      const [hostList, settings] = await Promise.all([rpc.call("settings.hosts", {}), rpc.call("settings.get", {})]);
-      setHosts(hostList); setState(settings); setError(null);
-    } catch (cause) { setError(errorMessage(cause)); }
+    const [nextHosts, next] = await Promise.all([rpc.call("settings.hosts", {}), rpc.call("settings.get", {})]);
+    setHosts(nextHosts); setSaved(next); setHostId(next.selectedHostId); setProvider(next.provider);
   }, [rpc]);
-  useEffect(() => { void refresh(); }, [refresh]);
-  const selectHost = async (hostId: string | null) => {
-    try { setState(await rpc.call("settings.selectHost", { hostId })); setError(null); }
-    catch (cause) { setError(errorMessage(cause)); }
+  useEffect(() => { void refresh().catch((cause) => setMessage({ ok: false, text: errorMessage(cause) })); }, [refresh]);
+
+  if (saved === null || hosts === null) return <div role="status" aria-label="Loading settings" className="flex justify-center py-6"><Icon name="Loading" className="size-4 animate-spin text-muted-foreground" aria-hidden="true" /></div>;
+
+  const openRouterUnavailable = provider === "openrouter";
+  const configured = provider === saved.provider && saved.keyStatus === "configured";
+  const save = async () => {
+    if (busy || openRouterUnavailable) return;
+    setBusy(true); setMessage(null);
+    try {
+      const response = await fetch(SAVE_URL, {
+        method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ hostId, provider, ...(key.trim() ? { key } : {}) }),
+      });
+      const body = await response.json() as { ok?: boolean; message?: string };
+      if (!response.ok || body.ok !== true) throw new Error(body.message || `Request failed (${response.status})`);
+      setKey(""); await refresh(); setMessage({ ok: true, text: body.message || "Saved" });
+    } catch (cause) { setMessage({ ok: false, text: errorMessage(cause) }); }
+    finally { setBusy(false); }
   };
-  const saveProvider = async (provider: ProviderId, model: string) => {
-    setState(await rpc.call("settings.saveProvider", { provider, model }));
-  };
-  if (error !== null && state === null) return <Notice>{error}</Notice>;
-  if (state === null || hosts === null) return <div role="status" aria-label="Loading settings" className="flex justify-center py-6"><Icon name="Loading" className="size-4 animate-spin text-muted-foreground" aria-hidden="true" /></div>;
+
   return <div className="space-y-4">
-    {error !== null ? <Notice>{error}</Notice> : null}
     <div className="rounded-lg border border-border bg-card px-3 py-1">
-      <SettingRow label="Computer" description="The machine used for the Computer view.">
-        <select aria-label="Computer host" className={controlClass} value={state.selectedHostId ?? ""}
-          onChange={(event) => void selectHost(event.target.value || null)} disabled={hosts.length === 0}>
+      <SettingRow label="Computer" description="Machine used for browser sessions.">
+        <select aria-label="Computer host" className={controlClass} value={hostId ?? ""} disabled={busy || hosts.length === 0} onChange={(event) => setHostId(event.target.value || null)}>
           <option value="">{hosts.length === 0 ? "No machines available" : "Select a machine"}</option>
           {hosts.map((host) => <option key={host.hostId} value={host.hostId} disabled={host.status !== "connected"}>{host.name}{host.status === "connected" ? "" : " (disconnected)"}</option>)}
         </select>
       </SettingRow>
-      <ProviderKeyForm state={state} onSaveProvider={saveProvider} onRefresh={refresh} />
+      <SettingRow label="Provider" description="Provider used to access Jev.">
+        <select aria-label="Provider" className={controlClass} value={provider} disabled={busy} onChange={(event) => { setProvider(event.target.value as ProviderId); setKey(""); setMessage(null); }}>
+          <option value="jev">TypeSafe</option>
+          <option value="openrouter">OpenRouter</option>
+        </select>
+      </SettingRow>
+      <SettingRow label="Model" description="The decision model used by Wayfinder.">
+        <div aria-label="Model" className="flex h-8 items-center text-sm">Jev</div>
+      </SettingRow>
+      {openRouterUnavailable ? <p role="status" className="pb-3 text-xs text-destructive">Jev is not currently available through OpenRouter. Select TypeSafe to use Jev.</p> : null}
+      <SettingRow label={<>API key <span className="ml-1 rounded border border-border px-1 py-0.5 text-[10px] text-muted-foreground">secret</span></>} description={`Your ${provider === "jev" ? "TypeSafe" : "OpenRouter"} API key.`}>
+        <input type="password" autoComplete="off" aria-label={`${provider === "jev" ? "TypeSafe" : "OpenRouter"} API key`} className={controlClass}
+          placeholder={configured ? "[set]" : "Enter API key"} value={key} disabled={busy || openRouterUnavailable} onChange={(event) => setKey(event.target.value)} />
+      </SettingRow>
+      <div className="flex items-center justify-between gap-3 pb-3 pt-1">
+        <span className="text-xs text-muted-foreground">{configured ? "Configured" : "Not configured"}</span>
+        <button type="button" className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50" disabled={busy || openRouterUnavailable} onClick={() => void save()}>{busy ? "Saving…" : "Save"}</button>
+      </div>
+      {message ? <p role="status" className={`pb-3 text-xs ${message.ok ? "text-muted-foreground" : "text-destructive"}`}>{message.text}</p> : null}
     </div>
   </div>;
 }
 
-function ProviderKeyForm({ state, onSaveProvider, onRefresh }: {
-  state: WayfinderSettingsState;
-  onSaveProvider: (provider: ProviderId, model: string) => Promise<void>;
-  onRefresh: () => Promise<void>;
-}) {
-  const rpc = useRpc<SettingsRpcContract>();
-  const [provider, setProvider] = useState(state.provider);
-  const [model, setModel] = useState(state.model);
-  const [models, setModels] = useState<ProviderModel[] | null>(state.provider === "jev" ? [{ id: "jev-latest", name: "Jev" }] : null);
-  const [modelError, setModelError] = useState<string | null>(null);
-  const [key, setKey] = useState("");
-  const [busy, setBusy] = useState<"model" | "save" | "test" | null>(null);
-  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
-  const saved = provider === state.provider && model === state.model;
-  const keyStatus = provider === state.provider ? state.keyStatus : "unknown";
-
-  useEffect(() => {
-    let current = true;
-    setModelError(null);
-    if (provider === "jev") { setModels([{ id: "jev-latest", name: "Jev" }]); return; }
-    setModels(null);
-    rpc.call("settings.models", { provider }).then((list) => {
-      if (current) setModels(list);
-    }).catch(() => { if (current) setModelError("Could not load models. Reselect the provider to retry."); });
-    return () => { current = false; };
-  }, [provider, rpc]);
-
-  const changeProvider = (next: ProviderId) => {
-    setProvider(next); setKey(""); setMessage(null);
-    setModel(next === state.provider ? state.model : next === "jev" ? "jev-latest" : "");
-  };
-  const act = async (action: "model" | "save" | "test") => {
-    if (busy !== null || !model || !models?.some((entry) => entry.id === model)) return;
-    setBusy(action); setMessage(null);
-    try {
-      if (!saved) await onSaveProvider(provider, model);
-      if (action === "model") return;
-      const result = await postJson(action === "save" ? "/settings/key" : "/settings/key/test",
-        action === "save" ? { provider, key } : { provider });
-      if (action === "save") setKey("");
-      setMessage({ ok: result.ok === true, text: String(result.message ?? "") });
-      await onRefresh();
-    } catch (cause) { setMessage({ ok: false, text: errorMessage(cause) }); }
-    finally { setBusy(null); }
-  };
-  const validModel = !!model && !!models?.some((entry) => entry.id === model);
-
-  return <>
-    <SettingRow label="Provider" description="The API used for browser decisions.">
-      <select aria-label="Provider" className={controlClass} value={provider} disabled={busy !== null} onChange={(event) => changeProvider(event.target.value as ProviderId)}>
-        <option value="jev">TypeSafe (Jev)</option><option value="openrouter">OpenRouter</option>
-      </select>
-    </SettingRow>
-    <SettingRow label="Model" description={provider === "jev" ? "Jev, through the TypeSafe API." : "Models supporting structured output on OpenRouter."}>
-      <select aria-label="Model" className={controlClass} value={validModel ? model : ""} disabled={busy !== null || models === null} onChange={(event) => setModel(event.target.value)}>
-        {!validModel ? <option value="" disabled>{modelError ? "Models unavailable" : models === null ? "Loading models…" : "Select a model"}</option> : null}
-        {models?.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
-      </select>
-    </SettingRow>
-    {modelError ? <Notice>{modelError}</Notice> : null}
-    {!saved ? <div className="flex justify-end pb-3"><button type="button" className={buttonClass} disabled={busy !== null || !validModel} onClick={() => void act("model")}>{busy === "model" ? "Saving…" : "Save provider"}</button></div> : null}
-    <SettingRow label={<>API key <span className="ml-1 rounded border border-border px-1 py-0.5 text-[10px] text-muted-foreground">secret</span></>}
-      description={`Your ${labels[provider]} key. Stored securely in Infisical.`}>
-      <input type="password" autoComplete="off" aria-label={`${labels[provider]} API key`} className={controlClass}
-        placeholder={keyStatus === "configured" ? "[set]" : "Enter API key"} value={key} onChange={(event) => setKey(event.target.value)} disabled={busy !== null} />
-    </SettingRow>
-    <div className="flex flex-wrap items-center justify-between gap-3 pb-3 pt-1">
-      <span className="text-xs text-muted-foreground" role="status">{keyStatus === "configured" ? "Configured" : keyStatus === "missing" ? "Missing" : "Not checked"}</span>
-      <div className="flex gap-2">
-        <button type="button" className={buttonClass} disabled={busy !== null || !validModel || key.trim() === ""} onClick={() => void act("save")}>{busy === "save" ? "Saving…" : "Save"}</button>
-        <button type="button" className={buttonClass} disabled={busy !== null || !validModel} onClick={() => void act("test")}>{busy === "test" ? "Testing…" : "Test connection"}</button>
-      </div>
-    </div>
-    {message !== null ? <p role="status" className={`pb-3 text-xs ${message.ok ? "text-muted-foreground" : "text-destructive"}`}>{message.text}</p> : null}
-    {saved && state.lastTest !== null ? <p className="pb-3 text-xs text-muted-foreground">Last test {state.lastTest.ok ? "succeeded" : "failed"}: {state.lastTest.message}</p> : null}
-  </>;
-}
 function SettingRow({ label, description, children }: { label: ReactNode; description: string; children: ReactNode }) {
   return <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
     <div className="min-w-0 flex-1"><div className="text-sm font-medium">{label}</div><p className="mt-0.5 text-xs text-muted-foreground">{description}</p></div>
     <div className="w-full shrink-0 sm:w-64">{children}</div>
   </div>;
 }
-function Notice({ children }: { children: ReactNode }) { return <p role="status" className="text-sm text-destructive">{children}</p>; }

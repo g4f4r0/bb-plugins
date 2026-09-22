@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { providerModels } from "./src/core/provider-models.js";
 import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { wayfinderRpcContract } from "./src/contracts/api.js";
 import { hostContract, hostSignals } from "./src/contracts/host.js";
 import { artifactHttpRoutes } from "./src/contracts/artifact.js";
 import { routeSchema, type WayfinderRoute } from "./src/contracts/route.js";
+import { entityIdSchema } from "./src/contracts/primitives.js";
 import type { RunRecord } from "./src/contracts/run.js";
 import { sha256 } from "./src/core/hash.js";
 import { createInfisicalClient, type InfisicalScope } from "./src/core/infisical.js";
@@ -40,6 +40,7 @@ const PROVIDER_PROBE: Record<ProviderId, { url: string; header: string }> = {
 const MAX_KEY_BODY_BYTES = 8 * 1024;
 const saveKeyBodySchema = z.object({ provider: providerIdSchema, key: z.string().min(1).max(4_096) }).strict();
 const testKeyBodySchema = z.object({ provider: providerIdSchema }).strict();
+const saveSettingsBodySchema = z.object({ hostId: entityIdSchema.nullable(), provider: providerIdSchema, key: z.string().min(1).max(4_096).optional() }).strict();
 
 const toolInput = z.object({ idempotencyKey: z.string().min(1).max(128), route: routeSchema }).strict();
 type RunIndex = { hostId: string; threadId: string; routeHash: string };
@@ -230,7 +231,6 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
 
   bb.rpc.register(wayfinderSettingsRpcContract, {
     "settings.hosts": () => enrolledHosts(),
-    "settings.models": (input) => providerModels(input.provider),
     "settings.get": () => settingsState(),
     async "settings.selectHost"(input) {
       const stored = await readStoredSettings();
@@ -254,6 +254,33 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
    * "local" auth checks Origin/Host and forces a JSON content-type
    * preflight; the body is read with an explicit byte cap and never logged.
    */
+  bb.http.route("POST", "/settings/save", async (c) => {
+    let parsed: z.infer<typeof saveSettingsBodySchema>;
+    try {
+      parsed = saveSettingsBodySchema.parse(await readBoundedJson(c.req.raw, MAX_KEY_BODY_BYTES));
+    } catch {
+      return jsonResponse({ ok: false, message: "Invalid settings" }, 400);
+    }
+    if (parsed.provider === "openrouter") {
+      return jsonResponse({ ok: false, message: "Jev is not currently available through OpenRouter." }, 409);
+    }
+    if (parsed.hostId !== null) {
+      const hosts = await enrolledHosts();
+      if (!hosts.some((host) => host.hostId === parsed.hostId && host.status === "connected")) {
+        return jsonResponse({ ok: false, message: "Select an available computer." }, 400);
+      }
+    }
+    const keyName = PROVIDER_KEY_NAME[parsed.provider];
+    if (parsed.key !== undefined) {
+      const saved = await infisical.setSecret(INFISICAL_SCOPE, keyName, parsed.key).catch(() => false);
+      if (!saved) return jsonResponse({ ok: false, message: "The API key could not be saved." }, 500);
+    }
+    const configured = await infisical.secretConfigured(INFISICAL_SCOPE, keyName).catch(() => false);
+    if (!configured) return jsonResponse({ ok: false, message: "Enter a TypeSafe API key." }, 400);
+    await writeStoredSettings({ hostId: parsed.hostId, provider: "jev", model: "jev-latest", lastTest: null });
+    return jsonResponse({ ok: true, message: "Settings saved." });
+  });
+
   bb.http.route("POST", "/settings/key", async (c) => {
     let parsed: z.infer<typeof saveKeyBodySchema>;
     try {

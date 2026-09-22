@@ -311,126 +311,58 @@ describe("Settings section", () => {
     const options = Array.from(select.options).map((option) => ({ value: option.value, disabled: option.disabled }));
     expect(options).toContainEqual({ value: "host_b", disabled: true });
     expect(slot.queryByLabelText(/host id/iu)).toBeNull();
-    const model = slot.getByLabelText("Model") as HTMLSelectElement;
-    expect(model.tagName).toBe("SELECT");
-    expect(Array.from(model.options).map((option) => option.text)).toEqual(["Jev"]);
+    expect(slot.getByLabelText("Model").textContent).toBe("Jev");
     expect(slot.queryByPlaceholderText("e.g. openai/gpt-5")).toBeNull();
     expect(slot.getByLabelText("Provider")).toBeDefined();
-    expect(slot.getByText("Missing")).toBeDefined();
+    expect(slot.getByText("Not configured")).toBeDefined();
     slot.lifecycle.unmount();
   });
 
-  it("does not confuse an old provider credential with Jev and saves the fixed Jev selection", async () => {
+  it("renders Jev as the fixed model and exposes one form-level Save action", async () => {
+    const slot = renderSlot(settingsSection, {}, {
+      rpc: {
+        "settings.hosts": () => [{ hostId: "host_a", name: "Shared computer", status: "connected", phase: "active" }],
+        "settings.get": () => ({ selectedHostId: "host_a", provider: "jev", model: "jev-latest", keyStatus: "missing", lastTest: null }),
+      } as never,
+    });
+    expect((await slot.findByLabelText("Model")).textContent).toBe("Jev");
+    expect(slot.getAllByRole("button", { name: "Save" })).toHaveLength(1);
+    expect(slot.queryByRole("button", { name: "Save provider" })).toBeNull();
+    expect(slot.queryByRole("button", { name: "Test connection" })).toBeNull();
+    slot.lifecycle.unmount();
+  });
+
+  it("saves computer, TypeSafe provider, and key in one request", async () => {
+    const calls: unknown[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      calls.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ ok: true, message: "Settings saved." }), { status: 200 });
+    });
+    const slot = renderSlot(settingsSection, {}, {
+      rpc: {
+        "settings.hosts": () => [{ hostId: "host_a", name: "Shared computer", status: "connected", phase: "active" }],
+        "settings.get": () => ({ selectedHostId: null, provider: "jev", model: "jev-latest", keyStatus: "missing", lastTest: null }),
+      } as never,
+    });
+    fireEvent.change(await slot.findByLabelText("Computer host"), { target: { value: "host_a" } });
+    fireEvent.change(slot.getByLabelText("TypeSafe API key"), { target: { value: "synthetic-only" } });
+    fireEvent.click(slot.getByRole("button", { name: "Save" }));
+    await slot.findByText("Settings saved.");
+    expect(calls).toEqual([{ hostId: "host_a", provider: "jev", key: "synthetic-only" }]);
+    expect(slot.inspection.rpcCalls.some((call) => JSON.stringify(call).includes("synthetic-only"))).toBe(false);
+    slot.lifecycle.unmount();
+  });
+
+  it("does not pretend OpenRouter can provide Jev", async () => {
     const slot = renderSlot(settingsSection, {}, {
       rpc: {
         "settings.hosts": () => [],
-        "settings.get": () => ({ selectedHostId: null, provider: "openrouter", model: "old-model", keyStatus: "configured", lastTest: null }),
-        "settings.models": () => [{ id: "old-model", name: "Existing OpenRouter model" }],
-        "settings.saveProvider": () => ({ selectedHostId: null, provider: "jev", model: "jev-latest", keyStatus: "missing", lastTest: null }),
+        "settings.get": () => ({ selectedHostId: null, provider: "jev", model: "jev-latest", keyStatus: "configured", lastTest: null }),
       } as never,
     });
-    const provider = await slot.findByLabelText("Provider");
-    fireEvent.change(provider, { target: { value: "jev" } });
-    expect(slot.queryByText("Configured")).toBeNull();
-    fireEvent.click(slot.getByRole("button", { name: "Save provider" }));
-    await slot.findByText("Missing");
-    expect(slot.inspection.rpcCalls).toContainEqual({ method: "settings.saveProvider", input: { provider: "jev", model: "jev-latest" } });
-    slot.lifecycle.unmount();
-  });
-
-  it("uses the selected OpenRouter provider for models, key saving, and testing", async () => {
-    let settings: any = { selectedHostId: null, provider: "jev", model: "jev-latest", keyStatus: "missing", lastTest: null };
-    const slot = renderSlot(settingsSection, {}, {
-      rpc: {
-        "settings.hosts": () => [] as never,
-        "settings.get": () => settings,
-        "settings.models": (input: any) => {
-          expect(input.provider).toBe("openrouter");
-          return [{ id: "vendor/model", name: "Available model" }];
-        },
-        "settings.saveProvider": (input: any) => { settings = { ...settings, ...input }; return settings; },
-      } as never,
-    });
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ ok: true, message: "ready" }), { status: 200 }));
-    try {
-      fireEvent.change(await slot.findByLabelText("Provider"), { target: { value: "openrouter" } });
-      await slot.findByText("Available model");
-      fireEvent.change(slot.getByLabelText("Model"), { target: { value: "vendor/model" } });
-      fireEvent.change(slot.getByLabelText("OpenRouter API key"), { target: { value: "synthetic-only" } });
-      fireEvent.click(slot.getByRole("button", { name: /^Save$/ }));
-      await slot.findByText("ready");
-      expect(settings.provider).toBe("openrouter");
-      expect(settings.model).toBe("vendor/model");
-      expect(JSON.parse(String(fetchSpy.mock.calls[0]![1]!.body))).toEqual({ provider: "openrouter", key: "synthetic-only" });
-      fetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true, message: "connection verified" }), { status: 200 }));
-      fireEvent.click(slot.getByRole("button", { name: "Test connection" }));
-      await slot.findByText("connection verified");
-      expect(JSON.parse(String(fetchSpy.mock.calls[1]![1]!.body))).toEqual({ provider: "openrouter" });
-    } finally { fetchSpy.mockRestore(); slot.lifecycle.unmount(); }
-  });
-
-  it("the API key field is a masked password input that never comes prefilled with a value", async () => {
-    const slot = renderSlot(
-      settingsSection,
-      {},
-      {
-        rpc: {
-          "settings.hosts": () => [] as never,
-          "settings.get": () =>
-            ({ selectedHostId: null, provider: "jev", model: "jev-latest", keyStatus: "configured", lastTest: null }) as never,
-        } as never,
-      },
-    );
-    const input = (await slot.findByLabelText(/API key/iu)) as HTMLInputElement;
-    expect(input.type).toBe("password");
-    expect(input.value).toBe("");
-    expect(slot.getByText("Configured")).toBeDefined();
-    slot.lifecycle.unmount();
-  });
-
-  it("saving a key posts to the narrowly scoped /settings/key route, clears the field, and never rpc-calls with the key", async () => {
-    const fetchCalls: { url: string; body: unknown }[] = [];
-    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
-      fetchCalls.push({ url, body: JSON.parse(String(init.body)) });
-      return new Response(JSON.stringify({ ok: true, keyStatus: "configured", message: "Saved to the verified Infisical scope." }), { status: 200 });
-    });
-    const slot = renderSlot(
-      settingsSection,
-      {},
-      {
-        rpc: {
-          "settings.hosts": () => [] as never,
-          "settings.get": () =>
-            ({ selectedHostId: null, provider: "jev", model: "jev-latest", keyStatus: "missing", lastTest: null }) as never,
-        } as never,
-      },
-    );
-    const input = (await slot.findByLabelText(/API key/iu)) as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "sk-typed-by-user" } });
-    fireEvent.click(slot.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(fetchCalls.length).toBe(1));
-    expect(fetchCalls[0]?.url).toBe("/api/v1/plugins/wayfinder/http/settings/key");
-    expect(fetchCalls[0]?.body).toEqual({ provider: "jev", key: "sk-typed-by-user" });
-    await waitFor(() => expect((slot.getByLabelText(/API key/iu) as HTMLInputElement).value).toBe(""));
-    expect(slot.inspection.rpcCalls.some((call) => JSON.stringify(call).includes("sk-typed-by-user"))).toBe(false);
-    slot.lifecycle.unmount();
-  });
-
-  it("testing a key posts to /settings/key/test and surfaces the readiness message without the key", async () => {
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ ok: false, status: 401, message: "rejected" }), { status: 200 }));
-    const slot = renderSlot(
-      settingsSection,
-      {},
-      {
-        rpc: {
-          "settings.hosts": () => [] as never,
-          "settings.get": () =>
-            ({ selectedHostId: null, provider: "jev", model: "jev-latest", keyStatus: "configured", lastTest: null }) as never,
-        } as never,
-      },
-    );
-    fireEvent.click(await slot.findByRole("button", { name: "Test connection" }));
-    await slot.findByText("rejected");
+    fireEvent.change(await slot.findByLabelText("Provider"), { target: { value: "openrouter" } });
+    expect(slot.getByText(/Jev is not currently available through OpenRouter/)).toBeDefined();
+    expect((slot.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
     slot.lifecycle.unmount();
   });
 });
