@@ -52,12 +52,14 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
     Promise.all([
       settingsRpc.call("settings.hostForThread", { threadId }),
       settingsRpc.call("settings.get", {}),
-      settingsRpc.call("settings.hosts", {}).catch(() => []),
-    ]).then(([resolved, settings, hosts]) => {
+    ]).then(([resolved, settings]) => {
       if (cancelled) return;
       const nextHostId = resolved.hostId ?? settings.selectedHostId;
       setHostId(nextHostId);
-      setHostName(hosts.find((host) => host.hostId === nextHostId)?.name ?? nextHostId);
+      setHostName(nextHostId);
+      if (nextHostId !== null) void settingsRpc.call("settings.hosts", {}).then((hosts) => {
+        if (!cancelled) setHostName(hosts.find((host) => host.hostId === nextHostId)?.name ?? nextHostId);
+      }).catch(() => undefined);
     }).catch((cause) => { if (!cancelled) setError(errorMessage(cause)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };

@@ -52,7 +52,15 @@ function runRoot(): string { if (runRootPath === null) throw new Error("Wayfinde
 function artifactStore(): ArtifactStore { if (artifacts === null) throw new Error("Wayfinder host storage is not initialized"); return artifacts; }
 const artifactRecords = new Map<string, ArtifactRecord>();
 let desktop: DesktopRuntime | null = null;
+let desktopWorkerLease: { dispose(): void } | null = null;
+let desktopWorkerTimer: ReturnType<typeof setTimeout> | null = null;
 function desktopRuntime(dataDir: string): DesktopRuntime { desktop ??= new DesktopRuntime(join(dataDir, "desktop")); return desktop; }
+function retainDesktopWorker(context: { experimental_retainWorker(): { dispose(): void } }): void {
+  desktopWorkerLease ??= context.experimental_retainWorker();
+  if (desktopWorkerTimer !== null) clearTimeout(desktopWorkerTimer);
+  desktopWorkerTimer = setTimeout(() => { desktopWorkerLease?.dispose(); desktopWorkerLease = null; desktopWorkerTimer = null; }, 15_000);
+  desktopWorkerTimer.unref?.();
+}
 const liveFrames = new Map<string, { sequence: number; capturedAt: number; bytes: Buffer }>();
 const setupError = (message: string, phase: "observe" | "cleanup" = "observe") => ({ code: "setup-required" as const, phase, message, retryable: false, details: [] });
 function persistRun(run: RunRecord): void {
@@ -249,12 +257,13 @@ async function probe(hostId: string, provider: "fixture" | "jev" | "openrouter",
 }
 
 export default experimental_defineHostEntry({ contract: hostContract, experimental_signals: hostSignals, handlers: {
-  "capabilities.probe": async (input, context) => probe(input.expectedHostId, input.provider, context.experimental_paths.dataDir),
+  "capabilities.probe": async (input, context) => { retainDesktopWorker(context); return probe(input.expectedHostId, input.provider, context.experimental_paths.dataDir); },
   "runs.start": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); context.signal.throwIfAborted(); if (runs.has(input.runId) || loadRun(input.runId)) return { accepted: true as const, runId: input.runId }; const run = initialRun(input.runId, input.routeHash, input.route); runs.set(input.runId, run); const abort = new AbortController(); const lease = context.experimental_retainWorker(); const emit: Emit = (signal, payload) => { void context.experimental_emitSignal(signal, payload as never).catch(() => undefined); }; const job = { abort, process: null, profile: null, server: null, adapter: null, artifact: null, emit, capture: null, controlGate: new ControlGate(), browserBinding: input.browserBinding }; jobs.set(input.runId, job); void execute(run).finally(() => lease.dispose()); emit("runChanged", { runId: input.runId, revision: run.revision }); return { accepted: true as const, runId: input.runId }; },
   "runs.status": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); const run = runs.get(input.runId) ?? loadRun(input.runId); if (!run) throw new Error("Run not found"); runs.set(input.runId, run); return run; },
   "runs.cancel": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); const run = runs.get(input.runId); if (!run) throw new Error("Run not found"); if (["passed", "failed", "blocked", "cancelled", "timed_out", "interrupted"].includes(run.state)) return { accepted: false, run }; jobs.get(input.runId)?.abort.abort(input.reason); const cancelled = update(run, { state: "cancelled", error: { code: "cancelled", phase: "cleanup", message: input.reason, retryable: false, details: [] } }); runs.set(input.runId, cancelled); await context.experimental_emitSignal("runChanged", { runId: input.runId, revision: cancelled.revision }); return { accepted: true, run: cancelled }; },
   "desktop.capture": async (input, context) => {
     ensureStorage(context.experimental_paths.dataDir);
+    retainDesktopWorker(context);
     const frame = await desktopRuntime(context.experimental_paths.dataDir).capture(context.signal);
     return { frame: { bytesBase64: frame.bytes.toString("base64"), mimeType: frame.mimeType, width: frame.width, height: frame.height, capturedAt: frame.capturedAt } };
   },
@@ -281,4 +290,4 @@ export default experimental_defineHostEntry({ contract: hostContract, experiment
   "artifacts.list": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); return artifactStore().list({ threadId: input.threadId, runId: input.runId, cursor: input.cursor, limit: input.limit }); },
   "artifacts.get": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); return artifactStore().get(input.artifactId, { threadId: input.threadId }); },
   "artifacts.readRange": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); const known = artifactRecords.get(input.artifactId) ?? await artifactStore().getUnscoped(input.artifactId); if (!known) throw new Error("Artifact not found"); const range = await artifactStore().readRange(known, input.range.start, input.range.endInclusive); return { artifact: known, bytesBase64: range.bytes.toString("base64"), range: { start: range.start, endInclusive: range.endInclusive }, complete: range.endInclusive === known.media.sizeBytes - 1 }; },
-}, dispose: async () => { for (const job of jobs.values()) job.abort.abort("dispose"); await Promise.all([...jobs.keys()].map((runId) => cleanup(runId))); await desktop?.dispose(); desktop = null; disposeHostControllerQueue("wayfinder-host"); runs.clear(); queue = hostControllerQueue("wayfinder-host"); if (process.env.WAYFINDER_DATA_DIR === undefined) { artifactRootPath = null; runRootPath = null; artifacts = null; } }});
+}, dispose: async () => { for (const job of jobs.values()) job.abort.abort("dispose"); await Promise.all([...jobs.keys()].map((runId) => cleanup(runId))); if (desktopWorkerTimer !== null) clearTimeout(desktopWorkerTimer); desktopWorkerTimer = null; desktopWorkerLease?.dispose(); desktopWorkerLease = null; await desktop?.dispose(); desktop = null; disposeHostControllerQueue("wayfinder-host"); runs.clear(); queue = hostControllerQueue("wayfinder-host"); if (process.env.WAYFINDER_DATA_DIR === undefined) { artifactRootPath = null; runRootPath = null; artifacts = null; } }});
