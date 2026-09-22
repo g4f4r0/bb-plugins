@@ -249,7 +249,11 @@ describe("Computer panel", () => {
     expect(viewport.className).toContain("rounded-md");
     expect(viewport.style.width).toContain("100cqw - 24px");
     expect(viewport.style.aspectRatio).toBe("1280 / 720");
-    expect(slot.getByRole("button", { name: "All computers" }).textContent).toContain("Thread Mac");
+    const machineBadge = slot.getByRole("button", { name: "All computers" });
+    expect(machineBadge.textContent).toContain("Thread Mac");
+    expect(machineBadge.parentElement?.tagName).toBe("MAIN");
+    expect(machineBadge.parentElement).not.toBe(viewport);
+    expect(slot.getByRole("button", { name: "Take control" }).className).toContain("h-8");
     expect(slot.queryByRole("banner")).toBeNull();
     slot.lifecycle.unmount();
   });
