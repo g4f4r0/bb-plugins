@@ -12,6 +12,10 @@ export const hostSummarySchema = z
     name: z.string(),
     status: z.enum(["connected", "disconnected"]),
     phase: z.string(),
+    os: z.string().nullable(),
+    arch: z.string().nullable(),
+    browserState: z.enum(["ready", "setup-required", "unavailable"]).nullable(),
+    providerState: z.enum(["ready", "setup-required", "unavailable"]).nullable(),
   })
   .strict();
 export type HostSummary = z.infer<typeof hostSummarySchema>;
@@ -41,6 +45,10 @@ export const wayfinderSettingsRpcContract = defineRpcContract({
   "settings.get": {
     input: z.object({}).strict(),
     output: wayfinderSettingsStateSchema,
+  },
+  "settings.hostForThread": {
+    input: z.object({ threadId: entityIdSchema }).strict(),
+    output: z.object({ hostId: entityIdSchema.nullable(), source: z.enum(["thread", "fallback", "none"]) }).strict(),
   },
   "settings.selectHost": {
     input: z.object({ hostId: entityIdSchema.nullable() }).strict(),

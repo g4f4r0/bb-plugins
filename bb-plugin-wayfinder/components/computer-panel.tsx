@@ -35,12 +35,11 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
   const [settingsLoading, setSettingsLoading] = useState(true);
   useEffect(() => {
     let cancelled = false;
-    settingsRpc
-      .call("settings.get", {})
-      .then((state) => { if (!cancelled) { setHostId(state.selectedHostId); setSettingsLoading(false); } })
+    Promise.all([settingsRpc.call("settings.hostForThread", { threadId }), settingsRpc.call("settings.get", {})])
+      .then(([resolved, state]) => { if (!cancelled) { setHostId(resolved.hostId ?? state.selectedHostId); setSettingsLoading(false); } })
       .catch(() => { if (!cancelled) setSettingsLoading(false); });
     return () => { cancelled = true; };
-  }, [settingsRpc]);
+  }, [settingsRpc, threadId]);
   const [selectedRunId, selectRun] = useState(() => selectedRunFromParams(params));
   useEffect(() => { selectRun(selectedRunFromParams(params)); }, [threadId, params]);
   const [snapshot, setSnapshot] = useState<ComputerSnapshot | null>(null);
@@ -86,7 +85,7 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
   if (hostId === null) {
     return (
       <Notice title="Setup required">
-        Choose a computer in Wayfinder settings to get started.
+        Attach this thread to a computer or choose a fallback computer in Wayfinder settings.
       </Notice>
     );
   }

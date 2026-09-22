@@ -235,7 +235,10 @@ describe("Computer panel", () => {
     expect(notice.className).toContain("justify-center");
     expect(notice.querySelector("button")).toBeNull();
     expect(notice.querySelector('[aria-hidden="true"]')).not.toBeNull();
-    expect(slot.inspection.rpcCalls).toEqual([{ method: "settings.get", input: {} }]);
+    expect(slot.inspection.rpcCalls).toEqual(expect.arrayContaining([
+      { method: "settings.hostForThread", input: { threadId: "thr_a" } },
+      { method: "settings.get", input: {} },
+    ]));
   });
 
   it("shows readiness, queue, and owner, and separates a selected historical run from the controller", async () => {
@@ -249,6 +252,7 @@ describe("Computer panel", () => {
       { threadId: "thr_a", params: { runId: "run_old" } },
       {
         rpc: {
+          "settings.hostForThread": () => ({ hostId: "host_thread", source: "thread" }),
           "settings.get": () =>
             ({
               selectedHostId: "host_1",
@@ -259,7 +263,7 @@ describe("Computer panel", () => {
             }) as never,
           "computer.snapshot": () =>
             ({
-              hostId: "host_1",
+              hostId: "host_thread",
               readiness: "setup-required",
               readinessMessage: "Fortress browser lease unavailable",
               activeRun: null,
@@ -278,9 +282,9 @@ describe("Computer panel", () => {
     expect(slot.getByText("run_q")).toBeDefined();
     expect(slot.getByText("Selected run (not controlling)")).toBeDefined();
     expect(slot.getByText(`Run ${run.runId} was not found.`)).toBeDefined();
-    expect(slot.inspection.rpcCalls).toContainEqual({ method: "computer.snapshot", input: { hostId: "host_1", selectedRunId: "run_old" } });
+    expect(slot.inspection.rpcCalls).toContainEqual({ method: "computer.snapshot", input: { hostId: "host_thread", selectedRunId: "run_old" } });
     fireEvent.click(slot.getByText("run_q"));
-    await waitFor(() => expect(slot.inspection.rpcCalls.at(-1)).toEqual({ method: "computer.snapshot", input: { hostId: "host_1", selectedRunId: "run_q" } }));
+    await waitFor(() => expect(slot.inspection.rpcCalls.at(-1)).toEqual({ method: "computer.snapshot", input: { hostId: "host_thread", selectedRunId: "run_q" } }));
     expect(slot.inspection.navigateCalls).toEqual([]);
     slot.lifecycle.unmount();
   });
@@ -300,8 +304,8 @@ describe("Settings section", () => {
         rpc: {
           "settings.hosts": () =>
             [
-              { hostId: "host_a", name: "Shared computer", status: "connected", phase: "active" },
-              { hostId: "host_b", name: "Old laptop", status: "disconnected", phase: "suspended" },
+              { hostId: "host_a", name: "Shared computer", status: "connected", phase: "active", os: "linux", arch: "x64", browserState: "ready", providerState: "ready" },
+              { hostId: "host_b", name: "Old laptop", status: "disconnected", phase: "suspended", os: null, arch: null, browserState: null, providerState: null },
             ] as never,
           "settings.get": () =>
             ({ selectedHostId: "host_a", provider: "jev", model: "jev-latest", keyStatus: "missing", lastTest: null }) as never,
@@ -323,7 +327,7 @@ describe("Settings section", () => {
   it("renders Jev as the fixed model and exposes one form-level Save action", async () => {
     const slot = renderSlot(settingsSection, {}, {
       rpc: {
-        "settings.hosts": () => [{ hostId: "host_a", name: "Shared computer", status: "connected", phase: "active" }],
+        "settings.hosts": () => [{ hostId: "host_a", name: "Shared computer", status: "connected", phase: "active", os: "linux", arch: "x64", browserState: "ready", providerState: "ready" }],
         "settings.get": () => ({ selectedHostId: "host_a", provider: "jev", model: "jev-latest", keyStatus: "missing", lastTest: null }),
       } as never,
     });
@@ -343,7 +347,7 @@ describe("Settings section", () => {
     });
     const slot = renderSlot(settingsSection, {}, {
       rpc: {
-        "settings.hosts": () => [{ hostId: "host_a", name: "Shared computer", status: "connected", phase: "active" }],
+        "settings.hosts": () => [{ hostId: "host_a", name: "Shared computer", status: "connected", phase: "active", os: "linux", arch: "x64", browserState: "ready", providerState: "ready" }],
         "settings.get": () => ({ selectedHostId: null, provider: "jev", model: "jev-latest", keyStatus: "missing", lastTest: null }),
       } as never,
     });

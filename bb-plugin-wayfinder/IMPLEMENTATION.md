@@ -185,6 +185,16 @@ Focused live regression: `tests/host.test.ts` now runs the real Fortress fixture
 
 Blockers: no verified Infisical project/environment/path exists for this Wayfinder run, so Jev/OpenRouter invocation and any production readiness claim remain blocked. Native accessibility/OCR, remote Computer UI, and online sharing remain deferred. No CDP endpoint is exposed.
 
+## Host portability update (2026-09-22)
+
+Wayfinder now defaults execution to the trusted thread environment host. Routes may explicitly set `hostSelection: "any"`; only browser-only routes are portable. Desktop, filesystem, and mixed routes remain pinned to the thread host so local source trees, SDKs such as Xcode, applications, and permissions are not silently moved to another machine. Portable candidate order is thread host, configured fallback, then other connected hosts; every candidate must report both browser and selected-provider readiness.
+
+The settings host list now reports BB connection state plus probed OS, architecture, browser readiness, and provider readiness. Host runtime data uses the SDK-provided per-host plugin data directory instead of the source checkout. Fortress discovery is platform-neutral: explicit environment override, PATH, standard macOS app locations, then migration compatibility with an older Browse installation. Missing platform binaries produce setup-required rather than a hard-coded Linux path.
+
+Verification: `npm run typecheck`, all 24 Vitest files / 151 tests, and `npm run build` pass. Tests cover default thread affinity, explicit portable fallback, non-portable pinning, host ordering, platform status, real Fortress fixture execution, private artifacts, and cleanup.
+
+Remaining public-release constraint: provider credentials still follow the repository's mandatory Infisical policy. A host-local credential backend cannot be shipped while that policy requires Infisical for every secret.
+
 ### Deferred follow-up
 
 A real BB browser lease, Jev credential resolution through Infisical, native accessibility, and verified HTTPS sharing are prerequisites for the remaining live-provider gates. No speculative fallback or external mutation was added.

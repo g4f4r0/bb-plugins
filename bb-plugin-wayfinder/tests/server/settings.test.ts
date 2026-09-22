@@ -36,6 +36,18 @@ const HOST_A = {
   updatedAt: 1,
 };
 const HOST_B_DISCONNECTED = { ...HOST_A, id: "host_b", name: "Old laptop", status: "disconnected" as const, lifecycle: { ...HOST_A.lifecycle, phase: "suspended" as const } };
+const HOST_B = { ...HOST_A, id: "host_b", name: "Browser computer" };
+function capabilities(hostId: string, ready: boolean) {
+  return {
+    hostId, platform: { os: "linux", arch: "x64", nodeVersion: process.version },
+    browser: { state: ready ? "ready" : "setup-required", provider: "fortress-cdp", instanceCount: 0, detail: "test" },
+    desktop: { state: "setup-required", provider: "cua-driver", version: null, daemonRunning: false, accessibilityReady: false, captureReady: false, detail: "test" },
+    encoder: { state: "ready", ffmpegVersion: null, h264Encoders: [], detail: "test" },
+    ocr: { state: "setup-required", provider: null, detail: "test" },
+    decisionProvider: { state: ready ? "ready" : "setup-required", provider: "openrouter", infisicalScopeVerified: ready, detail: "test" },
+    probedAt: Date.now(),
+  } as const;
+}
 
 describe("Wayfinder settings", () => {
   it("uses the saved provider/model for real runs, ignoring stale route providers and endpoints", async () => {
@@ -57,6 +69,71 @@ describe("Wayfinder settings", () => {
       const call = harness.inspection.experimental_hostRpcCalls.find((entry) => entry.method === "runs.start");
       expect((call?.input as { route: { decisionProvider: unknown } }).route.decisionProvider)
         .toEqual({ provider: "openrouter", model: "~typesafe/jev-latest", endpoint: null });
+    } finally { await harness.lifecycle.dispose(); }
+  });
+
+  it("defaults every route to the thread host", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "wayfinder",
+      sdk: {
+        hosts: { list: async () => [HOST_A, HOST_B] },
+        threads: { get: async () => ({ environmentId: "env_test", projectId: "proj_test" }) },
+        environments: { get: async () => ({ id: "env_test", hostId: "host_a" }) },
+      } as never,
+      experimental_callHostRpc: async (call) => ({ accepted: true, runId: (call.input as { runId: string }).runId }),
+    });
+    plugin(bb, { infisicalClient: fakeInfisicalClient() });
+    try {
+      await harness.callRpc("settings.selectHost", { hostId: "host_b" });
+      await harness.callAgentTool("wayfinder_start", { idempotencyKey: "thread-default", route: makeRoute() }, { threadId: "thr_owner" });
+      const start = harness.inspection.experimental_hostRpcCalls.find((entry) => entry.method === "runs.start");
+      expect((start?.input as { expectedHostId: string }).expectedHostId).toBe("host_a");
+    } finally { await harness.lifecycle.dispose(); }
+  });
+
+  it("uses the configured fallback for portable browser work only when hostSelection is any", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "wayfinder",
+      sdk: {
+        hosts: { list: async () => [HOST_A, HOST_B] },
+        threads: { get: async () => ({ environmentId: "env_test", projectId: "proj_test" }) },
+        environments: { get: async () => ({ id: "env_test", hostId: "host_a" }) },
+      } as never,
+      experimental_callHostRpc: async (call) => {
+        if (call.method === "capabilities.probe") {
+          const id = (call.input as { expectedHostId: string }).expectedHostId;
+          return capabilities(id, id === "host_b");
+        }
+        return { accepted: true, runId: (call.input as { runId: string }).runId };
+      },
+    });
+    plugin(bb, { infisicalClient: fakeInfisicalClient() });
+    try {
+      await harness.callRpc("settings.selectHost", { hostId: "host_b" });
+      const route = { ...makeRoute(), hostSelection: "any", desktop: { applications: [] }, filesystem: { roots: [] }, allowedActions: ["browser.navigate", "browser.click"] };
+      await harness.callAgentTool("wayfinder_start", { idempotencyKey: "portable-fallback", route }, { threadId: "thr_owner" });
+      const start = harness.inspection.experimental_hostRpcCalls.find((entry) => entry.method === "runs.start");
+      expect((start?.input as { expectedHostId: string }).expectedHostId).toBe("host_b");
+      expect((start?.input as { route: { identity: { hostId: string } } }).route.identity.hostId).toBe("host_b");
+    } finally { await harness.lifecycle.dispose(); }
+  });
+
+  it("keeps non-portable work on the thread host even when hostSelection is any", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "wayfinder",
+      sdk: {
+        hosts: { list: async () => [HOST_A, HOST_B] },
+        threads: { get: async () => ({ environmentId: "env_test", projectId: "proj_test" }) },
+        environments: { get: async () => ({ id: "env_test", hostId: "host_a" }) },
+      } as never,
+      experimental_callHostRpc: async (call) => ({ accepted: true, runId: (call.input as { runId: string }).runId }),
+    });
+    plugin(bb, { infisicalClient: fakeInfisicalClient() });
+    try {
+      await harness.callRpc("settings.selectHost", { hostId: "host_b" });
+      await harness.callAgentTool("wayfinder_start", { idempotencyKey: "pinned-build", route: { ...makeRoute(), hostSelection: "any" } }, { threadId: "thr_owner" });
+      const start = harness.inspection.experimental_hostRpcCalls.find((entry) => entry.method === "runs.start");
+      expect((start?.input as { expectedHostId: string }).expectedHostId).toBe("host_a");
     } finally { await harness.lifecycle.dispose(); }
   });
 
@@ -85,8 +162,8 @@ describe("Wayfinder settings", () => {
     await plugin(bb, { infisicalClient: fakeInfisicalClient() });
     const hosts = await harness.behavior.callRpc("settings.hosts", {});
     expect(hosts).toEqual([
-      { hostId: "host_a", name: "Shared computer", status: "connected", phase: "active" },
-      { hostId: "host_b", name: "Old laptop", status: "disconnected", phase: "suspended" },
+      { hostId: "host_a", name: "Shared computer", status: "connected", phase: "active", os: null, arch: null, browserState: null, providerState: null },
+      { hostId: "host_b", name: "Old laptop", status: "disconnected", phase: "suspended", os: null, arch: null, browserState: null, providerState: null },
     ]);
     await harness.lifecycle.dispose();
   });

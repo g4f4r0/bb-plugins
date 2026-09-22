@@ -43,12 +43,18 @@ export function WayfinderSettingsSection() {
 
   return <div className="space-y-4">
     <div className="rounded-lg border border-border bg-card px-3 py-1">
-      <SettingRow label="Computer" description="Machine used for browser sessions.">
+      <SettingRow label="Fallback computer" description="Browser-only runs use this computer if the thread computer is unavailable and host fallback is allowed.">
         <select aria-label="Computer host" className={controlClass} value={hostId ?? ""} disabled={busy || hosts.length === 0} onChange={(event) => setHostId(event.target.value || null)}>
           <option value="">{hosts.length === 0 ? "No machines available" : "Select a machine"}</option>
-          {hosts.map((host) => <option key={host.hostId} value={host.hostId} disabled={host.status !== "connected"}>{host.name}{host.status === "connected" ? "" : " (disconnected)"}</option>)}
+          {hosts.map((host) => <option key={host.hostId} value={host.hostId} disabled={host.status !== "connected"}>{host.name}{host.os ? ` — ${host.os} ${host.arch ?? ""}` : ""}{host.status === "connected" ? "" : " — disconnected"}</option>)}
         </select>
       </SettingRow>
+      <div aria-label="Available computers" className="border-t border-border py-2">
+        {hosts.map((host) => <div key={host.hostId} className="flex items-center justify-between gap-4 py-1.5 text-xs">
+          <div className="min-w-0"><div className="truncate text-foreground">{host.name}</div><div className="text-muted-foreground">{host.os && host.arch ? `${host.os} · ${host.arch}` : "Platform unavailable"}</div></div>
+          <div className="shrink-0 text-right text-muted-foreground">{host.status !== "connected" ? "Disconnected" : host.browserState !== "ready" ? "Browser setup required" : host.providerState !== "ready" ? "Provider setup required" : "Ready"}</div>
+        </div>)}
+      </div>
       <SettingRow label="Provider" description="Provider used to access Jev.">
         <select aria-label="Provider" className={controlClass} value={provider} disabled={busy} onChange={(event) => { setProvider(event.target.value as ProviderId); setKey(""); }}>
           <option value="jev">TypeSafe</option>

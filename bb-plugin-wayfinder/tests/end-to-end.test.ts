@@ -1,6 +1,9 @@
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { afterEach, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import hostEntry from "../host.js";
 import plugin from "../server.js";
@@ -9,7 +12,8 @@ import { makeRoute } from "./contracts/fixtures.js";
 const TERMINAL = ["passed", "failed", "blocked", "cancelled", "timed_out", "interrupted"];
 
 function setup() {
-  const hostHarness = experimental_createHostEntryHarness(hostEntry);
+  const id = randomUUID();
+  const hostHarness = experimental_createHostEntryHarness(hostEntry, { experimental_paths: { dataDir: join(tmpdir(), `wayfinder-e2e-${id}`), tempDir: join(tmpdir(), `wayfinder-e2e-tmp-${id}`) } });
   const { bb, harness } = createFakePluginHost({
     pluginId: "wayfinder",
     sdk: {

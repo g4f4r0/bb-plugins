@@ -2,7 +2,7 @@
 
 Source for Browse, Beacon, Sidetree, Dusk, Reserve, and MCPs. BB loads the installed plugins in place from this checkout. Browse is retained as source but is no longer installed; Cua Driver and BB Browser Automation have also been removed from BB. Do not reinstall them as part of Wayfinder work.
 
-Wayfinder is planning-only: see [the implementation plan](bb-plugin-wayfinder/PLAN.md). The GitHub remote is [https://github.com/g4f4r0/bb-plugins](https://github.com/g4f4r0/bb-plugins)
+Wayfinder is implemented and under active release hardening: see [the implementation plan](bb-plugin-wayfinder/PLAN.md). The GitHub remote is [https://github.com/g4f4r0/bb-plugins](https://github.com/g4f4r0/bb-plugins)
 
 Do not install these from a thread workspace, `/tmp`, or a throwaway worktree. If the thread is archived, BB deletes the directory. The plugin entry survives, pointing at a hole.
 
@@ -15,6 +15,7 @@ Do not install these from a thread workspace, `/tmp`, or a throwaway worktree. I
 | Dusk     | `dusk`     | `bb-plugin-dusk`     |
 | Reserve  | `reserve`  | `bb-plugin-reserve`  |
 | MCPs     | `mcps`     | `bb-plugin-mcps`     |
+| Wayfinder | `wayfinder` | `bb-plugin-wayfinder` |
 
 
 Keep these IDs. Change the id and BB treats it as a new plugin and drops its settings. Agent Plugins is a separate local package at `/home/g4f4r0/.bb/local-plugins/bb-plugin-agent-plugins`.
@@ -53,7 +54,7 @@ git bundle create ~/.bb/plugin-backups/<id>-$(date -u +%Y-%m-%dT%H-%M-%SZ).bundl
 
 Those bundles live on this machine. GitHub is the copy that survives if the disk does not.
 
-After install, `bb plugin list` should show each intentionally installed repo plugin as `running` from `path:/home/g4f4r0/projects/bb-plugins/bb-plugin-<id>`. Browse is intentionally uninstalled, and Wayfinder is not yet implemented. If one custom plugin looks wrong, check all of them. Shared install mistakes tend to hit more than one.
+After install, `bb plugin list` should show each intentionally installed repo plugin as `running` from `path:/home/g4f4r0/projects/bb-plugins/bb-plugin-<id>`. Browse is intentionally uninstalled; Wayfinder is installed from its permanent package in this checkout. If one custom plugin looks wrong, check all of them. Shared install mistakes tend to hit more than one.
 
 For a new plugin, run `bb plugin new <id>` here, commit source and lockfile, then the path install above.
 

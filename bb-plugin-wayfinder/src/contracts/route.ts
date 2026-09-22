@@ -156,6 +156,7 @@ export const routeSchema = z
   .object({
     schemaVersion: z.literal(1),
     goal: z.string().trim().min(1).max(4_000),
+    hostSelection: z.enum(["thread", "any"]).optional(),
     identity: z
       .object({
         hostId: entityIdSchema,

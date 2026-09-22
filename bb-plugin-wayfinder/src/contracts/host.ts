@@ -66,7 +66,7 @@ export const hostCapabilitiesSchema = z
 
 export const hostContract = defineRpcContract({
   "capabilities.probe": {
-    input: z.object({ expectedHostId: entityIdSchema }).strict(),
+    input: z.object({ expectedHostId: entityIdSchema, provider: z.enum(["fixture", "jev", "openrouter"]) }).strict(),
     output: hostCapabilitiesSchema,
   },
   "runs.start": {
