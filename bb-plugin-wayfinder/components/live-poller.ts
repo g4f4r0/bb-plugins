@@ -37,7 +37,8 @@ export interface LiveFramePollerOptions {
  * Read-only live view client. One request in flight; the next starts only
  * after the previous finished, so a slow connection lowers its own frame rate
  * instead of queueing. Hidden tabs stop polling, which lets the host viewer
- * lease expire and preview capture stop. Non-live states drop the image.
+ * lease expire and preview capture stop. The last safe frame remains visible
+ * after disconnect; paused/redacted states still replace it explicitly.
  */
 export class LiveFramePoller {
   readonly #options: LiveFramePollerOptions;
@@ -83,7 +84,6 @@ export class LiveFramePoller {
         if (signal.aborted) return;
         this.#failures += 1;
         this.#update({ status: "disconnected" });
-        this.#setImage(null);
         wait = Math.min(this.#options.maxBackoffMs ?? 5_000, 500 * 2 ** Math.min(this.#failures, 4));
       }
       await delay(Math.max(0, wait - (now() - started)), signal);
@@ -110,7 +110,8 @@ export class LiveFramePoller {
     if (response.status === 200) {
       const blob = await response.blob();
       this.#setImage(blob);
-      this.#update({ status: "live", sequence, frameAgeMs: ageMs, receivedAt: now });
+      const frameStatus: LiveViewStatus = state === "paused" || state === "redacted" || state === "disconnected" ? state : "live";
+      this.#update({ status: frameStatus, sequence, frameAgeMs: ageMs, receivedAt: now });
       return;
     }
     if (state === "live" && this.#state.imageUrl !== null) {
@@ -118,9 +119,9 @@ export class LiveFramePoller {
       this.#update({ frameAgeMs: ageMs, receivedAt: now });
       return;
     }
-    this.#setImage(null);
     const status: LiveViewStatus =
       state === "paused" || state === "redacted" || state === "disconnected" ? state : "no-frame";
+    if (status !== "disconnected") this.#setImage(null);
     this.#update({ status, sequence, frameAgeMs: ageMs, receivedAt: now });
   }
 

@@ -76,6 +76,7 @@ export const hostContract = defineRpcContract({
         runId: entityIdSchema,
         routeHash: sha256Schema,
         route: routeSchema,
+        browserBinding: z.object({ kind: z.literal("native"), tabId: entityIdSchema, wsEndpoint: z.string().url().max(4_096) }).strict().nullable().default(null),
       })
       .strict(),
     output: z.object({ accepted: z.literal(true), runId: entityIdSchema }).strict(),

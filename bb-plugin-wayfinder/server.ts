@@ -85,7 +85,10 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
   const infisical = deps?.infisicalClient ?? createInfisicalClient();
   const publish = () => bb.realtime.publish(COMPUTER_REALTIME_CHANNEL, {});
   const hostOptions = (hostId: string, signal?: AbortSignal) => ({ hostId, timeoutMs: 30_000, ...(signal === undefined ? {} : { signal }) });
-  for (const signal of ["runChanged", "frameAvailable", "artifactChanged"] as const) host.experimental_onSignal(signal, publish);
+  type NativeRunBinding = { hostId: string; threadId: string; instanceId: string; generation: string; tabId: string; leaseId: string };
+  const nativeRuns = new Map<string, NativeRunBinding>();
+  host.experimental_onSignal("runChanged", (payload) => { publish(); void releaseNativeIfDone(payload.payload.runId); });
+  for (const signal of ["frameAvailable", "artifactChanged"] as const) host.experimental_onSignal(signal, publish);
 
   const runIndex = (runId: string) => kv.get<RunIndex>(`run:${runId}`);
   const knownHosts = async () => (await kv.get<string[]>("hosts")) ?? [];
@@ -108,6 +111,8 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
       if (provider !== undefined && entry.status === "connected") {
         capabilities = await host.call("capabilities.probe", { expectedHostId: entry.id, provider }, hostOptions(entry.id)).catch(() => null);
       }
+      const nativeReady = capabilities !== null && ["darwin", "win32"].includes(capabilities.platform.os)
+        && await bb.sdk.experimental_desktopBrowsers.listInstances({ hostId: entry.id }).then(({ instances }) => instances.length > 0).catch(() => false);
       return {
         hostId: entry.id,
         name: entry.name,
@@ -115,7 +120,7 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
         phase: entry.lifecycle.phase,
         os: capabilities?.platform.os ?? null,
         arch: capabilities?.platform.arch ?? null,
-        browserState: capabilities?.browser.state ?? null,
+        browserState: nativeReady ? "ready" : capabilities?.browser.state ?? null,
         providerState: capabilities?.decisionProvider.state ?? null,
       };
     }));
@@ -150,6 +155,53 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     return { hostId: environment.hostId, threadId, projectId: thread.projectId, environmentId: environment.id };
   }
 
+  async function nativeBrowserAvailable(hostId: string, capabilities: HostCapabilities | null): Promise<boolean> {
+    if (capabilities === null || !["darwin", "win32"].includes(capabilities.platform.os)) return false;
+    return bb.sdk.experimental_desktopBrowsers.listInstances({ hostId }).then(({ instances }) => instances.length > 0).catch(() => false);
+  }
+
+  async function prepareNativeBrowser(route: WayfinderRoute, hostId: string): Promise<{ hostBinding: { kind: "native"; tabId: string; wsEndpoint: string }; runBinding: NativeRunBinding } | null> {
+    if (!isPortableBrowserRoute(route) || route.decisionProvider?.provider === "fixture") return null;
+    const provider = route.decisionProvider?.provider ?? "jev";
+    const capabilities = await host.call("capabilities.probe", { expectedHostId: hostId, provider }, hostOptions(hostId)).catch(() => null);
+    if (!await nativeBrowserAvailable(hostId, capabilities)) return null;
+    const browser = bb.sdk.experimental_desktopBrowsers;
+    const { instances } = await browser.listInstances({ hostId });
+    const instance = instances[0];
+    if (!instance) return null;
+    const base = { hostId, threadId: route.identity.threadId, instanceId: instance.instanceId, generation: instance.generation };
+    const existing = await browser.listTabs(base);
+    let tab = [...existing.tabs].reverse().find((candidate) => candidate.profile.kind === "automation" && candidate.control === null);
+    let created = false;
+    if (!tab) {
+      tab = (await browser.createTab({ ...base, url: route.browser.navigationOrigins[0]!.origin, presentation: "hidden" })).tab;
+      created = true;
+    }
+    let leaseId: string | null = null;
+    try {
+      const lease = await browser.acquireControl({ ...base, tabIds: [tab.tabId], controllerLabel: "Wayfinder", ttlMs: Math.min(30 * 60_000, Math.max(60_000, route.limits.maxRuntimeMs + 30_000)), allowPersonal: false });
+      leaseId = lease.leaseId;
+      const connection = await browser.openConnection({ ...base, leaseId });
+      return {
+        hostBinding: { kind: "native", tabId: tab.tabId, wsEndpoint: connection.wsEndpoint },
+        runBinding: { ...base, tabId: tab.tabId, leaseId },
+      };
+    } catch (error) {
+      if (leaseId !== null) await browser.releaseControl({ ...base, leaseId }).catch(() => undefined);
+      if (created) await browser.closeTab({ ...base, tabId: tab.tabId }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async function releaseNativeIfDone(runId: string): Promise<void> {
+    const binding = nativeRuns.get(runId);
+    if (!binding) return;
+    const status = await host.call("runs.status", { expectedHostId: binding.hostId, runId }, hostOptions(binding.hostId)).catch(() => null);
+    if (!status || !["passed", "failed", "blocked", "cancelled", "timed_out", "interrupted"].includes(status.state)) return;
+    nativeRuns.delete(runId);
+    await bb.sdk.experimental_desktopBrowsers.releaseControl(binding).catch(() => undefined);
+  }
+
   async function selectExecutionHost(route: WayfinderRoute, threadHostId: string, fallbackHostId: string | null): Promise<string> {
     if ((route.hostSelection ?? "thread") === "thread" || !isPortableBrowserRoute(route)) return threadHostId;
     const enrolled = await bb.sdk.hosts.list();
@@ -159,8 +211,9 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     for (const hostId of orderedHostCandidates(threadHostId, fallbackHostId, [...connected])) {
       if (!connected.has(hostId)) { attempts.push(`${hostId}: disconnected`); continue; }
       const capabilities = await host.call("capabilities.probe", { expectedHostId: hostId, provider }, hostOptions(hostId)).catch(() => null);
-      if (capabilities?.browser.state === "ready" && capabilities.decisionProvider.state === "ready") return hostId;
-      attempts.push(`${hostId}: ${capabilities === null ? "unreachable" : `${capabilities.browser.state}/${capabilities.decisionProvider.state}`}`);
+      const browserReady = capabilities?.browser.state === "ready" || await nativeBrowserAvailable(hostId, capabilities);
+      if (browserReady && capabilities?.decisionProvider.state === "ready") return hostId;
+      attempts.push(`${hostId}: ${capabilities === null ? "unreachable" : `${browserReady ? "ready" : capabilities.browser.state}/${capabilities.decisionProvider.state}`}`);
     }
     throw new Error(`No eligible Wayfinder computer is available (${attempts.slice(0, 8).join(", ")})`);
   }
@@ -193,9 +246,15 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     const runId = `run_${randomUUID().replaceAll("-", "")}`;
     await kv.set(`idem:${key}`, { runId, routeHash } satisfies IdempotencyEntry);
     await kv.set(`run:${runId}`, { hostId: executionHostId, threadId, routeHash } satisfies RunIndex);
+    let native: Awaited<ReturnType<typeof prepareNativeBrowser>> = null;
     try {
-      await host.call("runs.start", { expectedHostId: executionHostId, runId, routeHash, route }, hostOptions(executionHostId, signal));
+      native = await prepareNativeBrowser(route, executionHostId);
+      if (native) nativeRuns.set(runId, native.runBinding);
+      await host.call("runs.start", { expectedHostId: executionHostId, runId, routeHash, route, browserBinding: native?.hostBinding ?? null }, hostOptions(executionHostId, signal));
     } catch (error) {
+      const binding = nativeRuns.get(runId);
+      nativeRuns.delete(runId);
+      if (binding) await bb.sdk.experimental_desktopBrowsers.releaseControl(binding).catch(() => undefined);
       await kv.delete(`idem:${key}`);
       await kv.delete(`run:${runId}`);
       throw error;
@@ -209,7 +268,9 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
 
   async function hostStatus(runId: string): Promise<RunRecord> {
     const entry = await requireRun(runId);
-    return host.call("runs.status", { expectedHostId: entry.hostId, runId }, hostOptions(entry.hostId));
+    const status = await host.call("runs.status", { expectedHostId: entry.hostId, runId }, hostOptions(entry.hostId));
+    if (["passed", "failed", "blocked", "cancelled", "timed_out", "interrupted"].includes(status.state)) void releaseNativeIfDone(runId);
+    return status;
   }
 
   bb.rpc.register(wayfinderRpcContract, {
@@ -219,6 +280,20 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
       const entry = await requireRun(input.runId);
       const result = await host.call("runs.cancel", { expectedHostId: entry.hostId, runId: input.runId, reason: input.reason }, hostOptions(entry.hostId));
       return result.run;
+    },
+    async "computer.preview"(input) {
+      const enrolled = await bb.sdk.hosts.list();
+      if (!enrolled.some((candidate) => candidate.id === input.hostId && candidate.status === "connected")) return { frame: null };
+      const browser = bb.sdk.experimental_desktopBrowsers;
+      const { instances } = await browser.listInstances({ hostId: input.hostId }).catch(() => ({ instances: [] }));
+      const instance = instances[0];
+      if (!instance) return { frame: null };
+      const base = { hostId: input.hostId, threadId: input.threadId, instanceId: instance.instanceId, generation: instance.generation };
+      const { tabs } = await browser.listTabs(base).catch(() => ({ tabs: [] }));
+      const tab = [...tabs].reverse().find((candidate) => candidate.profile.kind === "automation") ?? tabs.at(-1);
+      if (!tab) return { frame: null };
+      const capture = await browser.captureTab({ ...base, tabId: tab.tabId }).catch(() => null);
+      return capture ? { frame: { base64: capture.base64, width: capture.width, height: capture.height, capturedAt: Date.now() } } : { frame: null };
     },
     async "computer.control.acquire"(input) {
       const entry = await requireRun(input.runId);
@@ -245,13 +320,17 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
         try { runs.push(await hostStatus(runId)); } catch { /* run expired on the host */ }
       }
       const queued = runs.filter((run) => run.state === "queued");
+      const activeRun = runs.find((run) => run.activeController) ?? null;
+      const selectedRun = input.selectedRunId === null
+        ? runs.find((run) => run.runId !== activeRun?.runId) ?? null
+        : (runs.find((run) => run.runId === input.selectedRunId) ?? (await hostStatus(input.selectedRunId).catch(() => null)));
       return {
         hostId: input.hostId,
         readiness: (readiness.decisionProvider.state === "ready" ? "ready" : "setup-required") as "ready" | "setup-required",
         readinessMessage: readiness.decisionProvider.detail,
-        activeRun: runs.find((run) => run.activeController) ?? null,
+        activeRun,
         queue: queued.map((run, index) => ({ runId: run.runId, threadId: run.route.identity.threadId, position: run.queuePosition ?? index + 1, enqueuedAt: run.updatedAt })),
-        selectedRun: input.selectedRunId === null ? null : (runs.find((run) => run.runId === input.selectedRunId) ?? (await hostStatus(input.selectedRunId).catch(() => null))),
+        selectedRun,
         connectionState: "connected" as const,
         frameSequence: null,
         frameCapturedAt: null,
@@ -434,5 +513,9 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
       return JSON.stringify(await startRun(context.threadId, parsed.idempotencyKey, parsed.route, context.signal));
     },
   });
-  bb.onDispose(() => { inflightStarts.clear(); });
+  bb.onDispose(() => {
+    inflightStarts.clear();
+    for (const binding of nativeRuns.values()) void bb.sdk.experimental_desktopBrowsers.releaseControl(binding).catch(() => undefined);
+    nativeRuns.clear();
+  });
 }

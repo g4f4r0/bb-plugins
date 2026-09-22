@@ -92,13 +92,22 @@ describe("LiveFramePoller", () => {
     expect(h.created).toHaveLength(1);
   });
 
-  it.each(["redacted", "paused", "disconnected"] as const)("drops stale pixels when the feed is %s", async (state) => {
+  it.each(["redacted", "paused"] as const)("drops stale pixels when the feed is %s", async (state) => {
     const h = harness(async (_url, call) => (call === 1 ? frameResponse(1) : stateResponse(state, 2)));
     active = h.poller;
     h.poller.start();
     await tick(40);
     expect(h.latest()).toMatchObject({ status: state, imageUrl: null });
     expect(h.revoked).toEqual(["blob:frame-1"]);
+  });
+
+  it("keeps the last safe frame when the run disconnects", async () => {
+    const h = harness(async (_url, call) => (call === 1 ? frameResponse(1) : stateResponse("disconnected", 2)));
+    active = h.poller;
+    h.poller.start();
+    await tick(40);
+    expect(h.latest()).toMatchObject({ status: "disconnected", imageUrl: "blob:frame-1" });
+    expect(h.revoked).toEqual([]);
   });
 
   it("reports disconnected with backoff on network failure, then recovers", async () => {

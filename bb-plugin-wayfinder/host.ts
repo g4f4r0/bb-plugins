@@ -35,7 +35,8 @@ const infisical = createInfisicalClient();
 let artifactRootPath: string | null = process.env.WAYFINDER_DATA_DIR ?? null;
 let runRootPath: string | null = artifactRootPath === null ? null : join(artifactRootPath, "runs");
 const runs = new Map<string, RunRecord>();
-const jobs = new Map<string, { abort: AbortController; process: ChildProcess | null; profile: string | null; server: Server | null; adapter: BrowserAdapter | null; artifact: ArtifactRecord | null; emit: Emit; capture: Promise<Buffer> | null; controlGate: ControlGate }>();
+type NativeBrowserBinding = { kind: "native"; tabId: string; wsEndpoint: string };
+const jobs = new Map<string, { abort: AbortController; process: ChildProcess | null; profile: string | null; server: Server | null; adapter: BrowserAdapter | null; artifact: ArtifactRecord | null; emit: Emit; capture: Promise<Buffer> | null; controlGate: ControlGate; browserBinding: NativeBrowserBinding | null }>();
 type Emit = (signal: "runChanged" | "frameAvailable" | "artifactChanged", payload: Record<string, unknown>) => void;
 let queue = hostControllerQueue("wayfinder-host");
 let artifacts: ArtifactStore | null = artifactRootPath === null ? null : new ArtifactStore({ root: artifactRootPath, quotaBytes: 256 * 1024 * 1024, retentionMs: 30 * 24 * 60 * 60 * 1000 });
@@ -94,7 +95,11 @@ async function waitForJson(url: string, signal: AbortSignal, timeoutMs = 10_000)
   }
   throw wayfinderError("provider-unavailable", "observe", "Fortress CDP endpoint did not become ready", { retryable: true });
 }
-async function launch(route: WayfinderRoute, signal: AbortSignal, controlGate: ControlGate) {
+async function launch(route: WayfinderRoute, signal: AbortSignal, controlGate: ControlGate, binding: NativeBrowserBinding | null) {
+  if (binding !== null) {
+    const adapter = await BrowserAdapter.connectFortress({ route, hostId: route.identity.hostId, tabId: binding.tabId, resourceGeneration: `native_${Date.now()}`, wsEndpoint: binding.wsEndpoint, signal, controlGate });
+    return { server: null, profile: null, child: null, adapter, fixtureOrigin: null };
+  }
   const fortress = await resolveFortressExecutable();
   if (fortress === null) throw wayfinderError("setup-required", "observe", `Fortress is not installed for ${process.platform}/${process.arch}`);
   const server = createServer((_request, response) => { response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }); response.end(FIXTURE_HTML); });
@@ -182,13 +187,15 @@ async function execute(run: RunRecord): Promise<void> {
     leaseHeartbeat.unref?.();
     update(runs.get(run.runId)!, { queuePosition: null, activeController: true });
     const provider = await providerFor(run.route);
-    const launched = await launch(run.route, signal, job.controlGate); job.server = launched.server; job.profile = launched.profile; job.process = launched.child; job.adapter = launched.adapter;
+    const launched = await launch(run.route, signal, job.controlGate, job.browserBinding); job.server = launched.server; job.profile = launched.profile; job.process = launched.child; job.adapter = launched.adapter;
     runs.set(run.runId, update(runs.get(run.runId)!, { state: "running", activeController: true, startedAt: Date.now() }));
     const journal = new ActionJournal(join(artifactRoot(), "journals", `${run.runId}.ndjson`)); await journal.initialize();
     const effectiveRoute = JSON.parse(JSON.stringify(run.route)) as WayfinderRoute;
-    for (const origin of effectiveRoute.browser.navigationOrigins) if (origin.purpose === "fixture") (origin as { origin: string }).origin = launched.fixtureOrigin;
-    for (const origin of effectiveRoute.browser.resourceOrigins) if (origin.purpose === "fixture") (origin as { origin: string }).origin = launched.fixtureOrigin;
-    for (const checkpoint of effectiveRoute.checkpoints) if (checkpoint.kind === "url" || checkpoint.kind === "network-outcome") if (checkpoint.origin === "http://127.0.0.1:4173") (checkpoint as { origin: string }).origin = launched.fixtureOrigin;
+    if (launched.fixtureOrigin !== null) {
+      for (const origin of effectiveRoute.browser.navigationOrigins) if (origin.purpose === "fixture") (origin as { origin: string }).origin = launched.fixtureOrigin;
+      for (const origin of effectiveRoute.browser.resourceOrigins) if (origin.purpose === "fixture") (origin as { origin: string }).origin = launched.fixtureOrigin;
+      for (const checkpoint of effectiveRoute.checkpoints) if (checkpoint.kind === "url" || checkpoint.kind === "network-outcome") if (checkpoint.origin === "http://127.0.0.1:4173") (checkpoint as { origin: string }).origin = launched.fixtureOrigin;
+    }
     const engine = new RunEngine({ queue, controllerLease: lease, journal, adapters: new Map([["browser", launched.adapter]]), provider, actionCatalog: new ObservedActionCatalog(), closeAdaptersOnFinish: false });
     const result = await engine.run({ runId: run.runId, route: effectiveRoute, signal, onProgress: (progress) => { const current = runs.get(run.runId); if (current) runs.set(run.runId, update(current, { state: progress.phase === "verify" ? "verifying" : "running", activeController: true, checkpoints: [...progress.checkpoints] })); } });
     let artifact: ArtifactRecord | null = null;
@@ -239,7 +246,7 @@ async function probe(hostId: string, provider: "fixture" | "jev" | "openrouter")
 
 export default experimental_defineHostEntry({ contract: hostContract, experimental_signals: hostSignals, handlers: {
   "capabilities.probe": async (input) => probe(input.expectedHostId, input.provider),
-  "runs.start": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); context.signal.throwIfAborted(); if (runs.has(input.runId) || loadRun(input.runId)) return { accepted: true as const, runId: input.runId }; const run = initialRun(input.runId, input.routeHash, input.route); runs.set(input.runId, run); const abort = new AbortController(); const lease = context.experimental_retainWorker(); const emit: Emit = (signal, payload) => { void context.experimental_emitSignal(signal, payload as never).catch(() => undefined); }; const job = { abort, process: null, profile: null, server: null, adapter: null, artifact: null, emit, capture: null, controlGate: new ControlGate() }; jobs.set(input.runId, job); void execute(run).finally(() => lease.dispose()); emit("runChanged", { runId: input.runId, revision: run.revision }); return { accepted: true as const, runId: input.runId }; },
+  "runs.start": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); context.signal.throwIfAborted(); if (runs.has(input.runId) || loadRun(input.runId)) return { accepted: true as const, runId: input.runId }; const run = initialRun(input.runId, input.routeHash, input.route); runs.set(input.runId, run); const abort = new AbortController(); const lease = context.experimental_retainWorker(); const emit: Emit = (signal, payload) => { void context.experimental_emitSignal(signal, payload as never).catch(() => undefined); }; const job = { abort, process: null, profile: null, server: null, adapter: null, artifact: null, emit, capture: null, controlGate: new ControlGate(), browserBinding: input.browserBinding }; jobs.set(input.runId, job); void execute(run).finally(() => lease.dispose()); emit("runChanged", { runId: input.runId, revision: run.revision }); return { accepted: true as const, runId: input.runId }; },
   "runs.status": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); const run = runs.get(input.runId) ?? loadRun(input.runId); if (!run) throw new Error("Run not found"); runs.set(input.runId, run); return run; },
   "runs.cancel": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); const run = runs.get(input.runId); if (!run) throw new Error("Run not found"); if (["passed", "failed", "blocked", "cancelled", "timed_out", "interrupted"].includes(run.state)) return { accepted: false, run }; jobs.get(input.runId)?.abort.abort(input.reason); const cancelled = update(run, { state: "cancelled", error: { code: "cancelled", phase: "cleanup", message: input.reason, retryable: false, details: [] } }); runs.set(input.runId, cancelled); await context.experimental_emitSignal("runChanged", { runId: input.runId, revision: cancelled.revision }); return { accepted: true, run: cancelled }; },
   "computer.control.acquire": async (input, context) => {

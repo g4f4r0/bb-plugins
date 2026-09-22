@@ -34,10 +34,20 @@ export function LiveView({
   const [state, setState] = useState<LiveViewState>(INITIAL_LIVE_STATE);
   const [clock, setClock] = useState(() => Date.now());
   const image = useRef<HTMLImageElement>(null);
+  const root = useRef<HTMLDivElement>(null);
+  const visible = useRef(true);
 
   useEffect(() => {
+    const node = root.current;
+    if (!node || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => { visible.current = entries.some((entry) => entry.isIntersecting); });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
     setState(INITIAL_LIVE_STATE);
-    const poller = new LiveFramePoller({ ...pollerOptions, runId, onState: setState });
+    const callerHidden = pollerOptions?.isHidden;
+    const poller = new LiveFramePoller({ ...pollerOptions, runId, onState: setState, isHidden: () => !visible.current || callerHidden?.() === true });
     poller.start();
     return () => poller.stop();
   }, [runId]);
@@ -68,9 +78,9 @@ export function LiveView({
     event.preventDefault();
   };
 
-  return <div className={fill ? "h-full min-h-0 w-full" : "space-y-2"}>
+  return <div ref={root} className={fill ? "h-full min-h-0 w-full" : "space-y-2"}>
     <div className={fill ? "relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden bg-black" : "relative flex aspect-video w-full items-center justify-center overflow-hidden rounded-lg border border-border bg-muted"}>
-      {state.imageUrl !== null && state.status === "live" ? <img
+      {state.imageUrl !== null && state.status !== "redacted" ? <img
         ref={image}
         src={state.imageUrl}
         alt="Live view of the controlled browser or app window"

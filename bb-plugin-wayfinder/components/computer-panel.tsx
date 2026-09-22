@@ -36,6 +36,9 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
   const [snapshot, setSnapshot] = useState<ComputerSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [liveStatus, setLiveStatus] = useState<LiveStatus>("connecting");
+  const [nativeFrame, setNativeFrame] = useState<string | null>(null);
+  const panelRoot = useRef<HTMLDivElement>(null);
+  const panelVisible = useRef(true);
   const [humanRunId, setHumanRunId] = useState<string | null>(null);
   const [takingControl, setTakingControl] = useState(false);
   const inflight = useRef(false);
@@ -67,10 +70,20 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
 
   useEffect(() => {
     void refresh();
-    const timer = setInterval(() => { if (typeof document === "undefined" || document.visibilityState !== "hidden") void refresh(); }, SNAPSHOT_INTERVAL_MS);
+    const timer = setInterval(() => { if (panelVisible.current && (typeof document === "undefined" || document.visibilityState !== "hidden")) void refresh(); }, SNAPSHOT_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [refresh]);
-  useRealtime(COMPUTER_REALTIME_CHANNEL, () => void refresh());
+  useRealtime(COMPUTER_REALTIME_CHANNEL, () => { if (panelVisible.current) void refresh(); });
+  useEffect(() => {
+    const node = panelRoot.current;
+    if (!node || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      panelVisible.current = entries.some((entry) => entry.isIntersecting);
+      if (panelVisible.current) void refresh();
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [refresh]);
   const previousConnection = useRef(connection);
   useEffect(() => {
     if (previousConnection.current !== "connected" && connection === "connected") void refresh();
@@ -91,6 +104,20 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
   }, [releaseControl]);
 
   const active = snapshot?.activeRun ?? null;
+  useEffect(() => {
+    if (hostId === null || active !== null) { setNativeFrame(null); return; }
+    let stopped = false;
+    const poll = async () => {
+      if (stopped || !panelVisible.current || document.visibilityState === "hidden") return;
+      try {
+        const result = await rpc.call("computer.preview", { hostId, threadId });
+        if (!stopped && result.frame) { setNativeFrame(`data:image/jpeg;base64,${result.frame.base64}`); setLiveStatus("live"); }
+      } catch { /* Built-in browser is optional; retained run evidence remains the fallback. */ }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), 1_000);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [active, hostId, rpc, threadId]);
   const controllableRunId = active && ["running", "verifying"].includes(active.state) ? active.runId : null;
   useEffect(() => {
     if (humanRunId !== null && humanRunId !== controllableRunId) releaseControl(humanRunId);
@@ -105,7 +132,8 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
 
   const selected = snapshot.selectedRun;
   const viewed = active ?? selected;
-  if (snapshot.readiness === "setup-required" && viewed === null && snapshot.queue.length === 0) return <Notice title="Setup required">{snapshot.readinessMessage || "Finish setup in Wayfinder settings."}</Notice>;
+  const hasViewport = nativeFrame !== null || viewed !== null;
+  if (snapshot.readiness === "setup-required" && !hasViewport && snapshot.queue.length === 0) return <Notice title="Setup required">{snapshot.readinessMessage || "Finish setup in Wayfinder settings."}</Notice>;
 
   const cancel = async () => {
     if (active === null) return;
@@ -130,11 +158,11 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
     });
   };
   const hasHumanControl = humanRunId !== null && humanRunId === controllableRunId;
-  const connected = hasHumanControl || (error === null && connection === "connected" && (viewed === null || !["disconnected", "not-found"].includes(liveStatus)));
-  const statusLabel = hasHumanControl ? "You’re controlling" : viewed === null ? (connection === "connected" ? "Connected" : "Disconnected") : liveStatus === "live" ? "Connected" : liveStatus === "paused" ? "Paused" : liveStatus === "redacted" ? "Hidden" : liveStatus === "disconnected" || liveStatus === "not-found" ? "Disconnected" : "Connecting";
+  const connected = hasHumanControl || (error === null && connection === "connected" && (!hasViewport || !["disconnected", "not-found"].includes(liveStatus)));
+  const statusLabel = hasHumanControl ? "You’re controlling" : !hasViewport ? (connection === "connected" ? "Connected" : "Disconnected") : liveStatus === "live" ? "Connected" : liveStatus === "paused" ? "Paused" : liveStatus === "redacted" ? "Hidden" : liveStatus === "disconnected" || liveStatus === "not-found" ? "Disconnected" : "Connecting";
 
-  return <div className="group relative h-full min-h-0 overflow-hidden bg-black text-white">
-    {viewed !== null ? <LiveView runId={viewed.runId} fill interactive={hasHumanControl} onInput={sendInput} onStatusChange={setLiveStatus} /> : <IdleView />}
+  return <div ref={panelRoot} className="group relative h-full min-h-0 overflow-hidden bg-black text-white">
+    {active !== null ? <LiveView runId={active.runId} fill interactive={hasHumanControl} onInput={sendInput} onStatusChange={setLiveStatus} /> : nativeFrame !== null ? <img src={nativeFrame} alt="Live view of the built-in browser" className="h-full w-full select-none object-contain" draggable={false} /> : viewed !== null ? <LiveView runId={viewed.runId} fill onStatusChange={setLiveStatus} /> : <IdleView />}
 
     {controllableRunId !== null && humanRunId !== controllableRunId ? <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-black/0 opacity-0 transition-opacity group-hover:bg-black/25 group-hover:opacity-100 group-focus-within:bg-black/25 group-focus-within:opacity-100"><button type="button" onClick={() => void takeControl()} disabled={takingControl} className="pointer-events-auto inline-flex min-h-9 items-center gap-2 rounded-md bg-white px-3 text-xs font-medium text-black shadow-lg hover:bg-white/90 disabled:opacity-60">{takingControl ? <Icon name="Loading" className="size-4 animate-spin" aria-hidden="true" /> : <Icon name="Cursor" className="size-4" aria-hidden="true" />}{takingControl ? "Taking control…" : "Take control"}</button></div> : null}
 

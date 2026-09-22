@@ -7,7 +7,7 @@ import {
   createArtifactShareInputSchema,
   createArtifactShareOutputSchema,
 } from "./artifact.js";
-import { entityIdSchema } from "./primitives.js";
+import { base64Schema, entityIdSchema, unixMsSchema } from "./primitives.js";
 import {
   computerSnapshotSchema,
   humanInputSchema,
@@ -32,6 +32,10 @@ export const wayfinderRpcContract = defineRpcContract({
   "computer.snapshot": {
     input: z.object({ hostId: entityIdSchema, selectedRunId: entityIdSchema.nullable() }).strict(),
     output: computerSnapshotSchema,
+  },
+  "computer.preview": {
+    input: z.object({ hostId: entityIdSchema, threadId: entityIdSchema }).strict(),
+    output: z.object({ frame: z.object({ base64: base64Schema, width: z.number().int().positive().max(4_096), height: z.number().int().positive().max(4_096), capturedAt: unixMsSchema }).strict().nullable() }).strict(),
   },
   "computer.control.acquire": {
     input: z.object({ hostId: entityIdSchema, runId: entityIdSchema, clientId: entityIdSchema }).strict(),

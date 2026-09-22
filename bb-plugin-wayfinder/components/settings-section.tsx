@@ -85,7 +85,7 @@ function MachineSetupPanel({ host, fallback, checking, onCheck }: { host: HostSu
   const checks = [
     { label: "Machine connection", ready: online, detail: online ? "Online" : "Offline" },
     { label: "Platform", ready: host.os !== null && host.arch !== null, detail: host.os && host.arch ? `${host.os} · ${host.arch}` : "Not available" },
-    { label: "Fortress browser", ready: host.browserState === "ready", detail: stateLabel(host.browserState) },
+    { label: "Browser runtime", ready: host.browserState === "ready", detail: stateLabel(host.browserState) },
     { label: "Jev provider", ready: host.providerState === "ready", detail: stateLabel(host.providerState) },
   ];
   const complete = checks.filter((check) => check.ready).length;

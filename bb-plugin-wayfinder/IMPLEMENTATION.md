@@ -203,6 +203,12 @@ A host-side control gate waits for the current atomic agent browser operation be
 
 Verification: `npm run typecheck`, 25 Vitest files / 155 tests, and the production build pass. Tests cover atomic handoff, competing viewers, lease expiry, CDP input ownership, UI takeover/release, and the existing Fortress fixture path.
 
+## Lean viewer/runtime update (2026-09-22)
+
+Computer no longer falls back to an idle card when useful pixels exist. On macOS and Windows clients, it uses BB's built-in desktop-browser instance and captures only while the Computer panel is visible. Browser-only agent runs on those clients reuse an isolated BB automation tab and short-lived control connection. Linux/server execution keeps Fortress, where its hardened browser behavior is useful. If no built-in browser is available, Computer retains the most recent safe run frame instead of discarding it after cleanup.
+
+Hidden panel tabs stop frame and preview requests; becoming visible refreshes immediately. No responsive, annotation, or duplicate browser-management layer was added.
+
 ### Deferred follow-up
 
 A real BB browser lease, Jev credential resolution through Infisical, native accessibility, and verified HTTPS sharing are prerequisites for the remaining live-provider gates. No speculative fallback or external mutation was added.

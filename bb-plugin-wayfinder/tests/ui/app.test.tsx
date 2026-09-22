@@ -283,6 +283,23 @@ describe("Computer panel", () => {
     slot.lifecycle.unmount();
   });
 
+  it("shows the active built-in browser instead of an idle placeholder on client machines", async () => {
+    const slot = renderSlot<PluginThreadPanelProps, UiRpcContract>(panel, { threadId: "thr_a", params: null }, {
+      rpc: {
+        "settings.hostForThread": () => ({ hostId: "host_mac", source: "thread" }),
+        "settings.get": () => ({ selectedHostId: null, provider: "openrouter", model: "jev", keyStatus: "configured", lastTest: null }),
+        "settings.hosts": () => [{ hostId: "host_mac", name: "Studio Mac", status: "connected", phase: "active", os: "darwin", arch: "arm64", browserState: "ready", providerState: "ready" }],
+        "computer.snapshot": () => ({ hostId: "host_mac", readiness: "ready", readinessMessage: null, activeRun: null, queue: [], selectedRun: null, connectionState: "connected", frameSequence: null, frameCapturedAt: null, sampledAt: Date.now() }),
+        "computer.preview": () => ({ frame: { base64: "YWJj", width: 1280, height: 800, capturedAt: Date.now() } }),
+      } as never,
+    });
+    const image = await slot.findByRole("img", { name: "Live view of the built-in browser" }) as HTMLImageElement;
+    expect(image.src).toBe("data:image/jpeg;base64,YWJj");
+    expect(slot.queryByText("Computer is idle")).toBeNull();
+    expect(slot.getByLabelText("Computer host").textContent).toContain("Studio Mac");
+    slot.lifecycle.unmount();
+  });
+
   it("takes human control and gives it back to the agent when the window loses focus", async () => {
     const slot = renderSlot<PluginThreadPanelProps, UiRpcContract>(panel, { threadId: "thr_a", params: null }, {
       rpc: {
