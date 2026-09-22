@@ -130,7 +130,12 @@ export class DesktopRuntime {
           include_screenshot: false,
           max_elements: 100,
         }, signal);
-        const elements = result.structuredContent?.elements;
+        const data = result.structuredContent ?? {};
+        if (data.degraded === true) {
+          failure = typeof data.degraded_reason === "string" ? data.degraded_reason.slice(0, 1_000) : "Semantic accessibility used a degraded non-semantic fallback.";
+          continue;
+        }
+        const elements = data.elements;
         if (Array.isArray(elements)) return { available: true, detail: `Semantic accessibility responded (${elements.length} elements).` };
         failure = "Semantic accessibility returned no element data.";
       } catch (error) {
@@ -217,13 +222,18 @@ export class DesktopRuntime {
       await chmod(manifest, 0o600).catch(() => undefined);
       await rm(this.#socket, { force: true }).catch(() => undefined);
       const serveArgs = ["serve", "--socket", this.#socket, "--permission-mode", "bounded", "--capability-manifest", manifest, "--approve-capability-manifest", "--no-overlay"];
+      const runtimeEnv = { ...process.env };
+      if (process.platform === "linux" && !runtimeEnv.AT_SPI_BUS_ADDRESS) {
+        const cacheBus = join(homedir(), ".cache", "at-spi", "bus");
+        try { await access(cacheBus); runtimeEnv.AT_SPI_BUS_ADDRESS = `unix:path=${cacheBus}`; } catch { /* Normal login sessions discover AT-SPI through D-Bus. */ }
+      }
       if (cuaLaunchStrategy(process.platform) === "launchservices") {
         // LaunchServices makes the signed CuaDriver.app, not BB's generic Node
         // daemon, the macOS TCC owner shown in Privacy & Security.
-        const launcher = spawn("/usr/bin/open", ["-n", "-g", "-a", "CuaDriver", "--args", ...serveArgs], { stdio: "ignore", env: process.env });
+        const launcher = spawn("/usr/bin/open", ["-n", "-g", "-a", "CuaDriver", "--args", ...serveArgs], { stdio: "ignore", env: runtimeEnv });
         if (!await this.#waitForExit(launcher, 5_000) || launcher.exitCode !== 0) throw new Error("CuaDriver.app could not be started through LaunchServices");
       } else {
-        this.#process = spawn(this.#binary, [serveArgs[0]!, "--embedded", ...serveArgs.slice(1)], { stdio: "ignore", env: process.env });
+        this.#process = spawn(this.#binary, [serveArgs[0]!, "--embedded", ...serveArgs.slice(1)], { stdio: "ignore", env: runtimeEnv });
         this.#process.once("exit", () => { this.#process = null; this.#transport = null; });
       }
       const deadline = Date.now() + 5_000;
