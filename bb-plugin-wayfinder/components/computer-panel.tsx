@@ -1,4 +1,5 @@
 import {
+  experimental_Icon as Icon,
   useRealtime,
   useRealtimeConnectionState,
   useRpc,
@@ -75,19 +76,29 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
     previousConnection.current = connection;
   }, [connection, refresh]);
 
-  if (settingsLoading) return <Page>Loading…</Page>;
+  if (settingsLoading || (hostId !== null && snapshot === null && error === null)) {
+    return (
+      <div role="status" aria-label="Loading computer" className="flex h-full min-h-0 items-center justify-center bg-sidebar text-sidebar-foreground">
+        <Icon name="Loading" aria-hidden="true" className="size-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
   if (hostId === null) {
     return (
-      <Page>
-        <Notice title="Setup required">
-          No computer is selected yet. Choose an enrolled host in Settings → Wayfinder to open the Computer view.
-        </Notice>
-      </Page>
+      <Notice title="Setup required">
+        Choose a computer in Wayfinder settings to get started.
+      </Notice>
     );
+  }
+  if (snapshot === null && error !== null) {
+    return <Notice title="Computer unavailable">{error}</Notice>;
   }
 
   const active = snapshot?.activeRun ?? null;
   const selected = snapshot?.selectedRun ?? null;
+  if (snapshot?.readiness === "setup-required" && active === null && selectedRunId === null && snapshot.queue.length === 0) {
+    return <Notice title="Setup required">{snapshot.readinessMessage || "Finish setup in Wayfinder settings to get started."}</Notice>;
+  }
 
   return (
     <Page>
@@ -308,9 +319,10 @@ function Page({ children }: { children: React.ReactNode }) {
 
 function Notice({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div role="status" className="rounded-lg border border-border bg-card p-4 text-sm">
-      <p className="font-medium text-foreground">{title}</p>
-      <p className="mt-1 text-muted-foreground">{children}</p>
+    <div role="status" className="flex h-full min-h-0 flex-col items-center justify-center overflow-auto bg-sidebar p-6 text-center text-sidebar-foreground">
+      <Icon name="Laptop" aria-hidden="true" className="mb-3 size-6 text-muted-foreground" />
+      <h2 className="text-sm font-medium">{title}</h2>
+      <p className="mt-1 max-w-sm text-sm text-muted-foreground">{children}</p>
     </div>
   );
 }

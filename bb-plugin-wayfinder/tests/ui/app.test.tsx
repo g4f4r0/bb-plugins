@@ -212,9 +212,28 @@ describe("inline artifact card", () => {
 });
 
 describe("Computer panel", () => {
+  it("shows only a centered spinner while settings load", () => {
+    const slot = renderSlot(panel, { threadId: "thr_a", params: null }, {
+      rpc: { "settings.get": () => new Promise(() => {}) } as never,
+    });
+    const loading = slot.getByRole("status", { name: "Loading computer" });
+    expect(loading.className).toContain("h-full");
+    expect(loading.className).toContain("items-center");
+    expect(loading.className).toContain("justify-center");
+    expect(loading.textContent).toBe("");
+    expect(loading.querySelector(".animate-spin")).not.toBeNull();
+    slot.lifecycle.unmount();
+  });
+
   it("shows setup required instead of a fake view when no host is selected", async () => {
     const slot = renderSlot(panel, { threadId: "thr_a", params: null }, { rpc: {} });
-    await slot.findByText("Setup required");
+    await slot.findByRole("heading", { name: "Setup required" });
+    const notice = slot.getByRole("status");
+    expect(notice.className).toContain("h-full");
+    expect(notice.className).toContain("items-center");
+    expect(notice.className).toContain("justify-center");
+    expect(notice.querySelector("button")).toBeNull();
+    expect(notice.querySelector('[aria-hidden="true"]')).not.toBeNull();
     expect(slot.inspection.rpcCalls).toEqual([{ method: "settings.get", input: {} }]);
   });
 
