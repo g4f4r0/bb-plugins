@@ -5,14 +5,17 @@ import plugin from "../../server.js";
 import type { InfisicalScope, InfisicalClient, ProviderTestResult } from "../../src/core/infisical.js";
 
 /** In-memory Infisical stand-in so these tests never shell out to a real CLI/project. */
-function fakeInfisicalClient(initial: Record<string, string> = {}): InfisicalClient & { secrets: Record<string, string> } {
+function fakeInfisicalClient(initial: Record<string, string> = {}): InfisicalClient & { secrets: Record<string, string>; scopes: InfisicalScope[] } {
   const secrets: Record<string, string> = { ...initial };
+  const scopes: InfisicalScope[] = [];
   return {
     secrets,
-    async resolveSecret(_scope: InfisicalScope, name: string) { return secrets[name] ?? null; },
-    async secretConfigured(_scope: InfisicalScope, name: string) { return name in secrets; },
-    async setSecret(_scope: InfisicalScope, name: string, value: string) { secrets[name] = value; return true; },
-    async testProviderKey(_scope: InfisicalScope, name: string): Promise<ProviderTestResult> {
+    scopes,
+    async resolveSecret(scope: InfisicalScope, name: string) { scopes.push(scope); return secrets[name] ?? null; },
+    async secretConfigured(scope: InfisicalScope, name: string) { scopes.push(scope); return name in secrets; },
+    async setSecret(scope: InfisicalScope, name: string, value: string) { scopes.push(scope); secrets[name] = value; return true; },
+    async testProviderKey(scope: InfisicalScope, name: string): Promise<ProviderTestResult> {
+      scopes.push(scope);
       return name in secrets ? { ok: true, status: 200, message: "ready" } : { ok: false, status: 0, message: "missing" };
     },
   };
@@ -34,6 +37,15 @@ const HOST_A = {
 const HOST_B_DISCONNECTED = { ...HOST_A, id: "host_b", name: "Old laptop", status: "disconnected" as const, lifecycle: { ...HOST_A.lifecycle, phase: "suspended" as const } };
 
 describe("Wayfinder settings", () => {
+  it("uses only the verified server-wide Infisical scope", async () => {
+    const client = fakeInfisicalClient();
+    const { bb, harness } = createFakePluginHost({ pluginId: "wayfinder", sdk: { hosts: { list: async () => [] } } });
+    await plugin(bb, { infisicalClient: client });
+    await harness.behavior.callRpc("settings.get", {});
+    expect(client.scopes).toContainEqual({ projectId: "bd53277c-43aa-4093-8aea-1e4040fc1962", env: "prod", path: "/" });
+    await harness.lifecycle.dispose();
+  });
+
   it("declares no raw hostId setting; the host comes from a settingsSection backed by real host discovery", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "wayfinder", sdk: { hosts: { list: async () => [HOST_A] } } });
     await plugin(bb, { infisicalClient: fakeInfisicalClient() });

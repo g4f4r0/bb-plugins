@@ -28,9 +28,9 @@ import { createInfisicalClient, type InfisicalScope } from "./src/core/infisical
 
 const FORTRESS = process.env.WAYFINDER_FORTRESS_PATH ?? "/home/g4f4r0/.bb/plugins/browse/host-data/browsers/fortress/v151.0.7908.0/linux-x64/tilion-fortress/tilion";
 const INFISICAL_SCOPE: InfisicalScope = {
-  projectId: process.env.WAYFINDER_INFISICAL_PROJECT_ID ?? "bd53277c-43aa-4093-8aea-1e4040fc1962",
-  env: process.env.WAYFINDER_INFISICAL_ENV ?? "prod",
-  path: process.env.WAYFINDER_INFISICAL_PATH ?? "/",
+  projectId: "bd53277c-43aa-4093-8aea-1e4040fc1962",
+  env: "prod",
+  path: "/",
 };
 const PROVIDER_KEY_NAME = { jev: "TYPESAFE_API_KEY", openrouter: "OPENROUTER_API_KEY" } as const;
 const infisical = createInfisicalClient();

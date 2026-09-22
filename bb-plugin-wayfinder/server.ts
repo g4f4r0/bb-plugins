@@ -27,9 +27,9 @@ export const FOUNDATION_ONLY_MESSAGE = "Wayfinder is configured for bounded exec
 const SHARE_DISABLED = "External sharing is disabled until a verified HTTPS export origin is configured";
 
 const INFISICAL_SCOPE: InfisicalScope = {
-  projectId: process.env.WAYFINDER_INFISICAL_PROJECT_ID ?? "bd53277c-43aa-4093-8aea-1e4040fc1962",
-  env: process.env.WAYFINDER_INFISICAL_ENV ?? "prod",
-  path: process.env.WAYFINDER_INFISICAL_PATH ?? "/",
+  projectId: "bd53277c-43aa-4093-8aea-1e4040fc1962",
+  env: "prod",
+  path: "/",
 };
 const PROVIDER_KEY_NAME: Record<ProviderId, string> = { jev: "TYPESAFE_API_KEY", openrouter: "OPENROUTER_API_KEY" };
 const PROVIDER_PROBE: Record<ProviderId, { url: string; header: string }> = {
