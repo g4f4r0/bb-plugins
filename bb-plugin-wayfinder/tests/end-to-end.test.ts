@@ -89,9 +89,10 @@ describe("Wayfinder browser -> Computer -> inline screenshot (server <-> host co
     const latest = await hostHarness.experimental_call("media.latest", { expectedHostId: "host_test", runId: started.runId, afterSequence: 999 });
     expect(latest.frame?.state).toBe("disconnected");
 
-    // Ended run: no stale pixels, explicit state.
+    // Ended run: retain the last sanitized evidence while reporting the disconnected feed.
     const ended = await harness.fetchHttp("GET", `/v1/live/frame?runId=${started.runId}`);
-    expect(ended.status).toBe(204);
+    expect(ended.status).toBe(200);
     expect(ended.headers.get("x-wayfinder-frame-state")).toBe("disconnected");
+    expect((await ended.arrayBuffer()).byteLength).toBeGreaterThan(0);
   }, 30_000);
 });

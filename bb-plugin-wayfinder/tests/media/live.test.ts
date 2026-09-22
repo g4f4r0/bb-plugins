@@ -109,13 +109,13 @@ describe("LiveCaptureLoop", () => {
   });
 });
 
-const hostFrame = (sequence: number, state: HostFrame["state"] = "live"): HostFrame => ({
+const hostFrame = (sequence: number, state: HostFrame["state"] = "live", withPixels = state === "live"): HostFrame => ({
   sequence,
   capturedAt: 1_000,
   mimeType: "image/webp",
   width: 640,
   height: 360,
-  bytesBase64: state === "live" ? Buffer.from("frame").toString("base64") : "",
+  bytesBase64: withPixels ? Buffer.from("frame").toString("base64") : "",
   state,
 });
 
@@ -136,13 +136,14 @@ describe("LiveFrameRelay", () => {
     expect(new Set(frames.map((frame) => frame?.sequence))).toEqual(new Set([1]));
   });
 
-  it("marks the frame disconnected and drops pixels when the host fetch fails", async () => {
+  it("marks the frame disconnected and preserves its last safe pixels when the host fetch fails", async () => {
     let now = 0;
     const fetchLatest = vi.fn<(...args: unknown[]) => Promise<HostFrame | null>>().mockResolvedValueOnce(hostFrame(1)).mockRejectedValueOnce(new Error("host gone"));
     const relay = new LiveFrameRelay({ fetchLatest, minFetchIntervalMs: 100, now: () => now });
-    expect((await relay.latest("run_a"))?.state).toBe("live");
+    const live = await relay.latest("run_a");
+    expect(live?.state).toBe("live");
     now = 200;
-    expect(await relay.latest("run_a")).toMatchObject({ state: "disconnected", bytes: null });
+    expect(await relay.latest("run_a")).toMatchObject({ state: "disconnected", bytes: live?.bytes });
   });
 });
 
@@ -164,13 +165,21 @@ describe("live frame HTTP handler", () => {
     expect(unchanged.headers.get(LIVE_FRAME_HEADERS.state)).toBe("live");
   });
 
-  it("never serves pixels for redacted, paused, or disconnected states", async () => {
+  it("never serves pixels for redacted, paused, or byte-less disconnected states", async () => {
     for (const state of ["redacted", "paused", "disconnected"] as const) {
       const handler = createLiveFrameHandler({ relay: relayWith(hostFrame(2, state)), authorize: () => true });
       const response = await get(handler, "runId=run_a");
       expect(response.status).toBe(204);
       expect(response.headers.get(LIVE_FRAME_HEADERS.state)).toBe(state);
     }
+  });
+
+  it("serves retained sanitized pixels while reporting a disconnected feed", async () => {
+    const handler = createLiveFrameHandler({ relay: relayWith(hostFrame(2, "disconnected", true)), authorize: () => true });
+    const response = await get(handler, "runId=run_a");
+    expect(response.status).toBe(200);
+    expect(response.headers.get(LIVE_FRAME_HEADERS.state)).toBe("disconnected");
+    expect(await response.text()).toBe("frame");
   });
 
   it("refuses share tokens, invalid IDs, and unauthorized runs", async () => {

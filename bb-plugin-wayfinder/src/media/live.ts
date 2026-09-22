@@ -12,7 +12,7 @@ export interface LiveFrame {
   readonly mimeType: LiveFrameMimeType;
   readonly width: number;
   readonly height: number;
-  /** Null whenever the state is not `live`: stale pixels are never served. */
+  /** Pixels are omitted for protected/paused feeds; disconnected feeds may retain the last sanitized frame. */
   readonly bytes: Uint8Array | null;
   readonly state: LiveFrameState;
 }
@@ -236,7 +236,7 @@ export class LiveFrameRelay {
         current.fetchedAt = this.#now();
         return current.frame;
       } catch {
-        current.frame = current.frame === null ? null : { ...current.frame, bytes: null, state: "disconnected" };
+        current.frame = current.frame === null ? null : { ...current.frame, state: "disconnected" };
         current.fetchedAt = this.#now();
         return current.frame;
       } finally {
@@ -261,15 +261,15 @@ export class LiveFrameRelay {
 }
 
 function fromHostFrame(frame: HostFrame): LiveFrame {
-  const live = frame.state === "live" && frame.bytesBase64.length > 0;
+  const hasSafePixels = (frame.state === "live" || frame.state === "disconnected") && frame.bytesBase64.length > 0;
   return {
     sequence: frame.sequence,
     capturedAt: frame.capturedAt,
     mimeType: frame.mimeType,
     width: frame.width,
     height: frame.height,
-    bytes: live ? Buffer.from(frame.bytesBase64, "base64") : null,
-    state: live ? "live" : frame.state === "live" ? "disconnected" : frame.state,
+    bytes: hasSafePixels ? Buffer.from(frame.bytesBase64, "base64") : null,
+    state: frame.state === "live" && !hasSafePixels ? "disconnected" : frame.state,
   };
 }
 
@@ -311,7 +311,7 @@ export function createLiveFrameHandler(options: {
       [LIVE_FRAME_HEADERS.ageMs]: String(Math.max(0, now() - frame.capturedAt)),
     };
     if (after !== null && frame.sequence <= after) return new Response(null, { status: 204, headers });
-    if (frame.state !== "live" || frame.bytes === null) return new Response(null, { status: 204, headers });
+    if (frame.bytes === null || frame.state === "paused" || frame.state === "redacted") return new Response(null, { status: 204, headers });
     return new Response(new Uint8Array(frame.bytes), {
       status: 200,
       headers: {
