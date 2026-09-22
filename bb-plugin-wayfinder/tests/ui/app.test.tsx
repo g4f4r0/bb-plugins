@@ -316,7 +316,6 @@ describe("Settings section", () => {
     expect(Array.from(model.options).map((option) => option.text)).toEqual(["Jev"]);
     expect(slot.queryByPlaceholderText("e.g. openai/gpt-5")).toBeNull();
     expect(slot.queryByText("OpenRouter")).toBeNull();
-    expect(slot.getByText("Configuration")).toBeDefined();
     expect(slot.getByText("Missing")).toBeDefined();
     slot.lifecycle.unmount();
   });

@@ -47,7 +47,6 @@ export function WayfinderSettingsSection() {
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-medium">Configuration</h3>
       {error !== null ? <Notice>{error}</Notice> : null}
       <div className="rounded-lg border border-border bg-card px-3 py-1">
         <SettingRow label="Computer" description="The machine used for the Computer view.">
