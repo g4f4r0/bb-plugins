@@ -19,8 +19,6 @@ export default definePluginApp((app) => {
   app.slots.messageDirective({ id: ARTIFACT_DIRECTIVE_ID, component: ArtifactDirective });
   app.slots.settingsSection({
     id: "wayfinder-settings",
-    title: "Wayfinder",
-    description: "Computer host and decision-provider credential.",
     component: WayfinderSettingsSection,
   });
 });

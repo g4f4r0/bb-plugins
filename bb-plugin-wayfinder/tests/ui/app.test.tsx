@@ -302,7 +302,7 @@ describe("Settings section", () => {
               { hostId: "host_b", name: "Old laptop", status: "disconnected", phase: "suspended" },
             ] as never,
           "settings.get": () =>
-            ({ selectedHostId: "host_a", provider: "openrouter", model: "openai/test", keyStatus: "missing", lastTest: null }) as never,
+            ({ selectedHostId: "host_a", provider: "jev", model: "jev-latest", keyStatus: "missing", lastTest: null }) as never,
         } as never,
       },
     );
@@ -311,7 +311,29 @@ describe("Settings section", () => {
     const options = Array.from(select.options).map((option) => ({ value: option.value, disabled: option.disabled }));
     expect(options).toContainEqual({ value: "host_b", disabled: true });
     expect(slot.queryByLabelText(/host id/iu)).toBeNull();
+    const model = slot.getByLabelText("Model") as HTMLSelectElement;
+    expect(model.tagName).toBe("SELECT");
+    expect(Array.from(model.options).map((option) => option.text)).toEqual(["Jev"]);
+    expect(slot.queryByPlaceholderText("e.g. openai/gpt-5")).toBeNull();
+    expect(slot.queryByText("OpenRouter")).toBeNull();
+    expect(slot.getByText("Configuration")).toBeDefined();
     expect(slot.getByText("Missing")).toBeDefined();
+    slot.lifecycle.unmount();
+  });
+
+  it("does not confuse an old provider credential with Jev and saves the fixed Jev selection", async () => {
+    const slot = renderSlot(settingsSection, {}, {
+      rpc: {
+        "settings.hosts": () => [],
+        "settings.get": () => ({ selectedHostId: null, provider: "openrouter", model: "old-model", keyStatus: "configured", lastTest: null }),
+        "settings.saveProvider": () => ({ selectedHostId: null, provider: "jev", model: "jev-latest", keyStatus: "missing", lastTest: null }),
+      } as never,
+    });
+    const model = await slot.findByLabelText("Model");
+    expect(slot.queryByText("Configured")).toBeNull();
+    fireEvent.change(model, { target: { value: "jev-latest" } });
+    await slot.findByText("Missing");
+    expect(slot.inspection.rpcCalls).toContainEqual({ method: "settings.saveProvider", input: { provider: "jev", model: "jev-latest" } });
     slot.lifecycle.unmount();
   });
 
@@ -323,7 +345,7 @@ describe("Settings section", () => {
         rpc: {
           "settings.hosts": () => [] as never,
           "settings.get": () =>
-            ({ selectedHostId: null, provider: "openrouter", model: "openai/test", keyStatus: "configured", lastTest: null }) as never,
+            ({ selectedHostId: null, provider: "jev", model: "jev-latest", keyStatus: "configured", lastTest: null }) as never,
         } as never,
       },
     );
@@ -347,7 +369,7 @@ describe("Settings section", () => {
         rpc: {
           "settings.hosts": () => [] as never,
           "settings.get": () =>
-            ({ selectedHostId: null, provider: "openrouter", model: "openai/test", keyStatus: "missing", lastTest: null }) as never,
+            ({ selectedHostId: null, provider: "jev", model: "jev-latest", keyStatus: "missing", lastTest: null }) as never,
         } as never,
       },
     );
@@ -356,7 +378,7 @@ describe("Settings section", () => {
     fireEvent.click(slot.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(fetchCalls.length).toBe(1));
     expect(fetchCalls[0]?.url).toBe("/api/v1/plugins/wayfinder/http/settings/key");
-    expect(fetchCalls[0]?.body).toEqual({ provider: "openrouter", key: "sk-typed-by-user" });
+    expect(fetchCalls[0]?.body).toEqual({ provider: "jev", key: "sk-typed-by-user" });
     await waitFor(() => expect((slot.getByLabelText(/API key/iu) as HTMLInputElement).value).toBe(""));
     expect(slot.inspection.rpcCalls.some((call) => JSON.stringify(call).includes("sk-typed-by-user"))).toBe(false);
     slot.lifecycle.unmount();
@@ -371,7 +393,7 @@ describe("Settings section", () => {
         rpc: {
           "settings.hosts": () => [] as never,
           "settings.get": () =>
-            ({ selectedHostId: null, provider: "openrouter", model: "openai/test", keyStatus: "configured", lastTest: null }) as never,
+            ({ selectedHostId: null, provider: "jev", model: "jev-latest", keyStatus: "configured", lastTest: null }) as never,
         } as never,
       },
     );

@@ -1,20 +1,19 @@
-import { useRpc } from "@get-bb/plugin-sdk/app";
-import { useCallback, useEffect, useState } from "react";
+import { experimental_Icon as Icon, useRpc } from "@get-bb/plugin-sdk/app";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 
-import type { wayfinderSettingsRpcContract, HostSummary, ProviderId, WayfinderSettingsState } from "../src/contracts/settings.js";
+import type { wayfinderSettingsRpcContract, HostSummary, WayfinderSettingsState } from "../src/contracts/settings.js";
 import { errorMessage } from "./format.js";
 
 const HTTP_BASE = "/api/v1/plugins/wayfinder/http";
-const PROVIDER_LABEL: Record<ProviderId, string> = { jev: "Jev (TypeSafe)", openrouter: "OpenRouter" };
-
+const JEV_MODEL = "jev-latest";
+const controlClass = "h-8 w-full rounded-md border border-input bg-background px-3 text-sm sm:w-64";
+const buttonClass = "rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-50";
 type SettingsRpcContract = typeof wayfinderSettingsRpcContract;
 
 async function postJson(path: string, body: unknown): Promise<Record<string, unknown>> {
   const response = await fetch(`${HTTP_BASE}${path}`, {
-    method: "POST",
-    credentials: "same-origin",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    method: "POST", credentials: "same-origin",
+    headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
   const parsed = (await response.json()) as Record<string, unknown>;
   if (!response.ok) throw new Error(typeof parsed.message === "string" ? parsed.message : `Request failed (${response.status})`);
@@ -26,246 +25,107 @@ export function WayfinderSettingsSection() {
   const [hosts, setHosts] = useState<HostSummary[] | null>(null);
   const [state, setState] = useState<WayfinderSettingsState | null>(null);
   const [error, setError] = useState<string | null>(null);
-
   const refresh = useCallback(async () => {
     try {
       const [hostList, settings] = await Promise.all([rpc.call("settings.hosts", {}), rpc.call("settings.get", {})]);
-      setHosts(hostList);
-      setState(settings);
-      setError(null);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
+      setHosts(hostList); setState(settings); setError(null);
+    } catch (cause) { setError(errorMessage(cause)); }
   }, [rpc]);
-
   useEffect(() => { void refresh(); }, [refresh]);
 
   const selectHost = async (hostId: string | null) => {
-    try {
-      setState(await rpc.call("settings.selectHost", { hostId }));
-      setError(null);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
+    try { setState(await rpc.call("settings.selectHost", { hostId })); setError(null); }
+    catch (cause) { setError(errorMessage(cause)); }
+  };
+  const selectJev = async () => {
+    const next = await rpc.call("settings.saveProvider", { provider: "jev", model: JEV_MODEL });
+    setState(next);
   };
 
-  const saveProvider = async (provider: ProviderId, model: string) => {
-    try {
-      setState(await rpc.call("settings.saveProvider", { provider, model }));
-      setError(null);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  };
-
-  if (error !== null && state === null) return <Notice tone="error">{error}</Notice>;
-  if (state === null || hosts === null) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (error !== null && state === null) return <Notice>{error}</Notice>;
+  if (state === null || hosts === null) return <div role="status" aria-label="Loading settings" className="flex justify-center py-6"><Icon name="Loading" className="size-4 animate-spin text-muted-foreground" aria-hidden="true" /></div>;
 
   return (
-    <div className="space-y-6">
-      {error !== null ? <Notice tone="error">{error}</Notice> : null}
-      <HostPicker hosts={hosts} selectedHostId={state.selectedHostId} onSelect={(hostId) => void selectHost(hostId)} />
-      <ProviderKeyForm state={state} onSaveProvider={(provider, model) => void saveProvider(provider, model)} onRefresh={refresh} />
+    <div className="space-y-4">
+      <h3 className="text-sm font-medium">Configuration</h3>
+      {error !== null ? <Notice>{error}</Notice> : null}
+      <div className="rounded-lg border border-border bg-card px-3 py-1">
+        <SettingRow label="Computer" description="The machine used for the Computer view.">
+          <select aria-label="Computer host" className={controlClass} value={state.selectedHostId ?? ""}
+            onChange={(event) => void selectHost(event.target.value || null)} disabled={hosts.length === 0}>
+            <option value="">{hosts.length === 0 ? "No machines available" : "Select a machine"}</option>
+            {hosts.map((host) => <option key={host.hostId} value={host.hostId} disabled={host.status !== "connected"}>
+              {host.name}{host.status === "connected" ? "" : " (disconnected)"}
+            </option>)}
+          </select>
+        </SettingRow>
+        <ProviderKeyForm state={state} onSelectJev={selectJev} onRefresh={refresh} />
+      </div>
     </div>
   );
 }
 
-function HostPicker({
-  hosts,
-  selectedHostId,
-  onSelect,
-}: {
-  hosts: HostSummary[];
-  selectedHostId: string | null;
-  onSelect: (hostId: string | null) => void;
-}) {
-  return (
-    <section aria-labelledby="wf-settings-host" className="space-y-2">
-      <h3 id="wf-settings-host" className="text-sm font-semibold text-foreground">
-        Computer
-      </h3>
-      <p className="text-sm text-muted-foreground">The enrolled host Wayfinder's Computer view controls.</p>
-      {hosts.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No hosts are enrolled yet. Enroll one with `bb host list`.</p>
-      ) : (
-        <select
-          aria-label="Computer host"
-          className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-          value={selectedHostId ?? ""}
-          onChange={(event) => onSelect(event.target.value === "" ? null : event.target.value)}
-        >
-          <option value="">Not selected</option>
-          {hosts.map((host) => (
-            <option key={host.hostId} value={host.hostId} disabled={host.status !== "connected"}>
-              {host.name} — {host.status === "connected" ? "connected" : `disconnected (${host.phase})`}
-            </option>
-          ))}
-        </select>
-      )}
-      {selectedHostId !== null && !hosts.some((host) => host.hostId === selectedHostId) ? (
-        <Notice tone="warn">The previously selected host is no longer enrolled. Choose another to restore the Computer view.</Notice>
-      ) : null}
-    </section>
-  );
-}
-
-function ProviderKeyForm({
-  state,
-  onSaveProvider,
-  onRefresh,
-}: {
+function ProviderKeyForm({ state, onSelectJev, onRefresh }: {
   state: WayfinderSettingsState;
-  onSaveProvider: (provider: ProviderId, model: string) => void;
+  onSelectJev: () => Promise<void>;
   onRefresh: () => Promise<void>;
 }) {
-  const [provider, setProvider] = useState<ProviderId>(state.provider);
-  const [model, setModel] = useState(state.model);
   const [key, setKey] = useState("");
-  const [savingProvider, setSavingProvider] = useState(false);
-  const [savingKey, setSavingKey] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [actionMessage, setActionMessage] = useState<{ tone: "ok" | "warn" | "error"; text: string } | null>(null);
+  const [busy, setBusy] = useState<"model" | "save" | "test" | null>(null);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const jevSelected = state.provider === "jev" && state.model === JEV_MODEL;
+  // Do not label a previously selected provider's key as the Jev key.
+  const keyStatus = state.provider === "jev" ? state.keyStatus : "unknown";
 
-  useEffect(() => { setProvider(state.provider); setModel(state.model); }, [state.provider, state.model]);
-
-  const saveProvider = async () => {
-    setSavingProvider(true);
+  const act = async (action: "model" | "save" | "test") => {
+    if (busy !== null) return;
+    setBusy(action); setMessage(null);
     try {
-      onSaveProvider(provider, model);
-    } finally {
-      setSavingProvider(false);
-    }
-  };
-
-  const saveKey = async () => {
-    if (key.trim() === "") return;
-    setSavingKey(true);
-    setActionMessage(null);
-    try {
-      const result = await postJson("/settings/key", { provider, key });
-      setKey("");
-      setActionMessage({ tone: result.ok === true ? "ok" : "error", text: String(result.message ?? "") });
+      if (!jevSelected) await onSelectJev();
+      if (action === "model") return;
+      const result = await postJson(action === "save" ? "/settings/key" : "/settings/key/test",
+        action === "save" ? { provider: "jev", key } : { provider: "jev" });
+      if (action === "save") setKey("");
+      setMessage({ ok: result.ok === true, text: String(result.message ?? "") });
       await onRefresh();
-    } catch (cause) {
-      setActionMessage({ tone: "error", text: errorMessage(cause) });
-    } finally {
-      setSavingKey(false);
-    }
+    } catch (cause) { setMessage({ ok: false, text: errorMessage(cause) }); }
+    finally { setBusy(null); }
   };
 
-  const testKey = async () => {
-    setTesting(true);
-    setActionMessage(null);
-    try {
-      const result = await postJson("/settings/key/test", { provider });
-      setActionMessage({ tone: result.ok === true ? "ok" : "warn", text: String(result.message ?? "") });
-      await onRefresh();
-    } catch (cause) {
-      setActionMessage({ tone: "error", text: errorMessage(cause) });
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  return (
-    <section aria-labelledby="wf-settings-provider" className="space-y-3">
-      <h3 id="wf-settings-provider" className="text-sm font-semibold text-foreground">
-        Decision provider
-      </h3>
-      <p className="text-sm text-muted-foreground">
-        Server-wide credential, resolved from the verified Infisical scope at run time. Never stored in BB settings.
-      </p>
-
-      <div className="grid gap-2 sm:grid-cols-2">
-        <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Provider</span>
-          <select
-            className="w-full rounded-md border border-border bg-background px-3 py-2"
-            value={provider}
-            onChange={(event) => setProvider(event.target.value as ProviderId)}
-          >
-            <option value="jev">{PROVIDER_LABEL.jev}</option>
-            <option value="openrouter">{PROVIDER_LABEL.openrouter}</option>
-          </select>
-        </label>
-        <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Model</span>
-          <input
-            className="w-full rounded-md border border-border bg-background px-3 py-2"
-            value={model}
-            onChange={(event) => setModel(event.target.value)}
-            placeholder="e.g. openai/gpt-5"
-          />
-        </label>
+  return <>
+    <SettingRow label="Model" description="Jev chooses the next action. Connects directly to TypeSafe.">
+      <div className="flex w-full flex-col items-end gap-2 sm:w-64">
+        <select aria-label="Model" className={controlClass} value={jevSelected ? JEV_MODEL : ""}
+          disabled={busy !== null} onChange={() => void act("model")}>
+          {!jevSelected ? <option value="" disabled>Select a model</option> : null}
+          <option value={JEV_MODEL}>Jev</option>
+        </select>
       </div>
-      <button
-        type="button"
-        onClick={() => void saveProvider()}
-        disabled={savingProvider || model.trim() === ""}
-        className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-50"
-      >
-        Save provider
-      </button>
-
-      <div className="space-y-2 rounded-lg border border-border p-3">
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-foreground">API key</span>
-          <StatusBadge status={state.keyStatus} />
-        </div>
-        <input
-          type="password"
-          autoComplete="off"
-          aria-label={`${PROVIDER_LABEL[provider]} API key`}
-          placeholder={state.keyStatus === "configured" ? "•••••••••• (configured — enter a new value to replace it)" : "Enter API key"}
-          className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-          value={key}
-          onChange={(event) => setKey(event.target.value)}
-        />
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => void saveKey()}
-            disabled={savingKey || key.trim() === ""}
-            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-50"
-          >
-            {savingKey ? "Saving…" : "Save"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void testKey()}
-            disabled={testing}
-            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-50"
-          >
-            {testing ? "Testing…" : "Test connection"}
-          </button>
-        </div>
-        {actionMessage !== null ? <Notice tone={actionMessage.tone}>{actionMessage.text}</Notice> : null}
-        {state.lastTest !== null ? (
-          <p className="text-xs text-muted-foreground">
-            Last test {state.lastTest.ok ? "succeeded" : "failed"}: {state.lastTest.message} ({new Date(state.lastTest.testedAt).toLocaleString()})
-          </p>
-        ) : null}
+    </SettingRow>
+    <SettingRow label={<>API key <span className="ml-1 rounded border border-border px-1 py-0.5 text-[10px] text-muted-foreground">secret</span></>}
+      description="Shared server key, stored securely in Infisical.">
+      <input type="password" autoComplete="off" aria-label="Jev API key" className={controlClass}
+        placeholder={keyStatus === "configured" ? "[set]" : "Enter API key"}
+        value={key} onChange={(event) => setKey(event.target.value)} disabled={busy !== null} />
+    </SettingRow>
+    <div className="flex flex-wrap items-center justify-between gap-3 pb-3 pt-1">
+      <span className="text-xs text-muted-foreground" role="status">
+        {keyStatus === "configured" ? "Configured" : keyStatus === "missing" ? "Missing" : "Not checked"}
+      </span>
+      <div className="flex gap-2">
+        <button type="button" className={buttonClass} disabled={busy !== null || key.trim() === ""} onClick={() => void act("save")}>{busy === "save" ? "Saving…" : "Save"}</button>
+        <button type="button" className={buttonClass} disabled={busy !== null} onClick={() => void act("test")}>{busy === "test" ? "Testing…" : "Test connection"}</button>
       </div>
-    </section>
-  );
+    </div>
+    {message !== null ? <p role="status" className={`pb-3 text-xs ${message.ok ? "text-muted-foreground" : "text-destructive"}`}>{message.text}</p> : null}
+    {state.provider === "jev" && state.lastTest !== null ? <p className="pb-3 text-xs text-muted-foreground">Last test {state.lastTest.ok ? "succeeded" : "failed"}: {state.lastTest.message}</p> : null}
+  </>;
 }
 
-function StatusBadge({ status }: { status: WayfinderSettingsState["keyStatus"] }) {
-  const toneClass =
-    status === "configured"
-      ? "border-border text-foreground"
-      : status === "missing"
-        ? "border-destructive/40 text-destructive"
-        : "border-border text-muted-foreground";
-  const label = status === "configured" ? "Configured" : status === "missing" ? "Missing" : "Unknown";
-  return <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${toneClass}`}>{label}</span>;
+function SettingRow({ label, description, children }: { label: ReactNode; description: string; children: ReactNode }) {
+  return <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+    <div className="min-w-0 flex-1"><div className="text-sm font-medium">{label}</div><p className="mt-0.5 text-xs text-muted-foreground">{description}</p></div>
+    <div className="w-full shrink-0 sm:w-64">{children}</div>
+  </div>;
 }
-
-function Notice({ tone, children }: { tone: "ok" | "warn" | "error"; children: React.ReactNode }) {
-  const toneClass = tone === "ok" ? "text-foreground" : tone === "warn" ? "text-amber-600" : "text-destructive";
-  return (
-    <p role="status" className={`text-sm ${toneClass}`}>
-      {children}
-    </p>
-  );
-}
+function Notice({ children }: { children: ReactNode }) { return <p role="status" className="text-sm text-destructive">{children}</p>; }
