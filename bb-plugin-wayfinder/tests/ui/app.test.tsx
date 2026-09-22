@@ -275,6 +275,10 @@ describe("Computer panel", () => {
     Object.defineProperty(desktop, "naturalWidth", { value: 1280 });
     Object.defineProperty(desktop, "naturalHeight", { value: 720 });
     desktop.getBoundingClientRect = () => ({ x: 0, y: 0, left: 0, top: 0, right: 640, bottom: 360, width: 640, height: 360, toJSON: () => ({}) });
+    expect(fireEvent.keyDown(desktop, { key: "v", code: "KeyV", ctrlKey: true })).toBe(true);
+    expect(slot.inspection.rpcCalls.filter((call) => call.method === "computer.control.input")).toHaveLength(0);
+    fireEvent.paste(desktop, { clipboardData: { getData: () => "synthetic paste" } });
+    await waitFor(() => expect(slot.inspection.rpcCalls).toContainEqual({ method: "computer.control.input", input: { hostId: "host_thread", runId: null, clientId: expect.any(String), input: { kind: "text", text: "synthetic paste" } } }));
     fireEvent.click(desktop, { clientX: 320, clientY: 180 });
     await waitFor(() => expect(slot.inspection.rpcCalls).toContainEqual({ method: "computer.control.input", input: { hostId: "host_thread", runId: null, clientId: expect.any(String), input: { kind: "click", x: 640, y: 360, button: "left" } } }));
     fireEvent.contextMenu(desktop, { clientX: 160, clientY: 90 });

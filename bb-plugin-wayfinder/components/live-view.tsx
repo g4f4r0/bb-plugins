@@ -15,8 +15,13 @@ function inputPoint(image: HTMLImageElement, clientX: number, clientY: number) {
   };
 }
 
-function toKeyboardInput(event: KeyboardEvent<HTMLImageElement>): HumanInput {
+function toKeyboardInput(event: KeyboardEvent<HTMLImageElement>): HumanInput | null {
   const modifiers = (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0);
+  // The local paste event owns the clipboard. Canceling its keydown prevents
+  // Chromium from dispatching paste and sends a useless remote shortcut.
+  if (((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "v") ||
+      (event.shiftKey && event.key === "Insert")) return null;
+  if (["Control", "Meta", "Alt", "Shift"].includes(event.key)) return null;
   return event.key.length === 1 && (modifiers & 7) === 0 ? { kind: "text", text: event.key } : { kind: "key", key: event.key, code: event.code, modifiers };
 }
 
@@ -81,8 +86,8 @@ export function LiveView({
   };
   const keyboard = (event: KeyboardEvent<HTMLImageElement>) => {
     if (!interactive || !onInput) return;
-    onInput(toKeyboardInput(event));
-    event.preventDefault();
+    const input = toKeyboardInput(event);
+    if (input) { onInput(input); event.preventDefault(); }
   };
 
   return <div ref={root} className={fill ? "h-full min-h-0 w-full" : "space-y-2"}>
@@ -128,7 +133,7 @@ export function DesktopView({ imageUrl, interactive, onInput }: { imageUrl: stri
       onAuxClick={(event) => { if (!interactive || event.button !== 1) return; const at = point(event); if (at) { event.preventDefault(); onInput({ kind: "click", ...at, button: "middle" }); } }}
       onContextMenu={(event) => { if (!interactive) return; const at = point(event); event.preventDefault(); if (at) onInput({ kind: "click", ...at, button: "right" }); }}
       onWheel={(event) => { if (!interactive) return; const at = point(event); if (!at) return; event.preventDefault(); onInput({ kind: "wheel", ...at, deltaX: Math.max(-3_000, Math.min(3_000, event.deltaX)), deltaY: Math.max(-3_000, Math.min(3_000, event.deltaY)) }); }}
-      onKeyDown={(event) => { if (!interactive) return; onInput(toKeyboardInput(event)); event.preventDefault(); }}
+      onKeyDown={(event) => { if (!interactive) return; const input = toKeyboardInput(event); if (input) { onInput(input); event.preventDefault(); } }}
       onPaste={(event) => { if (!interactive) return; const text = event.clipboardData.getData("text/plain"); if (text) { event.preventDefault(); onInput({ kind: "text", text: text.slice(0, 10_000) }); } }}
     />
   </div>;
