@@ -301,8 +301,8 @@ function SidekickPage() {
       <div className="mx-auto box-border flex w-full max-w-3xl flex-col gap-6 px-5 pb-16 pt-6 md:px-8 md:pt-8">
         <header className="flex items-start justify-between gap-6">
           <div>
-            <h1 className="text-xl font-semibold">Agents</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Reusable agents for starting exactly one focused BB thread at a time.</p>
+            <h1 className="text-xl font-semibold">Profiles</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Reusable agent profiles for starting exactly one focused BB thread at a time.</p>
           </div>
           <Button variant="outline" size="sm" onClick={() => setEditing("new")}><Icon name="Plus" className="size-4" /> New agent</Button>
         </header>
@@ -357,7 +357,7 @@ function SidekickPage() {
 export default definePluginApp((app) => {
   app.slots.navPanel({
     id: "sidekick",
-    title: "Agents",
+    title: "Profiles",
     icon: "UserRound",
     path: PANEL_PATH,
     component: SidekickPage,

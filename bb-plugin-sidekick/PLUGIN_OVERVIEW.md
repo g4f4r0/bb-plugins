@@ -10,7 +10,7 @@ explicitly.
 
 ## Empty by default
 
-Sidekick does not seed examples. Create the first agent from **Agents** in the
+Sidekick does not seed examples. Create the first agent from **Profiles** in the
 sidebar or with `bb sidekick create`.
 
 ## Deliberately small

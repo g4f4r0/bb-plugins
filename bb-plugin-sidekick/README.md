@@ -43,7 +43,7 @@ bb plugin config sidekick set sharedInstructions "Your shared instructions"
 
 ## UI
 
-Open **Agents** in the app sidebar. The editor uses BB's live provider catalog
+Open **Profiles** in the app sidebar. The editor uses BB's live provider catalog
 for provider, model, reasoning, service tier, and permission controls. Its skill
 picker lists skills BB discovers on this installation and stores up to 12 names
 per agent.
