@@ -34,6 +34,8 @@ function frameUrl(base64: string, mimeType: string): string {
 
 export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
   const rpc = useRpc<UiRpcContract>();
+  const rpcRef = useRef(rpc);
+  rpcRef.current = rpc;
   const connection = useRealtimeConnectionState();
   const selectedRunId = selectedRunFromParams(params);
   const requestedHostId = selectedHostFromParams(params);
@@ -52,17 +54,16 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
   const [takingControl, setTakingControl] = useState(false);
   const panelRoot = useRef<HTMLDivElement>(null);
   const panelVisible = useRef(true);
-  const windowFocused = useRef(typeof document === "undefined" || navigator.userAgent.includes("jsdom") || document.hasFocus());
   const previewInflight = useRef(false);
   const snapshotInflight = useRef(false);
   const inputQueue = useRef(Promise.resolve<unknown>(undefined));
   const [visibilityRevision, setVisibilityRevision] = useState(0);
 
   const refreshMachines = useCallback(async () => {
-    const result = await rpc.call("computer.machines", { threadId });
+    const result = await rpcRef.current.call("computer.machines", { threadId });
     setMachines(result.machines);
     setThreadHostId(result.threadHostId);
-  }, [rpc, threadId]);
+  }, [threadId]);
   useEffect(() => { void refreshMachines().catch((cause) => setError(errorMessage(cause))); }, [refreshMachines]);
 
   const active = snapshot?.activeRun ?? null;
@@ -70,9 +71,9 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
   const disconnect = useCallback((targetHost = hostId) => {
     if (targetHost === null) return;
     setHuman(false);
-    void rpc.call("computer.control.release", { hostId: targetHost, runId: null, clientId: clientId.current }).catch(() => undefined);
-    void rpc.call("computer.disconnect", { hostId: targetHost, clientId: clientId.current }).catch(() => undefined);
-  }, [hostId, rpc]);
+    void rpcRef.current.call("computer.control.release", { hostId: targetHost, runId: null, clientId: clientId.current }).catch(() => undefined);
+    void rpcRef.current.call("computer.disconnect", { hostId: targetHost, clientId: clientId.current }).catch(() => undefined);
+  }, [hostId]);
 
   const selectMachine = useCallback((nextHostId: string | null) => {
     if (hostId !== null && hostId !== nextHostId) disconnect(hostId);
@@ -88,10 +89,10 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
   const refresh = useCallback(async () => {
     if (hostId === null || snapshotInflight.current) return;
     snapshotInflight.current = true;
-    try { setSnapshot(await rpc.call("computer.snapshot", { hostId, selectedRunId })); setError(null); }
+    try { setSnapshot(await rpcRef.current.call("computer.snapshot", { hostId, selectedRunId })); setError(null); }
     catch (cause) { setError(errorMessage(cause)); }
     finally { snapshotInflight.current = false; }
-  }, [rpc, hostId, selectedRunId]);
+  }, [hostId, selectedRunId]);
   useEffect(() => {
     if (hostId === null) return;
     void refresh();
@@ -105,9 +106,10 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
     if (!node || typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver((entries) => {
       const visible = entries.some((entry) => entry.isIntersecting);
-      if (panelVisible.current && !visible) disconnect();
+      const wasVisible = panelVisible.current;
+      if (wasVisible && !visible) disconnect();
       panelVisible.current = visible;
-      if (visible) setVisibilityRevision((value) => value + 1);
+      if (!wasVisible && visible) setVisibilityRevision((value) => value + 1);
     });
     observer.observe(node);
     return () => observer.disconnect();
@@ -117,23 +119,20 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
       if (document.visibilityState === "hidden") disconnect();
       else setVisibilityRevision((value) => value + 1);
     };
-    const blurred = () => { windowFocused.current = false; disconnect(); };
-    const focused = () => { windowFocused.current = true; setVisibilityRevision((value) => value + 1); };
     document.addEventListener("visibilitychange", changed);
-    window.addEventListener("blur", blurred);
-    window.addEventListener("focus", focused);
-    return () => { document.removeEventListener("visibilitychange", changed); window.removeEventListener("blur", blurred); window.removeEventListener("focus", focused); disconnect(); };
+    return () => { document.removeEventListener("visibilitychange", changed); disconnect(); };
   }, [disconnect]);
 
   useEffect(() => {
-    if (hostId === null || !panelVisible.current || !windowFocused.current || document.visibilityState === "hidden") return;
+    if (hostId === null || !panelVisible.current || document.visibilityState === "hidden") return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const poll = async () => {
-      if (stopped || previewInflight.current || !panelVisible.current || !windowFocused.current || document.visibilityState === "hidden") return;
+      if (stopped || !panelVisible.current || document.visibilityState === "hidden") return;
+      if (previewInflight.current) { timer = setTimeout(() => void poll(), 16); return; }
       previewInflight.current = true;
       try {
-        const result = await rpc.call("computer.preview", { hostId, threadId, clientId: clientId.current });
+        const result = await rpcRef.current.call("computer.preview", { hostId, threadId, clientId: clientId.current });
         if (!stopped) {
           setDesktopState(result.state);
           setDesktopMessage(result.message);
@@ -148,12 +147,12 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
         if (!stopped) { setDesktopState("unavailable"); setDesktopMessage(errorMessage(cause)); setLiveStatus("disconnected"); }
       } finally {
         previewInflight.current = false;
-        if (!stopped && panelVisible.current && windowFocused.current && !document.hidden) timer = setTimeout(() => void poll(), 16);
+        if (!stopped && panelVisible.current && !document.hidden) timer = setTimeout(() => void poll(), 16);
       }
     };
     void poll();
-    return () => { stopped = true; if (timer !== null) clearTimeout(timer); disconnect(hostId); };
-  }, [disconnect, hostId, rpc, threadId, visibilityRevision]);
+    return () => { stopped = true; if (timer !== null) clearTimeout(timer); };
+  }, [hostId, threadId, visibilityRevision]);
 
   const takeControl = async () => {
     if (hostId === null || desktopFrame === null || takingControl) return;

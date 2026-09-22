@@ -258,7 +258,7 @@ describe("Computer panel", () => {
     slot.lifecycle.unmount();
   });
 
-  it("allows control without an active run and disconnects immediately on blur", async () => {
+  it("allows control without an active run and disconnects immediately when hidden", async () => {
     const slot = renderSlot<PluginThreadPanelProps, UiRpcContract>(panel, { threadId: "thr_a", params: { hostId: "host_thread" } }, { rpc: {
       "computer.machines": () => machines,
       "computer.snapshot": () => snapshot,
@@ -276,8 +276,10 @@ describe("Computer panel", () => {
     desktop.getBoundingClientRect = () => ({ x: 0, y: 0, left: 0, top: 0, right: 640, bottom: 360, width: 640, height: 360, toJSON: () => ({}) });
     fireEvent.click(desktop, { clientX: 320, clientY: 180 });
     await waitFor(() => expect(slot.inspection.rpcCalls).toContainEqual({ method: "computer.control.input", input: { hostId: "host_thread", runId: null, clientId: expect.any(String), input: { kind: "click", x: 640, y: 360, button: "left" } } }));
-    window.dispatchEvent(new Event("blur"));
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
     await waitFor(() => expect(slot.inspection.rpcCalls.some((call) => call.method === "computer.disconnect")).toBe(true));
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
     expect(slot.queryByText("You’re controlling")).toBeNull();
     slot.lifecycle.unmount();
   });
