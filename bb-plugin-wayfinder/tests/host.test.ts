@@ -41,8 +41,8 @@ describe("Wayfinder host integration", () => {
     const runId = "run_unverified_provider";
     await harness.experimental_call("runs.start", { expectedHostId: route.identity.hostId, runId, routeHash: sha256(route), route });
     let status = await harness.experimental_call("runs.status", { expectedHostId: route.identity.hostId, runId });
-    for (let attempt = 0; attempt < 20 && status.state === "queued"; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 25));
+    for (let attempt = 0; attempt < 400 && status.state === "queued"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
       status = await harness.experimental_call("runs.status", { expectedHostId: route.identity.hostId, runId });
     }
     expect(status.state).toBe("blocked");

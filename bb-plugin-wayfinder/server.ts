@@ -7,10 +7,18 @@ import { artifactHttpRoutes } from "./src/contracts/artifact.js";
 import { routeSchema, type WayfinderRoute } from "./src/contracts/route.js";
 import type { RunRecord } from "./src/contracts/run.js";
 import { sha256 } from "./src/core/hash.js";
+import { createInfisicalClient, type InfisicalScope } from "./src/core/infisical.js";
 import { artifactErrorResponse, createInternalArtifactHandlers, type ArtifactChunkReader } from "./src/artifacts/http.js";
 import { ArtifactError } from "./src/artifacts/errors.js";
 import { artifactRpcExtensions } from "./src/artifacts/rpc-extensions.js";
 import { LiveFrameRelay, createLiveFrameHandler, liveHttpRoutes } from "./src/media/live.js";
+import {
+  providerIdSchema,
+  wayfinderSettingsRpcContract,
+  type HostSummary,
+  type ProviderId,
+  type WayfinderSettingsState,
+} from "./src/contracts/settings.js";
 
 const COMPUTER_REALTIME_CHANNEL = "computer";
 const RECENT_RUNS = 20;
@@ -18,9 +26,45 @@ export { wayfinderRpcContract as rpcContract };
 export const FOUNDATION_ONLY_MESSAGE = "Wayfinder is configured for bounded execution; live Jev runs remain setup-required until Infisical scope is verified.";
 const SHARE_DISABLED = "External sharing is disabled until a verified HTTPS export origin is configured";
 
+const INFISICAL_SCOPE: InfisicalScope = {
+  projectId: process.env.WAYFINDER_INFISICAL_PROJECT_ID ?? "bd53277c-43aa-4093-8aea-1e4040fc1962",
+  env: process.env.WAYFINDER_INFISICAL_ENV ?? "prod",
+  path: process.env.WAYFINDER_INFISICAL_PATH ?? "/",
+};
+const PROVIDER_KEY_NAME: Record<ProviderId, string> = { jev: "TYPESAFE_API_KEY", openrouter: "OPENROUTER_API_KEY" };
+const PROVIDER_PROBE: Record<ProviderId, { url: string; header: string }> = {
+  jev: { url: process.env.WAYFINDER_TYPESAFE_ENDPOINT ?? "https://api.typesafe.ai/v1/systemone", header: "authorization" },
+  openrouter: { url: "https://openrouter.ai/api/v1/auth/key", header: "authorization" },
+};
+const MAX_KEY_BODY_BYTES = 8 * 1024;
+const saveKeyBodySchema = z.object({ provider: providerIdSchema, key: z.string().min(1).max(4_096) }).strict();
+const testKeyBodySchema = z.object({ provider: providerIdSchema }).strict();
+
 const toolInput = z.object({ idempotencyKey: z.string().min(1).max(128), route: routeSchema }).strict();
 type RunIndex = { hostId: string; threadId: string; routeHash: string };
 type IdempotencyEntry = { runId: string; routeHash: string };
+
+/** Reads a request body with a hard byte cap, never buffering past it. */
+async function readBoundedJson(request: Request, maxBytes: number): Promise<unknown> {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength !== null && Number(contentLength) > maxBytes) throw new Error("Request body too large");
+  const reader = request.body?.getReader();
+  if (!reader) return {};
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) { await reader.cancel(); throw new Error("Request body too large"); }
+    chunks.push(value);
+  }
+  return JSON.parse(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8"));
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "private, no-store" } });
+}
 
 /**
  * Trust boundary: the BB plugin SDK gives rpc and `auth: "local"` http handlers
@@ -31,18 +75,49 @@ type IdempotencyEntry = { runId: string; routeHash: string };
  * the trusted tool context, and every run's host/environment identity comes
  * from BB's own thread -> environment records, never from route input.
  */
-export default function plugin(bb: BbPluginApi): void {
-  bb.settings.define({
-    hostId: { type: "string", label: "Computer host ID", description: "BB host ID of the shared computer that runs Wayfinder (see `bb host list`)." },
-  });
+/** `infisicalClient` is overridable only for tests; production always uses the real CLI-backed client. */
+export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: ReturnType<typeof createInfisicalClient> }): void {
   const host = bb.hosts.experimental_client({ contract: hostContract, experimental_signals: hostSignals });
   const kv = bb.storage.kv;
+  const infisical = deps?.infisicalClient ?? createInfisicalClient();
   const publish = () => bb.realtime.publish(COMPUTER_REALTIME_CHANNEL, {});
   const hostOptions = (hostId: string, signal?: AbortSignal) => ({ hostId, timeoutMs: 30_000, ...(signal === undefined ? {} : { signal }) });
   for (const signal of ["runChanged", "frameAvailable", "artifactChanged"] as const) host.experimental_onSignal(signal, publish);
 
   const runIndex = (runId: string) => kv.get<RunIndex>(`run:${runId}`);
   const knownHosts = async () => (await kv.get<string[]>("hosts")) ?? [];
+
+  /**
+   * Wayfinder's own host/provider/model selection, distinct from `knownHosts`
+   * (hosts that have actually run something). Only non-secret values ever
+   * live here or in `bb.storage.kv`; the provider key itself is never
+   * persisted anywhere BB controls — see the /settings/key http route.
+   */
+  type StoredSettings = { hostId: string | null; provider: ProviderId; model: string; lastTest: { ok: boolean; message: string; testedAt: number } | null };
+  const DEFAULT_SETTINGS: StoredSettings = { hostId: null, provider: "openrouter", model: "", lastTest: null };
+  const readStoredSettings = async (): Promise<StoredSettings> => (await kv.get<StoredSettings>("settings")) ?? DEFAULT_SETTINGS;
+  const writeStoredSettings = (next: StoredSettings) => kv.set("settings", next);
+
+  async function enrolledHosts(): Promise<HostSummary[]> {
+    const hosts = await bb.sdk.hosts.list();
+    return hosts.map((entry) => ({ hostId: entry.id, name: entry.name, status: entry.status, phase: entry.lifecycle.phase }));
+  }
+
+  /** Real check against the verified Infisical scope; never a cached/assumed boolean. */
+  async function settingsState(): Promise<WayfinderSettingsState> {
+    const stored = await readStoredSettings();
+    const hosts = await enrolledHosts();
+    const stillEnrolled = stored.hostId !== null && hosts.some((entry) => entry.hostId === stored.hostId);
+    const keyName = PROVIDER_KEY_NAME[stored.provider];
+    const configured = await infisical.secretConfigured(INFISICAL_SCOPE, keyName).catch(() => null);
+    return {
+      selectedHostId: stillEnrolled ? stored.hostId : null,
+      provider: stored.provider,
+      model: stored.model,
+      keyStatus: configured === null ? "unknown" : configured ? "configured" : "missing",
+      lastTest: stored.lastTest,
+    };
+  }
   const requireRun = async (runId: string): Promise<RunIndex> => {
     const entry = await runIndex(runId);
     if (entry === undefined) throw new Error("Run not found");
@@ -145,6 +220,65 @@ export default function plugin(bb: BbPluginApi): void {
     "artifacts.shareStatus": () => ({ external: { state: "disabled" as const, reason: SHARE_DISABLED }, shares: [] }),
     async "artifacts.createShareScoped"() { throw new Error(SHARE_DISABLED); },
     async "artifacts.revokeShareScoped"() { throw new Error("Share not found"); },
+  });
+
+  bb.rpc.register(wayfinderSettingsRpcContract, {
+    "settings.hosts": () => enrolledHosts(),
+    "settings.get": () => settingsState(),
+    async "settings.selectHost"(input) {
+      const stored = await readStoredSettings();
+      if (input.hostId !== null) {
+        const hosts = await enrolledHosts();
+        if (!hosts.some((entry) => entry.hostId === input.hostId)) throw new Error("That host is not enrolled");
+      }
+      await writeStoredSettings({ ...stored, hostId: input.hostId });
+      return settingsState();
+    },
+    async "settings.saveProvider"(input) {
+      const stored = await readStoredSettings();
+      await writeStoredSettings({ ...stored, provider: input.provider, model: input.model });
+      return settingsState();
+    },
+  });
+
+  /**
+   * A provider key never rides `bb.rpc` (no durable call-history surface for
+   * a secret) or an agent tool. This is a narrowly scoped authenticated POST:
+   * "local" auth checks Origin/Host and forces a JSON content-type
+   * preflight; the body is read with an explicit byte cap and never logged.
+   */
+  bb.http.route("POST", "/settings/key", async (c) => {
+    let parsed: z.infer<typeof saveKeyBodySchema>;
+    try {
+      parsed = saveKeyBodySchema.parse(await readBoundedJson(c.req.raw, MAX_KEY_BODY_BYTES));
+    } catch {
+      return jsonResponse({ ok: false, keyStatus: "unknown", message: "Invalid request" }, 400);
+    }
+    const keyName = PROVIDER_KEY_NAME[parsed.provider];
+    const saved = await infisical.setSecret(INFISICAL_SCOPE, keyName, parsed.key).catch(() => false);
+    const configured = saved ? await infisical.secretConfigured(INFISICAL_SCOPE, keyName).catch(() => false) : false;
+    return jsonResponse({
+      ok: saved && configured,
+      keyStatus: saved && configured ? "configured" : "missing",
+      message: saved && configured
+        ? "Saved to the verified Infisical scope."
+        : "Infisical did not accept the write; verify project membership and CLI authentication.",
+    });
+  });
+
+  bb.http.route("POST", "/settings/key/test", async (c) => {
+    let parsed: z.infer<typeof testKeyBodySchema>;
+    try {
+      parsed = testKeyBodySchema.parse(await readBoundedJson(c.req.raw, MAX_KEY_BODY_BYTES));
+    } catch {
+      return jsonResponse({ ok: false, status: 0, message: "Invalid request" }, 400);
+    }
+    const keyName = PROVIDER_KEY_NAME[parsed.provider];
+    const probe = PROVIDER_PROBE[parsed.provider];
+    const result = await infisical.testProviderKey(INFISICAL_SCOPE, keyName, probe.url, probe.header);
+    const stored = await readStoredSettings();
+    await writeStoredSettings({ ...stored, lastTest: { ok: result.ok, message: result.message, testedAt: Date.now() } });
+    return jsonResponse(result);
   });
 
   const readChunk: ArtifactChunkReader = async (artifactId, start, endInclusive, signal) => {

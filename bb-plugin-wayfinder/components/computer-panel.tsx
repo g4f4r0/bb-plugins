@@ -2,7 +2,6 @@ import {
   useRealtime,
   useRealtimeConnectionState,
   useRpc,
-  useSettings,
   type PluginThreadPanelProps,
 } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -10,10 +9,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ArtifactRecord } from "../src/contracts/artifact.js";
 import { entityIdSchema } from "../src/contracts/primitives.js";
 import type { ComputerSnapshot, RunRecord } from "../src/contracts/run.js";
+import type { wayfinderSettingsRpcContract } from "../src/contracts/settings.js";
 import { ArtifactCard } from "./artifact-card.js";
 import { errorMessage, formatDuration, RUN_STATE_LABEL, TERMINAL_RUN_STATES } from "./format.js";
 import { LiveView } from "./live-view.js";
 import { COMPUTER_REALTIME_CHANNEL, type UiRpcContract } from "./rpc.js";
+
+type SettingsRpcContract = typeof wayfinderSettingsRpcContract;
 
 const SNAPSHOT_INTERVAL_MS = 2_000;
 
@@ -26,10 +28,18 @@ export function selectedRunFromParams(params: unknown): string | null {
 
 export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
   const rpc = useRpc<UiRpcContract>();
+  const settingsRpc = useRpc<SettingsRpcContract>();
   const connection = useRealtimeConnectionState();
-  const settings = useSettings();
-  const hostSetting = settings.values?.hostId;
-  const hostId = typeof hostSetting === "string" && entityIdSchema.safeParse(hostSetting).success ? hostSetting : null;
+  const [hostId, setHostId] = useState<string | null>(null);
+  const [settingsLoading, setSettingsLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    settingsRpc
+      .call("settings.get", {})
+      .then((state) => { if (!cancelled) { setHostId(state.selectedHostId); setSettingsLoading(false); } })
+      .catch(() => { if (!cancelled) setSettingsLoading(false); });
+    return () => { cancelled = true; };
+  }, [settingsRpc]);
   const [selectedRunId, selectRun] = useState(() => selectedRunFromParams(params));
   useEffect(() => { selectRun(selectedRunFromParams(params)); }, [threadId, params]);
   const [snapshot, setSnapshot] = useState<ComputerSnapshot | null>(null);
@@ -65,13 +75,12 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
     previousConnection.current = connection;
   }, [connection, refresh]);
 
-  if (settings.isLoading) return <Page>Loading…</Page>;
+  if (settingsLoading) return <Page>Loading…</Page>;
   if (hostId === null) {
     return (
       <Page>
         <Notice title="Setup required">
-          Wayfinder has no verified host for this computer yet. The Computer view becomes available after the plugin is configured
-          with its host.
+          No computer is selected yet. Choose an enrolled host in Settings → Wayfinder to open the Computer view.
         </Notice>
       </Page>
     );

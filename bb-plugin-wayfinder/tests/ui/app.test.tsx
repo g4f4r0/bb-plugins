@@ -12,6 +12,7 @@ const app = await loadPluginApp(() => import("../../app.js"));
 const { selectedRunFromParams } = await import("../../components/computer-panel.js");
 const directive = app.messageDirectives.find((registration) => registration.id === "wayfinder-artifact")!;
 const panel = app.threadPanelActions.find((registration) => registration.id === "computer")!;
+const settingsSection = app.settingsSections.find((registration) => registration.id === "wayfinder-settings")!;
 
 afterEach(cleanup);
 
@@ -211,10 +212,10 @@ describe("inline artifact card", () => {
 });
 
 describe("Computer panel", () => {
-  it("shows setup required instead of a fake view when no host is configured", async () => {
+  it("shows setup required instead of a fake view when no host is selected", async () => {
     const slot = renderSlot(panel, { threadId: "thr_a", params: null }, { rpc: {} });
     await slot.findByText("Setup required");
-    expect(slot.inspection.rpcCalls).toEqual([]);
+    expect(slot.inspection.rpcCalls).toEqual([{ method: "settings.get", input: {} }]);
   });
 
   it("shows readiness, queue, and owner, and separates a selected historical run from the controller", async () => {
@@ -227,8 +228,15 @@ describe("Computer panel", () => {
       panel,
       { threadId: "thr_a", params: { runId: "run_old" } },
       {
-        settings: { hostId: "host_1" },
         rpc: {
+          "settings.get": () =>
+            ({
+              selectedHostId: "host_1",
+              provider: "openrouter",
+              model: "openai/test",
+              keyStatus: "unknown",
+              lastTest: null,
+            }) as never,
           "computer.snapshot": () =>
             ({
               hostId: "host_1",
@@ -250,10 +258,106 @@ describe("Computer panel", () => {
     expect(slot.getByText("run_q")).toBeDefined();
     expect(slot.getByText("Selected run (not controlling)")).toBeDefined();
     expect(slot.getByText(`Run ${run.runId} was not found.`)).toBeDefined();
-    expect(slot.inspection.rpcCalls[0]).toEqual({ method: "computer.snapshot", input: { hostId: "host_1", selectedRunId: "run_old" } });
+    expect(slot.inspection.rpcCalls).toContainEqual({ method: "computer.snapshot", input: { hostId: "host_1", selectedRunId: "run_old" } });
     fireEvent.click(slot.getByText("run_q"));
     await waitFor(() => expect(slot.inspection.rpcCalls.at(-1)).toEqual({ method: "computer.snapshot", input: { hostId: "host_1", selectedRunId: "run_q" } }));
     expect(slot.inspection.navigateCalls).toEqual([]);
+    slot.lifecycle.unmount();
+  });
+});
+
+describe("Settings section", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("renders a host dropdown from real enrolled hosts, disables disconnected entries, and never shows a raw hostId text field", async () => {
+    const slot = renderSlot(
+      settingsSection,
+      {},
+      {
+        rpc: {
+          "settings.hosts": () =>
+            [
+              { hostId: "host_a", name: "Shared computer", status: "connected", phase: "active" },
+              { hostId: "host_b", name: "Old laptop", status: "disconnected", phase: "suspended" },
+            ] as never,
+          "settings.get": () =>
+            ({ selectedHostId: "host_a", provider: "openrouter", model: "openai/test", keyStatus: "missing", lastTest: null }) as never,
+        } as never,
+      },
+    );
+    const select = (await slot.findByLabelText("Computer host")) as HTMLSelectElement;
+    expect(select.value).toBe("host_a");
+    const options = Array.from(select.options).map((option) => ({ value: option.value, disabled: option.disabled }));
+    expect(options).toContainEqual({ value: "host_b", disabled: true });
+    expect(slot.queryByLabelText(/host id/iu)).toBeNull();
+    expect(slot.getByText("Missing")).toBeDefined();
+    slot.lifecycle.unmount();
+  });
+
+  it("the API key field is a masked password input that never comes prefilled with a value", async () => {
+    const slot = renderSlot(
+      settingsSection,
+      {},
+      {
+        rpc: {
+          "settings.hosts": () => [] as never,
+          "settings.get": () =>
+            ({ selectedHostId: null, provider: "openrouter", model: "openai/test", keyStatus: "configured", lastTest: null }) as never,
+        } as never,
+      },
+    );
+    const input = (await slot.findByLabelText(/API key/iu)) as HTMLInputElement;
+    expect(input.type).toBe("password");
+    expect(input.value).toBe("");
+    expect(slot.getByText("Configured")).toBeDefined();
+    slot.lifecycle.unmount();
+  });
+
+  it("saving a key posts to the narrowly scoped /settings/key route, clears the field, and never rpc-calls with the key", async () => {
+    const fetchCalls: { url: string; body: unknown }[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      fetchCalls.push({ url, body: JSON.parse(String(init.body)) });
+      return new Response(JSON.stringify({ ok: true, keyStatus: "configured", message: "Saved to the verified Infisical scope." }), { status: 200 });
+    });
+    const slot = renderSlot(
+      settingsSection,
+      {},
+      {
+        rpc: {
+          "settings.hosts": () => [] as never,
+          "settings.get": () =>
+            ({ selectedHostId: null, provider: "openrouter", model: "openai/test", keyStatus: "missing", lastTest: null }) as never,
+        } as never,
+      },
+    );
+    const input = (await slot.findByLabelText(/API key/iu)) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "sk-typed-by-user" } });
+    fireEvent.click(slot.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(fetchCalls.length).toBe(1));
+    expect(fetchCalls[0]?.url).toBe("/api/v1/plugins/wayfinder/http/settings/key");
+    expect(fetchCalls[0]?.body).toEqual({ provider: "openrouter", key: "sk-typed-by-user" });
+    await waitFor(() => expect((slot.getByLabelText(/API key/iu) as HTMLInputElement).value).toBe(""));
+    expect(slot.inspection.rpcCalls.some((call) => JSON.stringify(call).includes("sk-typed-by-user"))).toBe(false);
+    slot.lifecycle.unmount();
+  });
+
+  it("testing a key posts to /settings/key/test and surfaces the readiness message without the key", async () => {
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ ok: false, status: 401, message: "rejected" }), { status: 200 }));
+    const slot = renderSlot(
+      settingsSection,
+      {},
+      {
+        rpc: {
+          "settings.hosts": () => [] as never,
+          "settings.get": () =>
+            ({ selectedHostId: null, provider: "openrouter", model: "openai/test", keyStatus: "configured", lastTest: null }) as never,
+        } as never,
+      },
+    );
+    fireEvent.click(await slot.findByRole("button", { name: "Test connection" }));
+    await slot.findByText("rejected");
     slot.lifecycle.unmount();
   });
 });

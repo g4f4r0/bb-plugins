@@ -29,7 +29,8 @@ describe("Wayfinder browser -> Computer -> inline screenshot (server <-> host co
   it("binds identity to the thread, dedupes, serves frames and private artifacts", async () => {
     const { hostHarness, harness } = setup();
     cleanup = async () => { await harness.lifecycle.dispose(); await hostHarness.experimental_dispose(); };
-    expect(harness.inspection.registrations.settingsDescriptors).toHaveProperty("hostId");
+    expect(harness.inspection.registrations.settingsDescriptors).toEqual({});
+    expect(harness.inspection.registrations.rpcMethods).toContain("settings.selectHost");
 
     // Route input lies about host/thread/environment; the thread's real environment wins.
     const route = makeRoute();

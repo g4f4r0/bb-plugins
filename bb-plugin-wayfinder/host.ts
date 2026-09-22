@@ -24,8 +24,16 @@ import { ArtifactStore, type PutArtifactInput } from "./src/artifacts/store.js";
 import type { ArtifactRecord } from "./src/contracts/artifact.js";
 import { JevDecisionProvider } from "./src/adapters/jev.js";
 import { OpenRouterDecisionProvider } from "./src/adapters/openrouter.js";
+import { createInfisicalClient, type InfisicalScope } from "./src/core/infisical.js";
 
 const FORTRESS = process.env.WAYFINDER_FORTRESS_PATH ?? "/home/g4f4r0/.bb/plugins/browse/host-data/browsers/fortress/v151.0.7908.0/linux-x64/tilion-fortress/tilion";
+const INFISICAL_SCOPE: InfisicalScope = {
+  projectId: process.env.WAYFINDER_INFISICAL_PROJECT_ID ?? "bd53277c-43aa-4093-8aea-1e4040fc1962",
+  env: process.env.WAYFINDER_INFISICAL_ENV ?? "prod",
+  path: process.env.WAYFINDER_INFISICAL_PATH ?? "/",
+};
+const PROVIDER_KEY_NAME = { jev: "TYPESAFE_API_KEY", openrouter: "OPENROUTER_API_KEY" } as const;
+const infisical = createInfisicalClient();
 const ARTIFACT_ROOT = process.env.WAYFINDER_DATA_DIR ?? join(dirname(fileURLToPath(import.meta.url)), "host-data", "artifacts");
 const RUN_ROOT = join(ARTIFACT_ROOT, "runs");
 const runs = new Map<string, RunRecord>();
@@ -104,14 +112,17 @@ async function launch(route: WayfinderRoute, signal: AbortSignal) {
   } catch (error) { child.kill("SIGTERM"); server.close(); await rm(profile, { recursive: true, force: true }).catch(() => undefined); throw error; }
 }
 
-function providerFor(route: WayfinderRoute): DecisionProvider {
+/** Resolves the decision provider's credential from the verified Infisical scope for this one call; never a static env var. */
+async function providerFor(route: WayfinderRoute): Promise<DecisionProvider> {
   const selected = route.decisionProvider?.provider;
   if (!selected) throw wayfinderError("setup-required", "queue", "A decisionProvider must be explicitly selected; fixture mode is opt-in");
   if (selected === "fixture") return new FixtureProvider();
-  if (process.env.WAYFINDER_INFISICAL_SCOPE_VERIFIED !== "true") throw wayfinderError("setup-required", "queue", "Verified Infisical project, environment, and narrow provider path are required before a real provider run");
   const config = route.decisionProvider;
-  if (selected === "jev") return new JevDecisionProvider({ endpoint: config?.endpoint ?? process.env.WAYFINDER_TYPESAFE_ENDPOINT ?? "https://api.typesafe.ai/v1/systemone", model: config?.model ?? process.env.WAYFINDER_TYPESAFE_MODEL ?? "", apiKey: process.env.WAYFINDER_TYPESAFE_API_KEY ?? "", maxCalls: route.limits.maxProviderCalls, maxApproxTokens: route.limits.maxProviderTokens, maxRetries: route.limits.maxRequestRetries });
-  return new OpenRouterDecisionProvider({ endpoint: config?.endpoint ?? process.env.WAYFINDER_OPENROUTER_ENDPOINT, model: config?.model ?? process.env.WAYFINDER_OPENROUTER_MODEL ?? "", apiKey: process.env.WAYFINDER_OPENROUTER_API_KEY ?? "" });
+  const keyName = PROVIDER_KEY_NAME[selected];
+  const apiKey = await infisical.resolveSecret(INFISICAL_SCOPE, keyName);
+  if (apiKey === null) throw wayfinderError("setup-required", "queue", `Infisical secret ${keyName} did not resolve at the verified project/environment/path; confirm project membership and CLI authentication before a real provider run`);
+  if (selected === "jev") return new JevDecisionProvider({ endpoint: config?.endpoint ?? process.env.WAYFINDER_TYPESAFE_ENDPOINT ?? "https://api.typesafe.ai/v1/systemone", model: config?.model ?? process.env.WAYFINDER_TYPESAFE_MODEL ?? "", apiKey, maxCalls: route.limits.maxProviderCalls, maxApproxTokens: route.limits.maxProviderTokens, maxRetries: route.limits.maxRequestRetries });
+  return new OpenRouterDecisionProvider({ endpoint: config?.endpoint ?? process.env.WAYFINDER_OPENROUTER_ENDPOINT, model: config?.model ?? process.env.WAYFINDER_OPENROUTER_MODEL ?? "", apiKey });
 }
 
 /** One screenshot in flight per run; the engine's final capture and viewers share it. */
@@ -127,7 +138,7 @@ async function execute(run: RunRecord): Promise<void> {
   try {
     lease = await queue.acquire(run.runId, run.route.identity.threadId, signal);
     update(runs.get(run.runId)!, { queuePosition: null, activeController: true });
-    const provider = providerFor(run.route);
+    const provider = await providerFor(run.route);
     const launched = await launch(run.route, signal); job.server = launched.server; job.profile = launched.profile; job.process = launched.child; job.adapter = launched.adapter;
     runs.set(run.runId, update(runs.get(run.runId)!, { state: "running", activeController: true, startedAt: Date.now() }));
     const journal = new ActionJournal(join(ARTIFACT_ROOT, "journals", `${run.runId}.ndjson`)); await journal.initialize();
