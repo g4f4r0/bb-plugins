@@ -26,6 +26,12 @@ describe("Sidekick backend", () => {
     await plugin(bb);
     expect(await harness.behavior.callRpc("profiles.list", null)).toEqual({ profiles: [] });
     expect(harness.inspection.registrations.cli).toMatchObject({ name: "sidekick" });
+    expect(harness.inspection.registrations.settingsDescriptors.sharedInstructions).toMatchObject({
+      type: "string",
+      label: "Instructions for all profiles",
+      default: "",
+      experimental_multiline: true,
+    });
     expect(harness.inspection.registrations.rpcMethods).toEqual([
       "profiles.list",
       "profiles.create",
@@ -118,23 +124,40 @@ describe("Sidekick backend", () => {
     await harness.lifecycle.dispose();
   });
 
-  it("selects hidden instructions only for valid profile metadata", async () => {
-    const { bb, harness } = createFakePluginHost({ pluginId: "sidekick", agentSkillIds: ["sidekick"] });
+  it("layers shared settings before profile instructions and tracks settings changes", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "sidekick",
+      agentSkillIds: ["sidekick"],
+      settings: { sharedInstructions: "Follow the shared release policy." },
+    });
     await plugin(bb);
     const profile = await harness.behavior.callRpc("profiles.create", profileInput) as Profile;
-    const selected = await harness.behavior.resolveAgentConfiguration(makePluginAgentConfigurationContext({
+    const context = makePluginAgentConfigurationContext({
       pluginMetadata: {
         schemaVersion: 1,
         source: "sidekick",
         profileId: profile.id,
         profileSlug: profile.slug,
       },
-    }));
+    });
+    const selected = await harness.behavior.resolveAgentConfiguration(context);
     expect(selected.tools).toEqual([]);
     expect(selected.skills).toEqual([]);
+    expect(selected.instructions).toContain("# Instructions for all Sidekick profiles\nFollow the shared release policy.");
     expect(selected.instructions).toContain("Inspect the release and report concrete blockers.");
     expect(selected.instructions).toContain("Behavior defaults");
     expect(selected.instructions).toContain('["research","reporting"]');
+    expect(selected.instructions!.indexOf("Follow the shared release policy.")).toBeLessThan(
+      selected.instructions!.indexOf("## Profile instructions"),
+    );
+
+    await harness.behavior.setSettings({ sharedInstructions: "Use the updated shared policy." });
+    const updated = await harness.behavior.resolveAgentConfiguration(context);
+    expect(updated.instructions).toContain("Use the updated shared policy.");
+    expect(updated.instructions).not.toContain("Follow the shared release policy.");
+    await expect(harness.behavior.setSettings({ sharedInstructions: "x".repeat(1_201) })).rejects.toThrow(
+      "at most 1200 characters",
+    );
 
     const unrelated = await harness.behavior.resolveAgentConfiguration(makePluginAgentConfigurationContext({
       pluginMetadata: { profileId: profile.id, profileSlug: profile.slug },
