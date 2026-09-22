@@ -90,6 +90,20 @@ describe("Infisical client (against a fake CLI, never the real project)", () => 
     }
   });
 
+  it("uses POST for a Jev functional probe and preserves GET for key metadata endpoints", async () => {
+    process.env.FAKE_INFISICAL_SECRETS = JSON.stringify({ TYPESAFE_API_KEY: "synthetic-test-key" });
+    const client = createInfisicalClient(FAKE_BIN, 5_000);
+    const server = await startProbeServer((request) => {
+      expect(request.method).toBe("POST");
+      expect(request.headers.get("authorization")).toBe("Bearer synthetic-test-key");
+      return new Response(null, { status: 200 });
+    });
+    try {
+      const result = await client.testProviderKey(SCOPE, "TYPESAFE_API_KEY", server.url, "authorization", { model: "jev-latest", state: {}, questions: {} });
+      expect(result.ok).toBe(true);
+    } finally { server.close(); }
+  });
+
   it("testProviderKey reports missing without calling out when the secret is unset", async () => {
     process.env.FAKE_INFISICAL_SECRETS = JSON.stringify({});
     const client = createInfisicalClient(FAKE_BIN, 5_000);
@@ -102,7 +116,7 @@ describe("Infisical client (against a fake CLI, never the real project)", () => 
 async function startProbeServer(handle: (request: Request) => Response): Promise<{ url: string; close: () => void }> {
   const { createServer } = await import("node:http");
   const server = createServer((request, response) => {
-    const result = handle(new Request(`http://127.0.0.1${request.url}`, { headers: request.headers as never }));
+    const result = handle(new Request(`http://127.0.0.1${request.url}`, { method: request.method, headers: request.headers as never }));
     response.writeHead(result.status);
     response.end();
   });

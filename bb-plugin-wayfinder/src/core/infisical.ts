@@ -57,12 +57,12 @@ export interface InfisicalClient {
   /** Writes one named secret via a private 0600 temp file, deleted immediately after. Never logs the value. */
   setSecret(scope: InfisicalScope, name: string, value: string): Promise<boolean>;
   /** Injects the named secret into a bounded child that performs one readiness probe and reports only a status object. */
-  testProviderKey(scope: InfisicalScope, name: string, probeUrl: string, authHeader: string): Promise<ProviderTestResult>;
+  testProviderKey(scope: InfisicalScope, name: string, probeUrl: string, authHeader: string, body?: Record<string, unknown>): Promise<ProviderTestResult>;
 }
 
 /** Real Infisical CLI-backed client. `bin` is overridable for tests only. */
 export function createInfisicalClient(bin = "infisical", timeoutMs = DEFAULT_TIMEOUT_MS): InfisicalClient {
-  const scopeArgs = (scope: InfisicalScope) => ["--env", scope.env, "--projectId", scope.projectId, "--path", scope.path];
+  const scopeArgs = (scope: InfisicalScope) => ["--env", scope.env, "--projectId", scope.projectId, "--path", scope.path, "--silent", "--log-level", "error"];
 
   async function resolveSecret(scope: InfisicalScope, name: string): Promise<string | null> {
     const script = `process.stdout.write(process.env[${JSON.stringify(name)}] ?? "")`;
@@ -92,11 +92,11 @@ export function createInfisicalClient(bin = "infisical", timeoutMs = DEFAULT_TIM
         await rm(dir, { recursive: true, force: true }).catch(() => undefined);
       }
     },
-    async testProviderKey(scope, name, probeUrl, authHeader) {
+    async testProviderKey(scope, name, probeUrl, authHeader, body) {
       const script = [
         `const key = process.env[${JSON.stringify(name)}];`,
         `if (!key) { process.stdout.write(JSON.stringify({ok:false,status:0,message:"missing"})); process.exit(1); }`,
-        `fetch(${JSON.stringify(probeUrl)}, { headers: { ${JSON.stringify(authHeader)}: "Bearer " + key } })`,
+        `fetch(${JSON.stringify(probeUrl)}, { method: ${JSON.stringify(body === undefined ? "GET" : "POST")}, headers: { ${JSON.stringify(authHeader)}: "Bearer " + key, "content-type": "application/json" }, body: ${body === undefined ? "undefined" : JSON.stringify(JSON.stringify(body))}, signal: AbortSignal.timeout(8000) })`,
         `  .then((r) => { process.stdout.write(JSON.stringify({ok:r.ok,status:r.status,message:r.ok?"ready":"rejected"})); process.exit(r.ok?0:1); })`,
         `  .catch(() => { process.stdout.write(JSON.stringify({ok:false,status:0,message:"network-error"})); process.exit(1); });`,
       ].join("\n");

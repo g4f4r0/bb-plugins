@@ -275,8 +275,19 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     }
     const keyName = PROVIDER_KEY_NAME[parsed.provider];
     const probe = PROVIDER_PROBE[parsed.provider];
-    const result = await infisical.testProviderKey(INFISICAL_SCOPE, keyName, probe.url, probe.header);
     const stored = await readStoredSettings();
+    const body = parsed.provider === "jev" ? {
+      model: stored.provider === "jev" && stored.model ? stored.model : "jev-latest",
+      state: { wayfinder_probe: true },
+      questions: { ready: { type: "choice", instructions: "Select the only readiness option.", criteria: { ready: "ready" } } },
+    } : undefined;
+    const tested = await infisical.testProviderKey(INFISICAL_SCOPE, keyName, probe.url, probe.header, body);
+    const result = tested.status === 401 || tested.status === 403 ? {
+      ...tested,
+      message: parsed.provider === "jev"
+        ? "TypeSafe rejected this key. Use a TypeSafe API key for Jev, not an OpenRouter key."
+        : "OpenRouter rejected this key. Check the key and its permissions.",
+    } : tested;
     await writeStoredSettings({ ...stored, lastTest: { ok: result.ok, message: result.message, testedAt: Date.now() } });
     return jsonResponse(result);
   });
