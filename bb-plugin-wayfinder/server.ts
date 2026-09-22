@@ -318,13 +318,13 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
     },
     async "computer.snapshot"(input) {
       const stored = await readStoredSettings();
-      const readiness = await host.call("capabilities.probe", { expectedHostId: input.hostId, provider: stored.provider }, hostOptions(input.hostId));
-      const runs: RunRecord[] = [];
-      for (const runId of (await kv.get<string[]>("recent")) ?? []) {
-        const entry = await runIndex(runId);
-        if (entry?.hostId !== input.hostId) continue;
-        try { runs.push(await hostStatus(runId)); } catch { /* run expired on the host */ }
-      }
+      const indexed = await Promise.all(((await kv.get<string[]>("recent")) ?? []).map(async (runId) => ({ runId, entry: await runIndex(runId) })));
+      const matching = indexed.filter(({ entry }) => entry?.hostId === input.hostId);
+      const [readiness, statuses] = await Promise.all([
+        host.call("capabilities.probe", { expectedHostId: input.hostId, provider: stored.provider }, { hostId: input.hostId, timeoutMs: 5_000 }).catch(() => null),
+        Promise.all(matching.map(({ runId }) => host.call("runs.status", { expectedHostId: input.hostId, runId }, hostOptions(input.hostId)).catch(() => null))),
+      ]);
+      const runs = statuses.filter((run): run is RunRecord => run !== null);
       const queued = runs.filter((run) => run.state === "queued");
       const activeRun = runs.find((run) => run.activeController) ?? null;
       const selectedRun = input.selectedRunId === null
@@ -332,8 +332,8 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
         : (runs.find((run) => run.runId === input.selectedRunId) ?? (await hostStatus(input.selectedRunId).catch(() => null)));
       return {
         hostId: input.hostId,
-        readiness: (readiness.decisionProvider.state === "ready" ? "ready" : "setup-required") as "ready" | "setup-required",
-        readinessMessage: readiness.decisionProvider.detail,
+        readiness: (readiness === null ? "degraded" : readiness.decisionProvider.state === "ready" ? "ready" : "setup-required") as "ready" | "setup-required" | "degraded",
+        readinessMessage: readiness?.decisionProvider.detail ?? "Computer readiness is still connecting.",
         activeRun,
         queue: queued.map((run, index) => ({ runId: run.runId, threadId: run.route.identity.threadId, position: run.queuePosition ?? index + 1, enqueuedAt: run.updatedAt })),
         selectedRun,
