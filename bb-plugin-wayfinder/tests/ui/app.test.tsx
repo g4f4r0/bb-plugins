@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
 
 import type { PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
 import type { UiRpcContract } from "../../components/rpc.js";
@@ -288,6 +289,7 @@ describe("Computer panel", () => {
 describe("Settings section", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("renders a host dropdown from real enrolled hosts, disables disconnected entries, and never shows a raw hostId text field", async () => {
@@ -314,7 +316,7 @@ describe("Settings section", () => {
     expect(slot.getByLabelText("Model").textContent).toBe("Jev");
     expect(slot.queryByPlaceholderText("e.g. openai/gpt-5")).toBeNull();
     expect(slot.getByLabelText("Provider")).toBeDefined();
-    expect(slot.getByText("Not configured")).toBeDefined();
+    expect(slot.queryByText(/configured/iu)).toBeNull();
     slot.lifecycle.unmount();
   });
 
@@ -332,7 +334,8 @@ describe("Settings section", () => {
     slot.lifecycle.unmount();
   });
 
-  it("saves computer, TypeSafe provider, and key in one request", async () => {
+  it("saves computer, TypeSafe provider, and key in one request and confirms with a BB toast", async () => {
+    const successToast = vi.spyOn(toast, "success").mockImplementation(() => "toast-id");
     const calls: unknown[] = [];
     vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
       calls.push(JSON.parse(String(init.body)));
@@ -347,13 +350,15 @@ describe("Settings section", () => {
     fireEvent.change(await slot.findByLabelText("Computer host"), { target: { value: "host_a" } });
     fireEvent.change(slot.getByLabelText("TypeSafe API key"), { target: { value: "synthetic-only" } });
     fireEvent.click(slot.getByRole("button", { name: "Save" }));
-    await slot.findByText("Settings saved.");
+    await waitFor(() => expect(successToast).toHaveBeenCalledWith("Settings saved"));
+    expect(slot.queryByText("Settings saved.")).toBeNull();
     expect(calls).toEqual([{ hostId: "host_a", provider: "jev", key: "synthetic-only" }]);
     expect(slot.inspection.rpcCalls.some((call) => JSON.stringify(call).includes("synthetic-only"))).toBe(false);
     slot.lifecycle.unmount();
   });
 
   it("saves OpenRouter as a Jev provider through the same form action", async () => {
+    const successToast = vi.spyOn(toast, "success").mockImplementation(() => "toast-id");
     const calls: unknown[] = [];
     vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
       calls.push(JSON.parse(String(init.body)));
@@ -368,7 +373,7 @@ describe("Settings section", () => {
     fireEvent.change(await slot.findByLabelText("Provider"), { target: { value: "openrouter" } });
     fireEvent.change(slot.getByLabelText("OpenRouter API key"), { target: { value: "synthetic-openrouter" } });
     fireEvent.click(slot.getByRole("button", { name: "Save" }));
-    await slot.findByText("Settings saved.");
+    await waitFor(() => expect(successToast).toHaveBeenCalledWith("Settings saved"));
     expect(calls).toEqual([{ hostId: null, provider: "openrouter", key: "synthetic-openrouter" }]);
     slot.lifecycle.unmount();
   });

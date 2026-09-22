@@ -1,5 +1,6 @@
 import { experimental_Icon as Icon, useRpc } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { toast } from "sonner";
 import type { wayfinderSettingsRpcContract, HostSummary, ProviderId, WayfinderSettingsState } from "../src/contracts/settings.js";
 import { errorMessage } from "./format.js";
 
@@ -15,20 +16,19 @@ export function WayfinderSettingsSection() {
   const [provider, setProvider] = useState<ProviderId>("jev");
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   const refresh = useCallback(async () => {
     const [nextHosts, next] = await Promise.all([rpc.call("settings.hosts", {}), rpc.call("settings.get", {})]);
     setHosts(nextHosts); setSaved(next); setHostId(next.selectedHostId); setProvider(next.provider);
   }, [rpc]);
-  useEffect(() => { void refresh().catch((cause) => setMessage({ ok: false, text: errorMessage(cause) })); }, [refresh]);
+  useEffect(() => { void refresh().catch((cause) => toast.error("Could not load Wayfinder settings", { description: errorMessage(cause) })); }, [refresh]);
 
   if (saved === null || hosts === null) return <div role="status" aria-label="Loading settings" className="flex justify-center py-6"><Icon name="Loading" className="size-4 animate-spin text-muted-foreground" aria-hidden="true" /></div>;
 
   const configured = provider === saved.provider && saved.keyStatus === "configured";
   const save = async () => {
     if (busy) return;
-    setBusy(true); setMessage(null);
+    setBusy(true);
     try {
       const response = await fetch(SAVE_URL, {
         method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
@@ -36,8 +36,8 @@ export function WayfinderSettingsSection() {
       });
       const body = await response.json() as { ok?: boolean; message?: string };
       if (!response.ok || body.ok !== true) throw new Error(body.message || `Request failed (${response.status})`);
-      setKey(""); await refresh(); setMessage({ ok: true, text: body.message || "Saved" });
-    } catch (cause) { setMessage({ ok: false, text: errorMessage(cause) }); }
+      setKey(""); await refresh(); toast.success("Settings saved");
+    } catch (cause) { toast.error("Could not save settings", { description: errorMessage(cause) }); }
     finally { setBusy(false); }
   };
 
@@ -50,7 +50,7 @@ export function WayfinderSettingsSection() {
         </select>
       </SettingRow>
       <SettingRow label="Provider" description="Provider used to access Jev.">
-        <select aria-label="Provider" className={controlClass} value={provider} disabled={busy} onChange={(event) => { setProvider(event.target.value as ProviderId); setKey(""); setMessage(null); }}>
+        <select aria-label="Provider" className={controlClass} value={provider} disabled={busy} onChange={(event) => { setProvider(event.target.value as ProviderId); setKey(""); }}>
           <option value="jev">TypeSafe</option>
           <option value="openrouter">OpenRouter</option>
         </select>
@@ -62,11 +62,9 @@ export function WayfinderSettingsSection() {
         <input type="password" autoComplete="off" aria-label={`${provider === "jev" ? "TypeSafe" : "OpenRouter"} API key`} className={controlClass}
           placeholder={configured ? "[set]" : "Enter API key"} value={key} disabled={busy} onChange={(event) => setKey(event.target.value)} />
       </SettingRow>
-      <div className="flex items-center justify-between gap-3 pb-3 pt-1">
-        <span className="text-xs text-muted-foreground">{configured ? "Configured" : "Not configured"}</span>
+      <div className="flex justify-end pb-3 pt-1">
         <button type="button" className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50" disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : "Save"}</button>
       </div>
-      {message ? <p role="status" className={`pb-3 text-xs ${message.ok ? "text-muted-foreground" : "text-destructive"}`}>{message.text}</p> : null}
     </div>
   </div>;
 }
