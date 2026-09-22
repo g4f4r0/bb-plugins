@@ -282,6 +282,30 @@ describe("Computer panel", () => {
     expect(slot.inspection.navigateCalls).toEqual([]);
     slot.lifecycle.unmount();
   });
+
+  it("takes human control and gives it back to the agent when the window loses focus", async () => {
+    const slot = renderSlot<PluginThreadPanelProps, UiRpcContract>(panel, { threadId: "thr_a", params: null }, {
+      rpc: {
+        "settings.hostForThread": () => ({ hostId: "host_thread", source: "thread" }),
+        "settings.get": () => ({ selectedHostId: null, provider: "openrouter", model: "jev", keyStatus: "configured", lastTest: null }),
+        "settings.hosts": () => [{ hostId: "host_thread", name: "Studio Mac", status: "connected", phase: "active", os: "darwin", arch: "arm64", browserState: "ready", providerState: "ready" }],
+        "computer.snapshot": () => ({
+          hostId: "host_thread", readiness: "ready", readinessMessage: null,
+          activeRun: { runId: "run_live", state: "running", route: { goal: "Check the storefront" }, activeController: true },
+          queue: [], selectedRun: null, connectionState: "connected", frameSequence: 1, frameCapturedAt: Date.now(), sampledAt: Date.now(),
+        }),
+        "computer.control.acquire": () => ({ state: "human" }),
+        "computer.control.release": () => ({ released: true }),
+      } as never,
+    });
+    fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
+    await slot.findByText("You’re controlling");
+    expect(slot.getByLabelText("Computer host").textContent).toContain("Studio Mac");
+    window.dispatchEvent(new Event("blur"));
+    await waitFor(() => expect(slot.inspection.rpcCalls.some((call) => call.method === "computer.control.release")).toBe(true));
+    expect(slot.queryByText("You’re controlling")).toBeNull();
+    slot.lifecycle.unmount();
+  });
 });
 
 describe("Settings section", () => {

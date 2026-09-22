@@ -8,7 +8,8 @@ import type {
   AutomationAdapter,
 } from "../contracts/adapter.js";
 import type { Checkpoint, WayfinderRoute } from "../contracts/route.js";
-import type { CheckpointResult } from "../contracts/run.js";
+import type { CheckpointResult, HumanInput } from "../contracts/run.js";
+import type { ControlGate } from "../core/control-gate.js";
 import { verifyObservationCheckpoint } from "../core/checkpoints.js";
 import { errorMessage, wayfinderError } from "../core/errors.js";
 import { sha256 } from "../core/hash.js";
@@ -48,6 +49,7 @@ export interface BrowserAdapterOptions {
   readonly resolveData?: DataResolver;
   readonly downloadRoots?: ReadonlyMap<string, string>;
   readonly settleMs?: number;
+  readonly controlGate?: ControlGate;
 }
 
 export interface FortressConnectionOptions extends Omit<BrowserAdapterOptions, "transport" | "sessionId"> {
@@ -82,6 +84,7 @@ export class BrowserAdapter implements AutomationAdapter {
   readonly #resolveData: DataResolver;
   readonly #downloadRoots: ReadonlyMap<string, string>;
   readonly #settleMs: number;
+  readonly #controlGate?: ControlGate;
   readonly #bindings = new Map<string, BrowserTargetBinding>();
   readonly #networkOutcomes: Array<{ method: string; url: string; status: number }> = [];
   readonly #requestMethods = new Map<string, string>();
@@ -99,6 +102,7 @@ export class BrowserAdapter implements AutomationAdapter {
     this.#resolveData = options.resolveData ?? defaultDataResolver;
     this.#downloadRoots = options.downloadRoots ?? new Map();
     this.#settleMs = options.settleMs ?? 80;
+    this.#controlGate = options.controlGate;
     this.#disposeEvent = this.#transport.onEvent((event) => this.#event(event));
   }
 
@@ -131,15 +135,39 @@ export class BrowserAdapter implements AutomationAdapter {
   }
 
   observe(context: AdapterExecutionContext) {
-    return adapterEffect("observe", () => this.#observe(context));
+    return adapterEffect("observe", () => this.#withAgentControl(context.signal, () => this.#observe(context)));
   }
 
   execute(intent: ActionIntent, context: AdapterExecutionContext) {
-    return adapterEffect("act", () => this.#execute(intent, context));
+    return adapterEffect("act", () => this.#withAgentControl(context.signal, () => this.#execute(intent, context)));
   }
 
   verify(checkpoint: Checkpoint, observation: AdapterObservation, context: AdapterExecutionContext) {
-    return adapterEffect("verify", () => this.#verify(checkpoint, observation, context));
+    return adapterEffect("verify", () => this.#withAgentControl(context.signal, () => this.#verify(checkpoint, observation, context)));
+  }
+
+  async dispatchHumanInput(input: HumanInput, clientId: string, signal: AbortSignal): Promise<void> {
+    if (this.#controlGate?.touch(clientId) !== true) throw new Error("Human control is not active");
+    switch (input.kind) {
+      case "click":
+        await this.#command("Input.dispatchMouseEvent", { type: "mousePressed", x: input.x, y: input.y, button: input.button, buttons: input.button === "left" ? 1 : input.button === "right" ? 2 : 4, clickCount: 1 }, signal);
+        await this.#command("Input.dispatchMouseEvent", { type: "mouseReleased", x: input.x, y: input.y, button: input.button, buttons: 0, clickCount: 1 }, signal);
+        break;
+      case "wheel":
+        await this.#command("Input.dispatchMouseEvent", { type: "mouseWheel", x: input.x, y: input.y, deltaX: input.deltaX, deltaY: input.deltaY }, signal);
+        break;
+      case "text":
+        await this.#command("Input.insertText", { text: input.text }, signal);
+        break;
+      case "key":
+        await this.#command("Input.dispatchKeyEvent", { type: "keyDown", key: input.key, code: input.code, modifiers: input.modifiers }, signal);
+        await this.#command("Input.dispatchKeyEvent", { type: "keyUp", key: input.key, code: input.code, modifiers: input.modifiers }, signal);
+        break;
+    }
+  }
+
+  #withAgentControl<T>(signal: AbortSignal, operation: () => Promise<T>): Promise<T> {
+    return this.#controlGate ? this.#controlGate.runAgent(signal, operation) : operation();
   }
 
   close(context: AdapterExecutionContext) {

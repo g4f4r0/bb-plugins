@@ -195,6 +195,14 @@ Verification: `npm run typecheck`, all 24 Vitest files / 151 tests, and `npm run
 
 Remaining public-release constraint: provider credentials still follow the repository's mandatory Infisical policy. A host-local credential backend cannot be shipped while that policy requires Infisical for every secret.
 
+## Computer viewer controls update (2026-09-22)
+
+Computer now follows the retained Browse viewer pattern: an active browser shows a pulsing viewport skeleton until its first frame, connection state floats at bottom-left, and the execution-machine name floats at bottom-right. Hovering or focusing an agent-controlled live viewport offers **Take control**. Human clicks, scrolling, typing/pasting, and keys are sent through bounded RPC to the run's existing loopback CDP adapter; no CDP endpoint is exposed.
+
+A host-side control gate waits for the current atomic agent browser operation before granting one viewer the lease. Agent operations pause while the human owns it and resume when the viewer releases control. The viewer releases automatically when the browser window loses focus, the document is hidden, the Computer tab unmounts, or the one-minute lease expires. Multiple viewers remain read-only except for the single lease holder.
+
+Verification: `npm run typecheck`, 25 Vitest files / 155 tests, and the production build pass. Tests cover atomic handoff, competing viewers, lease expiry, CDP input ownership, UI takeover/release, and the existing Fortress fixture path.
+
 ### Deferred follow-up
 
 A real BB browser lease, Jev credential resolution through Infisical, native accessibility, and verified HTTPS sharing are prerequisites for the remaining live-provider gates. No speculative fallback or external mutation was added.

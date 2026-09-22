@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { BrowserAdapter } from "../../src/adapters/browser.js";
 import { WebSocketCdpTransport, type CdpEvent, type CdpTransport } from "../../src/adapters/cdp-client.js";
 import type { WayfinderRoute } from "../../src/contracts/route.js";
+import { ControlGate } from "../../src/core/control-gate.js";
 import { sha256 } from "../../src/core/hash.js";
 import { makeRoute } from "../contracts/fixtures.js";
 
@@ -54,6 +55,23 @@ describe("BrowserAdapter", () => {
     const observation = await Effect.runPromise(adapter.observe(context));
     const result = await Effect.runPromise(adapter.verify(route.checkpoints[0]!, observation, context));
     expect(result.outcome).toBe("fail");
+  });
+
+  it("dispatches human input only for the viewer holding control", async () => {
+    const route = makeRoute();
+    const transport = new FakeCdp();
+    const gate = new ControlGate();
+    const adapter = new BrowserAdapter({ route, hostId: "host_test", tabId: "tab_one", resourceGeneration: "generation_one", transport, controlGate: gate });
+    const signal = new AbortController().signal;
+    await expect(adapter.dispatchHumanInput({ kind: "click", x: 20, y: 30, button: "left" }, "viewer_a", signal)).rejects.toThrow(/not active/iu);
+    await gate.acquire("viewer_a", signal);
+    await adapter.dispatchHumanInput({ kind: "click", x: 20, y: 30, button: "left" }, "viewer_a", signal);
+    await adapter.dispatchHumanInput({ kind: "text", text: "hello" }, "viewer_a", signal);
+    await adapter.dispatchHumanInput({ kind: "key", key: "Enter", code: "Enter", modifiers: 0 }, "viewer_a", signal);
+    expect(transport.commands.filter((command) => command === "Input.dispatchMouseEvent")).toHaveLength(2);
+    expect(transport.commands.filter((command) => command === "Input.dispatchKeyEvent")).toHaveLength(2);
+    expect(transport.typedValue).toBe("hello");
+    gate.dispose();
   });
 
   it("does not expose a protected value in the post-action observation", async () => {

@@ -220,6 +220,21 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
       const result = await host.call("runs.cancel", { expectedHostId: entry.hostId, runId: input.runId, reason: input.reason }, hostOptions(entry.hostId));
       return result.run;
     },
+    async "computer.control.acquire"(input) {
+      const entry = await requireRun(input.runId);
+      if (entry.hostId !== input.hostId) throw new Error("Run is assigned to another computer");
+      return host.call("computer.control.acquire", { expectedHostId: entry.hostId, runId: input.runId, clientId: input.clientId }, hostOptions(entry.hostId));
+    },
+    async "computer.control.release"(input) {
+      const entry = await requireRun(input.runId);
+      if (entry.hostId !== input.hostId) return { released: false };
+      return host.call("computer.control.release", { expectedHostId: entry.hostId, runId: input.runId, clientId: input.clientId }, hostOptions(entry.hostId));
+    },
+    async "computer.control.input"(input) {
+      const entry = await requireRun(input.runId);
+      if (entry.hostId !== input.hostId) throw new Error("Run is assigned to another computer");
+      return host.call("computer.control.input", { expectedHostId: entry.hostId, runId: input.runId, clientId: input.clientId, input: input.input }, hostOptions(entry.hostId));
+    },
     async "computer.snapshot"(input) {
       const stored = await readStoredSettings();
       const readiness = await host.call("capabilities.probe", { expectedHostId: input.hostId, provider: stored.provider }, hostOptions(input.hostId));

@@ -4,7 +4,7 @@ import { z } from "zod";
 import { artifactRangeSchema, artifactRecordSchema } from "./artifact.js";
 import { base64Schema, entityIdSchema, sha256Schema, unixMsSchema } from "./primitives.js";
 import { routeSchema } from "./route.js";
-import { runRecordSchema } from "./run.js";
+import { humanInputSchema, runRecordSchema } from "./run.js";
 
 const capabilityStateSchema = z.enum(["ready", "setup-required", "unavailable"]);
 
@@ -87,6 +87,18 @@ export const hostContract = defineRpcContract({
   "runs.cancel": {
     input: z.object({ expectedHostId: entityIdSchema, runId: entityIdSchema, reason: z.string().min(1).max(500) }).strict(),
     output: z.object({ accepted: z.boolean(), run: runRecordSchema }).strict(),
+  },
+  "computer.control.acquire": {
+    input: z.object({ expectedHostId: entityIdSchema, runId: entityIdSchema, clientId: entityIdSchema }).strict(),
+    output: z.object({ state: z.enum(["human", "busy"]) }).strict(),
+  },
+  "computer.control.release": {
+    input: z.object({ expectedHostId: entityIdSchema, runId: entityIdSchema, clientId: entityIdSchema }).strict(),
+    output: z.object({ released: z.boolean() }).strict(),
+  },
+  "computer.control.input": {
+    input: z.object({ expectedHostId: entityIdSchema, runId: entityIdSchema, clientId: entityIdSchema, input: humanInputSchema }).strict(),
+    output: z.object({ accepted: z.literal(true) }).strict(),
   },
   "media.latest": {
     input: z

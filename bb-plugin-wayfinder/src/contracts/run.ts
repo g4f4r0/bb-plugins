@@ -118,6 +118,13 @@ export const startRunOutputSchema = z
   })
   .strict();
 
+export const humanInputSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("click"), x: z.number().finite().min(0).max(8_192), y: z.number().finite().min(0).max(8_192), button: z.enum(["left", "middle", "right"]) }).strict(),
+  z.object({ kind: z.literal("wheel"), x: z.number().finite().min(0).max(8_192), y: z.number().finite().min(0).max(8_192), deltaX: z.number().finite().min(-3_000).max(3_000), deltaY: z.number().finite().min(-3_000).max(3_000) }).strict(),
+  z.object({ kind: z.literal("text"), text: z.string().min(1).max(10_000) }).strict(),
+  z.object({ kind: z.literal("key"), key: z.string().min(1).max(100), code: z.string().max(100), modifiers: z.number().int().min(0).max(15) }).strict(),
+]);
+
 export const computerSnapshotSchema = z
   .object({
     hostId: entityIdSchema,
@@ -151,3 +158,4 @@ export type ApprovalGrant = z.infer<typeof approvalGrantSchema>;
 export type RunRecord = z.infer<typeof runRecordSchema>;
 export type StartRunInput = z.infer<typeof startRunInputSchema>;
 export type ComputerSnapshot = z.infer<typeof computerSnapshotSchema>;
+export type HumanInput = z.infer<typeof humanInputSchema>;

@@ -10,6 +10,7 @@ import {
 import { entityIdSchema } from "./primitives.js";
 import {
   computerSnapshotSchema,
+  humanInputSchema,
   runRecordSchema,
   startRunInputSchema,
   startRunOutputSchema,
@@ -31,6 +32,18 @@ export const wayfinderRpcContract = defineRpcContract({
   "computer.snapshot": {
     input: z.object({ hostId: entityIdSchema, selectedRunId: entityIdSchema.nullable() }).strict(),
     output: computerSnapshotSchema,
+  },
+  "computer.control.acquire": {
+    input: z.object({ hostId: entityIdSchema, runId: entityIdSchema, clientId: entityIdSchema }).strict(),
+    output: z.object({ state: z.enum(["human", "busy"]) }).strict(),
+  },
+  "computer.control.release": {
+    input: z.object({ hostId: entityIdSchema, runId: entityIdSchema, clientId: entityIdSchema }).strict(),
+    output: z.object({ released: z.boolean() }).strict(),
+  },
+  "computer.control.input": {
+    input: z.object({ hostId: entityIdSchema, runId: entityIdSchema, clientId: entityIdSchema, input: humanInputSchema }).strict(),
+    output: z.object({ accepted: z.literal(true) }).strict(),
   },
   "artifacts.list": {
     input: z
