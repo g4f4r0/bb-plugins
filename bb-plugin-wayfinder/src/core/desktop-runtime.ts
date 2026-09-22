@@ -1,11 +1,10 @@
-import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
 import type { HumanInput } from "../contracts/run.js";
 import { ProcessCuaTransport } from "../adapters/cua-client.js";
-import { resolveFortressExecutable } from "./browser-runtime.js";
 
 const MANIFEST = JSON.stringify({
   version: 1,
@@ -17,7 +16,6 @@ const MANIFEST = JSON.stringify({
 });
 const MAX_FRAME_BYTES = 1_100_000;
 const DESKTOP_TARGET = { kind: "desktop", display_id: "primary" } as const;
-const IDLE_DESKTOP_HTML = "<!doctype html><meta name=color-scheme content=dark><style>html,body{height:100%;margin:0}body{display:grid;place-items:center;background:#0b0b0d;color:#a1a1aa;font:14px system-ui,sans-serif}.shell{text-align:center}.mark{margin:auto auto 16px;width:40px;height:40px;border:1px solid #3f3f46;border-radius:10px;display:grid;place-items:center;color:#fafafa;font-size:20px}strong{display:block;color:#fafafa;font-size:16px;margin-bottom:6px}</style><div class=shell><div class=mark>W</div><strong>Wayfinder Computer</strong><span>Ready for browser and desktop tasks</span></div>";
 
 export interface DesktopFrame {
   readonly bytes: Buffer;
@@ -75,8 +73,6 @@ export class DesktopRuntime {
   #socket = "";
   #process: ChildProcess | null = null;
   #transport: ProcessCuaTransport | null = null;
-  #shellProcess: ChildProcess | null = null;
-  #shellProfile: string | null = null;
   #starting: Promise<void> | null = null;
   #capture: Promise<DesktopFrame> | null = null;
 
@@ -111,10 +107,6 @@ export class DesktopRuntime {
     this.#process = null;
     this.#transport = null;
     await this.#stopChild(child);
-    await this.#stopChild(this.#shellProcess);
-    this.#shellProcess = null;
-    if (this.#shellProfile !== null) await rm(this.#shellProfile, { recursive: true, force: true }).catch(() => undefined);
-    this.#shellProfile = null;
     await rm(this.#socket, { force: true }).catch(() => undefined);
   }
 
@@ -163,7 +155,6 @@ export class DesktopRuntime {
       await writeFile(manifest, MANIFEST, { mode: 0o600 });
       await chmod(manifest, 0o600).catch(() => undefined);
       await rm(this.#socket, { force: true }).catch(() => undefined);
-      void this.#startDesktopShell().catch(() => undefined);
       this.#process = spawn(this.#binary, ["serve", "--embedded", "--socket", this.#socket, "--permission-mode", "bounded", "--capability-manifest", manifest, "--approve-capability-manifest", "--no-overlay"], { stdio: "ignore", env: process.env });
       this.#process.once("exit", () => { this.#process = null; this.#transport = null; });
       const deadline = Date.now() + 5_000;
@@ -175,19 +166,5 @@ export class DesktopRuntime {
       this.#transport = new ProcessCuaTransport({ binaryPath: this.#binary, socketPath: this.#socket, session: `wayfinder-${process.pid}`, timeoutMs: 5_000, maxOutputBytes: 16_000_000 });
     })().finally(() => { this.#starting = null; });
     return this.#starting;
-  }
-
-  async #startDesktopShell(): Promise<void> {
-    if (process.platform !== "linux" || process.env.DISPLAY === undefined || this.#shellProcess !== null) return;
-    const fortress = await resolveFortressExecutable();
-    if (fortress === null) return;
-    this.#shellProfile = await mkdtemp(join(this.#dataDir, "shell-profile-"));
-    const url = `data:text/html;charset=utf-8,${encodeURIComponent(IDLE_DESKTOP_HTML)}`;
-    this.#shellProcess = spawn(fortress, [
-      `--user-data-dir=${this.#shellProfile}`,
-      "--no-first-run", "--no-default-browser-check", "--disable-dev-shm-usage",
-      "--start-maximized", "--window-size=1280,720", url,
-    ], { stdio: "ignore", env: process.env });
-    this.#shellProcess.once("exit", () => { this.#shellProcess = null; });
   }
 }

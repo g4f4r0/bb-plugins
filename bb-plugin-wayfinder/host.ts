@@ -70,7 +70,9 @@ function retainDesktopWorker(context: { experimental_retainWorker(): { dispose()
   if (clientId) desktopViewers.add(clientId);
   desktopWorkerLease ??= context.experimental_retainWorker();
   if (desktopWorkerTimer !== null) clearTimeout(desktopWorkerTimer);
-  desktopWorkerTimer = setTimeout(() => { desktopViewers.clear(); void stopDesktopRuntime(); }, 5_000);
+  // Explicit viewer disconnects stop immediately; this only reaps crashed clients.
+  // Keep it comfortably above one bounded cold capture so startup cannot cancel itself.
+  desktopWorkerTimer = setTimeout(() => { desktopViewers.clear(); void stopDesktopRuntime(); }, 30_000);
   desktopWorkerTimer.unref?.();
 }
 const liveFrames = new Map<string, { sequence: number; capturedAt: number; bytes: Buffer }>();
