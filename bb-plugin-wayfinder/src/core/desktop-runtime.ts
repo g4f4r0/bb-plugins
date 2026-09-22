@@ -163,7 +163,7 @@ export class DesktopRuntime {
       await writeFile(manifest, MANIFEST, { mode: 0o600 });
       await chmod(manifest, 0o600).catch(() => undefined);
       await rm(this.#socket, { force: true }).catch(() => undefined);
-      await this.#startDesktopShell();
+      void this.#startDesktopShell().catch(() => undefined);
       this.#process = spawn(this.#binary, ["serve", "--embedded", "--socket", this.#socket, "--permission-mode", "bounded", "--capability-manifest", manifest, "--approve-capability-manifest", "--no-overlay"], { stdio: "ignore", env: process.env });
       this.#process.once("exit", () => { this.#process = null; this.#transport = null; });
       const deadline = Date.now() + 5_000;
@@ -172,7 +172,7 @@ export class DesktopRuntime {
         try { await access(this.#socket); break; } catch { await new Promise((resolve) => setTimeout(resolve, 50)); }
       }
       if (this.#process === null) throw new Error("Cua Driver stopped before desktop capture became ready");
-      this.#transport = new ProcessCuaTransport({ binaryPath: this.#binary, socketPath: this.#socket, session: `wayfinder-${process.pid}`, timeoutMs: 10_000, maxOutputBytes: 16_000_000 });
+      this.#transport = new ProcessCuaTransport({ binaryPath: this.#binary, socketPath: this.#socket, session: `wayfinder-${process.pid}`, timeoutMs: 5_000, maxOutputBytes: 16_000_000 });
     })().finally(() => { this.#starting = null; });
     return this.#starting;
   }
@@ -189,6 +189,5 @@ export class DesktopRuntime {
       "--start-maximized", "--window-size=1280,720", url,
     ], { stdio: "ignore", env: process.env });
     this.#shellProcess.once("exit", () => { this.#shellProcess = null; });
-    await new Promise((resolve) => setTimeout(resolve, 300));
   }
 }
