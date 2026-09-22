@@ -187,6 +187,12 @@ export class RunEngine {
           const failure = asWayfinderError(error, "act");
           if (["policy-denied", "stale-observation", "ambiguous-target", "setup-required"].includes(failure.code)) {
             await this.#options.journal.recordOutcome({ actionId: intent.actionId, state: "blocked", dispatchedAt: null, outcomeRecordedAt: this.#options.now(), summary: failure.message, postObservation: null, error: failure });
+            if (failure.code === "stale-observation" && failure.retryable && ++noProgressRounds < route.limits.maxNoProgressRounds) {
+              // Nothing was dispatched. Re-observe and ask for a new decision;
+              // never replay the stale intent against a changing page.
+              await new Promise<void>((resolve) => setTimeout(resolve, 150));
+              continue;
+            }
             return this.#result(input.runId, "blocked", [...results.values()], actions, decisions, failure, cleanup);
           }
           return this.#result(input.runId, "interrupted", [...results.values()], actions, decisions,

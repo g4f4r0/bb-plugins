@@ -65,6 +65,25 @@ describe("RunEngine", () => {
     expect(result.checkpoints[0]?.outcome).toBe("pass");
   });
 
+  it("re-observes after a stale pre-dispatch refusal instead of replaying its intent", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "wayfinder-engine-"));
+    const journal = new ActionJournal(join(directory, "journal.jsonl"));
+    let dispatches = 0;
+    const changing: AutomationAdapter = {
+      ...adapter({ path: "/" }),
+      execute: (intent) => {
+        if (dispatches++ === 0) return Effect.fail(wayfinderError("stale-observation", "act", "Page changed before dispatch", { retryable: true }));
+        return Effect.succeed({ actionId: intent.actionId, state: "completed", dispatchedAt: Date.now(), outcomeRecordedAt: Date.now(), summary: "clicked", postObservation: observation("/done"), error: null });
+      },
+      verify: (checkpoint) => Effect.succeed<CheckpointResult>({ checkpoint, outcome: dispatches > 1 ? "pass" : "fail", observedAt: Date.now(), summary: "checked", evidenceArtifactIds: [] }),
+    };
+    const engine = new RunEngine({ queue: new SingleControllerQueue(), journal, adapters: new Map([["browser", changing]]), provider, actionCatalog: catalog });
+    const result = await engine.run({ runId: "run_stale", route: makeRoute(), signal: new AbortController().signal });
+    expect(result.state).toBe("passed");
+    expect(dispatches).toBe(2);
+    expect(await journal.uncertainIntents("run_stale")).toHaveLength(0);
+  });
+
   it("does not replay an action whose dispatch outcome is uncertain", async () => {
     const directory = await mkdtemp(join(tmpdir(), "wayfinder-engine-"));
     const journal = new ActionJournal(join(directory, "journal.jsonl"));
