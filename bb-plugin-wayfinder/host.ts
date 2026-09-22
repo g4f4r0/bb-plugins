@@ -120,7 +120,7 @@ async function launch(route: WayfinderRoute, signal: AbortSignal, controlGate: C
     await new Promise((resolve) => setTimeout(resolve, 250));
     const adapter = await BrowserAdapter.connectFortress({ route, hostId: route.identity.hostId, tabId: tab.id, resourceGeneration: `fortress_${Date.now()}`, wsEndpoint: ws, signal, controlGate });
     if (route.decisionProvider?.provider === "fixture") {
-      const readyBy = Date.now() + 5_000;
+      const readyBy = Date.now() + 15_000;
       while (Date.now() < readyBy) {
         signal.throwIfAborted();
         const observation = await Effect.runPromise(adapter.observe({ signal, expectedHostId: route.identity.hostId }));
