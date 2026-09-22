@@ -7,7 +7,7 @@ import type { HumanInput } from "../contracts/run.js";
 import { ProcessCuaTransport, type CuaToolResult } from "../adapters/cua-client.js";
 import { errorMessage } from "./errors.js";
 
-export const DESKTOP_CAPABILITY_TOOLS = ["get_desktop_state", "get_accessibility_tree", "get_window_state", "list_windows", "health_report", "click", "scroll", "type_text", "press_key"] as const;
+export const DESKTOP_CAPABILITY_TOOLS = ["get_desktop_state", "get_accessibility_tree", "get_window_state", "list_windows", "health_report", "click", "drag", "scroll", "type_text", "press_key"] as const;
 const MANIFEST = JSON.stringify({
   version: 1,
   mode: "bounded",
@@ -21,6 +21,22 @@ const DESKTOP_TARGET = { kind: "desktop", display_id: "primary" } as const;
 
 export function cuaLaunchStrategy(platform: NodeJS.Platform): "launchservices" | "embedded" {
   return platform === "darwin" ? "launchservices" : "embedded";
+}
+
+export function desktopInputCall(input: HumanInput): { tool: "click" | "drag" | "scroll" | "type_text" | "press_key"; payload: Record<string, unknown> } {
+  // Cua's portable target contract forbids combining `target` with the
+  // legacy flat `scope` field. Mixing both is refused on macOS.
+  const common = { target: DESKTOP_TARGET, delivery_mode: "foreground" };
+  if (input.kind === "click") return { tool: "click", payload: { ...common, x: input.x, y: input.y, button: input.button } };
+  if (input.kind === "drag") return { tool: "drag", payload: { ...common, from_x: input.fromX, from_y: input.fromY, to_x: input.toX, to_y: input.toY, button: input.button, duration_ms: input.durationMs, steps: 20 } };
+  if (input.kind === "wheel") {
+    const horizontal = Math.abs(input.deltaX) > Math.abs(input.deltaY);
+    const delta = horizontal ? input.deltaX : input.deltaY;
+    return { tool: "scroll", payload: { ...common, x: input.x, y: input.y, direction: horizontal ? (delta < 0 ? "left" : "right") : (delta < 0 ? "up" : "down"), by: "line", amount: Math.max(1, Math.min(50, Math.ceil(Math.abs(delta) / 40))) } };
+  }
+  if (input.kind === "text") return { tool: "type_text", payload: { ...common, text: input.text } };
+  const modifiers = [input.modifiers & 1 ? "alt" : null, input.modifiers & 2 ? "ctrl" : null, input.modifiers & 4 ? "cmd" : null, input.modifiers & 8 ? "shift" : null].filter((value): value is string => value !== null);
+  return { tool: "press_key", payload: { ...common, key: input.key, modifiers } };
 }
 
 export interface DesktopFrame {
@@ -113,17 +129,8 @@ export class DesktopRuntime {
   async input(input: HumanInput, signal: AbortSignal): Promise<void> {
     await this.#start(signal);
     const transport = this.#transport!;
-    const common = { target: DESKTOP_TARGET, scope: "desktop", delivery_mode: "foreground" };
-    if (input.kind === "click") await transport.call("click", { ...common, x: input.x, y: input.y, button: input.button }, signal);
-    else if (input.kind === "wheel") {
-      const horizontal = Math.abs(input.deltaX) > Math.abs(input.deltaY);
-      const delta = horizontal ? input.deltaX : input.deltaY;
-      await transport.call("scroll", { ...common, x: input.x, y: input.y, direction: horizontal ? (delta < 0 ? "left" : "right") : (delta < 0 ? "up" : "down"), by: "line", amount: Math.max(1, Math.min(50, Math.ceil(Math.abs(delta) / 40))) }, signal);
-    } else if (input.kind === "text") await transport.call("type_text", { ...common, text: input.text }, signal);
-    else {
-      const modifiers = [input.modifiers & 1 ? "alt" : null, input.modifiers & 2 ? "ctrl" : null, input.modifiers & 4 ? "cmd" : null, input.modifiers & 8 ? "shift" : null].filter((value): value is string => value !== null);
-      await transport.call("press_key", { ...common, key: input.key, modifiers }, signal);
-    }
+    const call = desktopInputCall(input);
+    await transport.call(call.tool, call.payload, signal);
   }
 
   async dispose(): Promise<void> {

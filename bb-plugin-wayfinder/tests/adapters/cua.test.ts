@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { CuaAdapter } from "../../src/adapters/cua.js";
 import { parseCuaResult, type CuaToolResult, type CuaTransport } from "../../src/adapters/cua-client.js";
-import { cuaLaunchStrategy, DESKTOP_CAPABILITY_TOOLS } from "../../src/core/desktop-runtime.js";
+import { cuaLaunchStrategy, DESKTOP_CAPABILITY_TOOLS, desktopInputCall } from "../../src/core/desktop-runtime.js";
 import { sha256 } from "../../src/core/hash.js";
 import { makeRoute } from "../contracts/fixtures.js";
 
@@ -26,8 +26,15 @@ describe("Cua CLI responses", () => {
     expect(cuaLaunchStrategy("win32")).toBe("embedded");
   });
 
+  it("uses the portable desktop target without legacy scope fields", () => {
+    const call = desktopInputCall({ kind: "click", x: 120, y: 80, button: "left" });
+    expect(call).toEqual({ tool: "click", payload: { target: { kind: "desktop", display_id: "primary" }, delivery_mode: "foreground", x: 120, y: 80, button: "left" } });
+    expect(call.payload).not.toHaveProperty("scope");
+    expect(desktopInputCall({ kind: "drag", fromX: 1, fromY: 2, toX: 30, toY: 40, button: "left", durationMs: 250 })).toMatchObject({ tool: "drag", payload: { from_x: 1, from_y: 2, to_x: 30, to_y: 40, duration_ms: 250 } });
+  });
+
   it("keeps capture, accessibility inspection, and bounded input in the reviewed manifest", () => {
-    expect(DESKTOP_CAPABILITY_TOOLS).toEqual(expect.arrayContaining(["get_desktop_state", "get_accessibility_tree", "get_window_state", "list_windows", "click", "type_text"]));
+    expect(DESKTOP_CAPABILITY_TOOLS).toEqual(expect.arrayContaining(["get_desktop_state", "get_accessibility_tree", "get_window_state", "list_windows", "click", "drag", "type_text"]));
     expect(DESKTOP_CAPABILITY_TOOLS).not.toEqual(expect.arrayContaining(["launch_app", "kill_app", "clipboard_read"]));
   });
 

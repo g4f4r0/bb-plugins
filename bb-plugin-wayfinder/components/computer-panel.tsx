@@ -5,6 +5,8 @@ import {
   useRpc,
   type PluginThreadPanelProps,
 } from "@get-bb/plugin-sdk/app";
+import { Cursor02Icon, Loading03Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { useCallback, useEffect, useRef, useState, type Ref } from "react";
 import { toast } from "sonner";
 
@@ -177,7 +179,7 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
       toast.error("Computer input disconnected", { description: errorMessage(cause) });
     });
   };
-  useEffect(() => { if (human) document.querySelector<HTMLElement>('[aria-label="Live computer; click, type, paste, or scroll"]')?.focus(); }, [human]);
+  useEffect(() => { if (human) document.querySelector<HTMLElement>('[aria-label^="Live computer;"]')?.focus(); }, [human]);
 
   const cancel = async () => {
     if (active === null) return;
@@ -197,7 +199,7 @@ export function ComputerPanel({ threadId, params }: PluginThreadPanelProps) {
       <div className="group relative flex min-h-0 items-center justify-center overflow-hidden rounded-md border border-border bg-black text-white" style={{ width: `min(${desktopSize.width}px, calc(100cqw - 24px), calc((100cqh - 24px) * ${ratio}))`, aspectRatio: `${desktopSize.width} / ${desktopSize.height}` }}>
         {desktopFrame !== null ? <DesktopView imageUrl={desktopFrame} interactive={human} onInput={sendInput} /> : desktopState === "setup-required" || desktopState === "unavailable" ? <Notice title="Desktop unavailable">{desktopMessage ?? "Install Cua Driver and grant screen-recording permission on this computer."}</Notice> : <ViewportSkeleton />}
 
-        {desktopFrame !== null && !human ? <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-black/0 opacity-0 transition-opacity group-hover:bg-black/40 group-hover:opacity-100 group-focus-within:bg-black/40 group-focus-within:opacity-100"><button type="button" onClick={() => void takeControl()} disabled={takingControl} className="pointer-events-auto inline-flex h-8 w-auto items-center justify-center gap-2 whitespace-nowrap rounded-md border-0 bg-foreground px-3 text-xs font-medium text-background shadow-lg hover:bg-foreground/90 disabled:opacity-50">{takingControl ? <Icon name="Loading" className="size-4 animate-spin" aria-hidden="true" /> : <Icon name="Cursor" className="size-4" aria-hidden="true" />}{takingControl ? "Taking control…" : "Take control"}</button></div> : null}
+        {desktopFrame !== null && !human ? <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-black/0 opacity-0 transition-opacity group-hover:bg-black/40 group-hover:opacity-100 group-focus-within:bg-black/40 group-focus-within:opacity-100"><button type="button" onClick={() => void takeControl()} disabled={takingControl} className="pointer-events-auto inline-flex h-8 w-auto items-center justify-center gap-2 whitespace-nowrap rounded-md border-0 bg-foreground px-3 text-xs font-medium text-background hover:bg-foreground/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50">{takingControl ? <HugeiconsIcon icon={Loading03Icon} className="size-4 animate-spin" aria-hidden="true" /> : <HugeiconsIcon icon={Cursor02Icon} className="size-4" aria-hidden="true" />}{takingControl ? "Taking control…" : "Take control"}</button></div> : null}
 
         {active !== null ? <div className="absolute left-3 top-3 z-20 flex max-w-[calc(100%-6rem)] items-center gap-3 rounded-lg bg-black/70 px-3 py-2 shadow backdrop-blur"><div className="min-w-0"><div className="text-[10px] font-medium uppercase tracking-wide text-white/50">{RUN_STATE_LABEL[active.state] ?? active.state}</div><p className="truncate text-xs">{active.route.goal}</p></div><button type="button" onClick={() => void cancel()} className="shrink-0 rounded-md bg-white/10 px-2 py-1 text-[11px] hover:bg-white/20">Cancel</button></div> : null}
         {snapshot?.queue.length ? <div className="absolute right-3 top-3 z-20 rounded-full bg-black/70 px-3 py-1.5 text-xs shadow backdrop-blur">{snapshot.queue.length} queued</div> : null}

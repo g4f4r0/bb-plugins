@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type WheelEvent } from "react";
 
 import type { HumanInput } from "../src/contracts/run.js";
 import { formatFrameAge } from "./format.js";
@@ -108,6 +108,9 @@ export function LiveView({
 
 export function DesktopView({ imageUrl, interactive, onInput }: { imageUrl: string; interactive: boolean; onInput: (input: HumanInput) => void }) {
   const image = useRef<HTMLImageElement>(null);
+  const drag = useRef<{ pointerId: number; x: number; y: number; startedAt: number } | null>(null);
+  const dragged = useRef(false);
+  const point = (event: MouseEvent<HTMLImageElement> | PointerEvent<HTMLImageElement> | WheelEvent<HTMLImageElement>) => image.current ? inputPoint(image.current, event.clientX, event.clientY) : null;
   return <div className="relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden bg-black">
     <img
       ref={image}
@@ -115,11 +118,16 @@ export function DesktopView({ imageUrl, interactive, onInput }: { imageUrl: stri
       alt="Live view of the controlled desktop"
       draggable={false}
       tabIndex={interactive ? 0 : -1}
-      aria-label={interactive ? "Live computer; click, type, paste, or scroll" : undefined}
-      className="h-full w-full select-none object-contain outline-none"
-      onClick={(event) => { if (!interactive || !image.current) return; const at = inputPoint(image.current, event.clientX, event.clientY); if (at) onInput({ kind: "click", ...at, button: event.button === 1 ? "middle" : event.button === 2 ? "right" : "left" }); }}
-      onContextMenu={(event) => { if (interactive) event.preventDefault(); }}
-      onWheel={(event) => { if (!interactive || !image.current) return; const at = inputPoint(image.current, event.clientX, event.clientY); if (!at) return; event.preventDefault(); onInput({ kind: "wheel", ...at, deltaX: Math.max(-3_000, Math.min(3_000, event.deltaX)), deltaY: Math.max(-3_000, Math.min(3_000, event.deltaY)) }); }}
+      aria-label={interactive ? "Live computer; click, drag, type, paste, or scroll" : undefined}
+      className={`h-full w-full select-none object-contain outline-none ${interactive ? "cursor-default touch-none" : ""}`}
+      onPointerDown={(event) => { if (!interactive || event.button !== 0) return; const at = point(event); if (!at) return; image.current?.focus({ preventScroll: true }); if (typeof image.current?.setPointerCapture === "function") image.current.setPointerCapture(event.pointerId); drag.current = { pointerId: event.pointerId, x: at.x, y: at.y, startedAt: Date.now() }; dragged.current = false; }}
+      onPointerMove={(event) => { const start = drag.current; if (!start || start.pointerId !== event.pointerId) return; const at = point(event); if (at && Math.hypot(at.x - start.x, at.y - start.y) >= 4) dragged.current = true; }}
+      onPointerUp={(event) => { const start = drag.current; if (!start || start.pointerId !== event.pointerId) return; const at = point(event); drag.current = null; if (typeof image.current?.hasPointerCapture === "function" && image.current.hasPointerCapture(event.pointerId)) image.current.releasePointerCapture(event.pointerId); if (at && dragged.current) onInput({ kind: "drag", fromX: start.x, fromY: start.y, toX: at.x, toY: at.y, button: "left", durationMs: Math.min(10_000, Date.now() - start.startedAt) }); }}
+      onPointerCancel={() => { drag.current = null; dragged.current = false; }}
+      onClick={(event) => { if (!interactive || dragged.current) { dragged.current = false; return; } const at = point(event); if (at) onInput({ kind: "click", ...at, button: "left" }); }}
+      onAuxClick={(event) => { if (!interactive || event.button !== 1) return; const at = point(event); if (at) { event.preventDefault(); onInput({ kind: "click", ...at, button: "middle" }); } }}
+      onContextMenu={(event) => { if (!interactive) return; const at = point(event); event.preventDefault(); if (at) onInput({ kind: "click", ...at, button: "right" }); }}
+      onWheel={(event) => { if (!interactive) return; const at = point(event); if (!at) return; event.preventDefault(); onInput({ kind: "wheel", ...at, deltaX: Math.max(-3_000, Math.min(3_000, event.deltaX)), deltaY: Math.max(-3_000, Math.min(3_000, event.deltaY)) }); }}
       onKeyDown={(event) => { if (!interactive) return; onInput(toKeyboardInput(event)); event.preventDefault(); }}
       onPaste={(event) => { if (!interactive) return; const text = event.clipboardData.getData("text/plain"); if (text) { event.preventDefault(); onInput({ kind: "text", text: text.slice(0, 10_000) }); } }}
     />
