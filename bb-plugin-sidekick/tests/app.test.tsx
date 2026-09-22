@@ -9,9 +9,9 @@ const panel = app.navPanels[0]!;
 afterEach(cleanup);
 
 describe("Sidekick frontend", () => {
-  it("registers one Sidekick navigation page and no workflow surfaces", () => {
+  it("registers one Profiles navigation page and no workflow surfaces", () => {
     expect(app.navPanels).toHaveLength(1);
-    expect(panel).toMatchObject({ id: "sidekick", title: "Sidekick", path: "sidekick" });
+    expect(panel).toMatchObject({ id: "sidekick", title: "Profiles", path: "sidekick" });
     expect(app.threadPanelActions).toHaveLength(0);
     expect(app.messageDirectives).toHaveLength(0);
   });

@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-sidekick",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Create reusable Sidekick profiles and start one profile-bound BB thread at a time.",
   "license": "MIT",
