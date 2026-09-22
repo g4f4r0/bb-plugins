@@ -7,15 +7,16 @@ import type { HumanInput } from "../contracts/run.js";
 import { ProcessCuaTransport, type CuaToolResult } from "../adapters/cua-client.js";
 import { errorMessage } from "./errors.js";
 
-export const DESKTOP_CAPABILITY_TOOLS = ["get_desktop_state", "get_accessibility_tree", "get_window_state", "list_windows", "health_report", "click", "drag", "scroll", "type_text", "press_key"] as const;
-const MANIFEST = JSON.stringify({
-  version: 1,
-  mode: "bounded",
-  expires_after: "12h",
-  idle_timeout: "10m",
-  resources: { desktop: { display: true } },
-  allow: { tools: DESKTOP_CAPABILITY_TOOLS },
-});
+export const DESKTOP_CAPABILITY_TOOLS = ["get_desktop_state", "get_accessibility_tree", "get_window_state", "list_windows", "health_report", "click", "drag", "scroll", "type_text", "press_key", "start_recording", "stop_recording", "get_recording_state"] as const;
+function capabilityManifest(recordingRoot: string): string {
+  return JSON.stringify({
+    version: 3,
+    expires_after: "12h",
+    idle_timeout: "10m",
+    resources: { desktop: { display: true }, files: { write: [{ dir: recordingRoot, recursive: true }] } },
+    allow: { tools: DESKTOP_CAPABILITY_TOOLS },
+  });
+}
 const MAX_FRAME_BYTES = 1_100_000;
 const DESKTOP_TARGET = { kind: "desktop", display_id: "primary" } as const;
 
@@ -152,6 +153,17 @@ export class DesktopRuntime {
     await transport.call(call.tool, call.payload, signal);
   }
 
+  async startRecording(outputDir: string, signal: AbortSignal): Promise<void> {
+    await this.#start(signal);
+    const state = await this.#transport!.call("start_recording", { output_dir: outputDir, record_video: true }, signal);
+    if (state.structuredContent?.video_active !== true) throw new Error("Cua did not start desktop video capture");
+  }
+
+  async stopRecording(signal: AbortSignal): Promise<void> {
+    if (this.#transport === null) throw new Error("Cua recording runtime is unavailable");
+    await this.#transport.call("stop_recording", {}, signal);
+  }
+
   async dispose(): Promise<void> {
     const child = this.#process;
     const transport = this.#transport;
@@ -216,9 +228,11 @@ export class DesktopRuntime {
       this.#binary = await resolveCuaExecutable();
       if (this.#binary === null) throw new Error(`Cua Driver is not installed for ${process.platform}/${process.arch}`);
       await mkdir(this.#dataDir, { recursive: true, mode: 0o700 });
+      const recordingRoot = join(this.#dataDir, "recordings");
+      await mkdir(recordingRoot, { recursive: true, mode: 0o700 });
       const manifest = join(this.#dataDir, "desktop-capabilities.json");
       this.#socket = process.platform === "win32" ? `\\\\.\\pipe\\wayfinder-cua-${process.pid}` : join(tmpdir(), `wayfinder-cua-${process.pid}.sock`);
-      await writeFile(manifest, MANIFEST, { mode: 0o600 });
+      await writeFile(manifest, capabilityManifest(recordingRoot), { mode: 0o600 });
       await chmod(manifest, 0o600).catch(() => undefined);
       await rm(this.#socket, { force: true }).catch(() => undefined);
       const serveArgs = ["serve", "--socket", this.#socket, "--permission-mode", "bounded", "--capability-manifest", manifest, "--approve-capability-manifest"];

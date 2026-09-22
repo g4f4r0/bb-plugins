@@ -10,9 +10,9 @@ describe("Wayfinder server integration", () => {
     expect(harness.inspection.needsConfigurationMessages).toEqual([]);
     expect(harness.inspection.registrations.rpcMethods).toContain("runs.start");
     expect(harness.inspection.registrations.httpRoutes.map((route) => route.path)).toContain("/v1/artifacts/inline");
-    expect(harness.inspection.registrations.agentTools.map((tool) => tool.name)).toContain("wayfinder_start");
+    expect(harness.inspection.registrations.agentTools.map((tool) => tool.name)).toEqual(expect.arrayContaining(["wayfinder_start", "wayfinder_record_start", "wayfinder_record_stop", "wayfinder_screenshot"]));
     expect(harness.inspection.registrations.cli?.name).toBe("wayfinder");
-    expect(harness.inspection.registrations.cli?.commands.map((command) => command.name)).toEqual(["doctor", "setup"]);
+    expect(harness.inspection.registrations.cli?.commands.map((command) => command.name)).toEqual(["record", "screenshot", "doctor", "setup"]);
     await harness.lifecycle.dispose();
   });
 

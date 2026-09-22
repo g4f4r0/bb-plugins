@@ -1,4 +1,5 @@
 import { createServer, type Server } from "node:http";
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,14 +21,14 @@ import { ActionJournal } from "./src/core/journal.js";
 import { FIXTURE_HTML } from "./fixtures/browser/page.js";
 import { RunEngine } from "./worker/engine.js";
 import { ObservedActionCatalog } from "./worker/action-catalog.js";
-import { ArtifactStore, type PutArtifactInput } from "./src/artifacts/store.js";
+import { ArtifactStore, safeDisplayFilename, type PutArtifactInput } from "./src/artifacts/store.js";
 import type { ArtifactRecord } from "./src/contracts/artifact.js";
 import { JevDecisionProvider } from "./src/adapters/jev.js";
 import { createInfisicalClient, type InfisicalScope } from "./src/core/infisical.js";
 import { resolveFortressExecutable } from "./src/core/browser-runtime.js";
 import { DesktopRuntime } from "./src/core/desktop-runtime.js";
 import { inspectComputer, setupComputer } from "./src/core/computer-setup.js";
-import { ClipRecorder, encodeClip, selectH264Encoder } from "./src/media/video.js";
+import { ClipRecorder, encodeClip, probeVideo, selectH264Encoder } from "./src/media/video.js";
 const INFISICAL_SCOPE: InfisicalScope = {
   projectId: "bd53277c-43aa-4093-8aea-1e4040fc1962",
   env: "prod",
@@ -54,6 +55,9 @@ function runRoot(): string { if (runRootPath === null) throw new Error("Wayfinde
 function artifactStore(): ArtifactStore { if (artifacts === null) throw new Error("Wayfinder host storage is not initialized"); return artifacts; }
 const artifactRecords = new Map<string, ArtifactRecord>();
 let desktop: DesktopRuntime | null = null;
+type PresentationRecording = { id: string; threadId: string; projectId: string | null; filename: string; dir: string; startedAt: number; lease: { dispose(): void }; timer: ReturnType<typeof setTimeout>; stopping: Promise<ArtifactRecord> | null };
+let activeRecording: PresentationRecording | null = null;
+const completedRecordings = new Map<string, { threadId: string; artifact: ArtifactRecord }>();
 const desktopControlGate = new ControlGate();
 const desktopViewers = new Set<string>();
 let desktopWorkerLease: { dispose(): void } | null = null;
@@ -73,8 +77,34 @@ function retainDesktopWorker(context: { experimental_retainWorker(): { dispose()
   if (desktopWorkerTimer !== null) clearTimeout(desktopWorkerTimer);
   // Explicit viewer disconnects stop immediately; this only reaps crashed clients.
   // One capture is bounded to five seconds, so eight seconds cannot cancel a valid call.
-  desktopWorkerTimer = setTimeout(() => { desktopViewers.clear(); void stopDesktopRuntime(); }, 8_000);
+  desktopWorkerTimer = setTimeout(() => { desktopViewers.clear(); if (activeRecording === null) void stopDesktopRuntime(); }, 8_000);
   desktopWorkerTimer.unref?.();
+}
+async function finishRecording(id: string, threadId: string): Promise<ArtifactRecord> {
+  const completed = completedRecordings.get(id);
+  if (completed?.threadId === threadId) return completed.artifact;
+  const recording = activeRecording;
+  if (recording?.id !== id || recording.threadId !== threadId) throw new Error("Recording not found for this thread");
+  if (recording.stopping !== null) return recording.stopping;
+  recording.stopping = (async () => {
+    clearTimeout(recording.timer);
+    try {
+      await desktop!.stopRecording(AbortSignal.timeout(20_000));
+      const source = join(recording.dir, "recording.mp4");
+      const video = await probeVideo(source);
+      if (video.codec !== "h264" || video.pixelFormat !== "yuv420p" || !video.width || !video.height || !video.durationMs || video.durationMs < 500) throw new Error("Cua did not finalize a playable H.264 desktop recording");
+      const artifact = await artifactStore().importFile({ runId: recording.id, threadId, projectId: recording.projectId, kind: "video", filename: recording.filename, mimeType: "video/mp4", width: video.width, height: video.height, durationMs: video.durationMs, captureStartedAt: recording.startedAt, captureEndedAt: Date.now(), redacted: false, sanitized: true }, source);
+      completedRecordings.set(id, { threadId, artifact });
+      if (completedRecordings.size > 20) completedRecordings.delete(completedRecordings.keys().next().value!);
+      return artifact;
+    } finally {
+      activeRecording = null;
+      recording.lease.dispose();
+      await rm(recording.dir, { recursive: true, force: true }).catch(() => undefined);
+      if (desktopViewers.size === 0) await stopDesktopRuntime();
+    }
+  })();
+  return recording.stopping;
 }
 const liveFrames = new Map<string, { sequence: number; capturedAt: number; bytes: Buffer }>();
 const setupError = (message: string, phase: "observe" | "cleanup" = "observe") => ({ code: "setup-required" as const, phase, message, retryable: false, details: [] });
@@ -316,10 +346,42 @@ export default experimental_defineHostEntry({ contract: hostContract, experiment
     const frame = await desktopRuntime(context.experimental_paths.dataDir).capture(context.signal);
     return { frame: { bytesBase64: frame.bytes.toString("base64"), mimeType: frame.mimeType, width: frame.width, height: frame.height, capturedAt: frame.capturedAt } };
   },
+  "desktop.record.start": async (input, context) => {
+    ensureStorage(context.experimental_paths.dataDir);
+    if (activeRecording !== null) throw new Error("This computer is already recording");
+    const id = `rec_${randomUUID().replaceAll("-", "")}`;
+    const dir = join(context.experimental_paths.dataDir, "desktop", "recordings", id);
+    const filename = safeDisplayFilename(input.filename, "video/mp4");
+    const lease = context.experimental_retainWorker();
+    const recording: PresentationRecording = { id, threadId: input.threadId, projectId: input.projectId, filename, dir, startedAt: Date.now(), lease, timer: setTimeout(() => undefined, 0), stopping: null };
+    clearTimeout(recording.timer);
+    activeRecording = recording;
+    try {
+      await mkdir(dir, { recursive: true, mode: 0o700 });
+      await desktopRuntime(context.experimental_paths.dataDir).startRecording(dir, context.signal);
+      recording.timer = setTimeout(() => { void finishRecording(id, input.threadId).catch(() => undefined); }, 120_000);
+      recording.timer.unref?.();
+      return { recordingId: id, startedAt: recording.startedAt };
+    } catch (error) {
+      activeRecording = null;
+      lease.dispose();
+      await desktop?.stopRecording(AbortSignal.timeout(5_000)).catch(() => undefined);
+      await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
+  },
+  "desktop.record.stop": async (input) => ({ artifact: await finishRecording(input.recordingId, input.threadId) }),
+  "desktop.snapshot": async (input, context) => {
+    ensureStorage(context.experimental_paths.dataDir);
+    const frame = await desktopRuntime(context.experimental_paths.dataDir).capture(context.signal);
+    const mimeType = frame.mimeType;
+    const artifact = await artifactStore().put({ runId: `shot_${randomUUID().replaceAll("-", "")}`, threadId: input.threadId, projectId: input.projectId, kind: "image", filename: safeDisplayFilename(input.filename, mimeType), mimeType, width: frame.width, height: frame.height, captureStartedAt: frame.capturedAt, captureEndedAt: frame.capturedAt, durationMs: null, redacted: false, sanitized: true }, frame.bytes);
+    return { artifact };
+  },
   "desktop.disconnect": async (input) => {
     desktopViewers.delete(input.clientId);
     desktopControlGate.release(input.clientId);
-    if (desktopViewers.size === 0) await stopDesktopRuntime();
+    if (desktopViewers.size === 0 && activeRecording === null) await stopDesktopRuntime();
     return { disconnected: true as const };
   },
   "computer.control.acquire": async (input, context) => {
@@ -342,4 +404,4 @@ export default experimental_defineHostEntry({ contract: hostContract, experiment
   "artifacts.list": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); return artifactStore().list({ threadId: input.threadId, runId: input.runId, cursor: input.cursor, limit: input.limit }); },
   "artifacts.get": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); return artifactStore().get(input.artifactId, { threadId: input.threadId }); },
   "artifacts.readRange": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); const known = artifactRecords.get(input.artifactId) ?? await artifactStore().getUnscoped(input.artifactId); if (!known) throw new Error("Artifact not found"); const range = await artifactStore().readRange(known, input.range.start, input.range.endInclusive); return { artifact: known, bytesBase64: range.bytes.toString("base64"), range: { start: range.start, endInclusive: range.endInclusive }, complete: range.endInclusive === known.media.sizeBytes - 1 }; },
-}, dispose: async () => { for (const job of jobs.values()) job.abort.abort("dispose"); await Promise.all([...jobs.keys()].map((runId) => cleanup(runId))); desktopControlGate.dispose(); desktopViewers.clear(); await stopDesktopRuntime(); disposeHostControllerQueue("wayfinder-host"); runs.clear(); queue = hostControllerQueue("wayfinder-host"); if (process.env.WAYFINDER_DATA_DIR === undefined) { artifactRootPath = null; runRootPath = null; artifacts = null; } }});
+}, dispose: async () => { if (activeRecording !== null) await finishRecording(activeRecording.id, activeRecording.threadId).catch(() => undefined); for (const job of jobs.values()) job.abort.abort("dispose"); await Promise.all([...jobs.keys()].map((runId) => cleanup(runId))); desktopControlGate.dispose(); desktopViewers.clear(); await stopDesktopRuntime(); disposeHostControllerQueue("wayfinder-host"); runs.clear(); queue = hostControllerQueue("wayfinder-host"); if (process.env.WAYFINDER_DATA_DIR === undefined) { artifactRootPath = null; runRootPath = null; artifacts = null; } }});

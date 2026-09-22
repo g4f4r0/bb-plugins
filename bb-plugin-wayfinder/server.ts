@@ -501,13 +501,37 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
 
   bb.cli.register({
     name: "wayfinder",
-    summary: "Set up and diagnose Wayfinder computer control",
+    summary: "Diagnose and capture the existing computer through Cua Driver",
     commands: [
+      { name: "record", summary: "Start or stop a private whole-desktop MP4", usage: "bb wayfinder record start [filename.mp4] | bb wayfinder record stop <recordingId>" },
+      { name: "screenshot", summary: "Capture a private whole-desktop screenshot", usage: "bb wayfinder screenshot [filename.png]" },
       { name: "doctor", summary: "Verify the current computer, Cua Driver, permissions, screenshots, accessibility, input, and video", usage: "bb wayfinder doctor [--machine <hostId>] [--json]" },
       { name: "setup", summary: "Install the supported Cua Driver and verify the current computer without replacing its desktop", usage: "bb wayfinder setup [--machine <hostId>] [--json] [--no-permissions]" },
     ],
     async run(argv, context) {
       try {
+        if (argv[0] === "record" || argv[0] === "screenshot") {
+          if (!context.threadId) throw new Error("Run this command from a BB thread with an environment");
+          const identity = await identityFor(context.threadId);
+          const hostId = identity.hostId;
+          if (argv[0] === "screenshot" && argv.length <= 2) {
+            const result = await host.call("desktop.snapshot", { expectedHostId: hostId, threadId: context.threadId, projectId: identity.projectId, filename: argv[1] ?? "desktop.png" }, { hostId, signal: context.signal, timeoutMs: 20_000 });
+            return { exitCode: 0, stdout: `${JSON.stringify({ artifactId: result.artifact.artifactId, url: `/api/v1/plugins/wayfinder/http${artifactHttpRoutes.inline}?${new URLSearchParams({ artifactId: result.artifact.artifactId, threadId: context.threadId })}` })}\n` };
+          }
+          if (argv[0] === "record" && argv[1] === "start" && argv.length <= 3) {
+            const result = await host.call("desktop.record.start", { expectedHostId: hostId, threadId: context.threadId, projectId: identity.projectId, filename: argv[2] ?? "desktop-recording.mp4" }, { hostId, signal: context.signal, timeoutMs: 20_000 });
+            await kv.set(`record:${result.recordingId}`, { hostId, threadId: context.threadId });
+            return { exitCode: 0, stdout: `${JSON.stringify(result)}\n` };
+          }
+          if (argv[0] === "record" && argv[1] === "stop" && argv.length === 3) {
+            const recordingId = entityIdSchema.parse(argv[2]);
+            const owner = await kv.get<{ hostId: string; threadId: string }>(`record:${recordingId}`);
+            if (!owner || owner.threadId !== context.threadId) throw new Error("Recording not found for this thread");
+            const result = await host.call("desktop.record.stop", { expectedHostId: owner.hostId, threadId: context.threadId, recordingId }, { hostId: owner.hostId, signal: context.signal, timeoutMs: 30_000 });
+            return { exitCode: 0, stdout: `${JSON.stringify({ artifactId: result.artifact.artifactId, durationMs: result.artifact.media.durationMs, url: `/api/v1/plugins/wayfinder/http${artifactHttpRoutes.inline}?${new URLSearchParams({ artifactId: result.artifact.artifactId, threadId: context.threadId })}` })}\n` };
+          }
+          throw new Error("Usage: bb wayfinder record start [filename.mp4] | record stop <recordingId> | screenshot [filename.png]");
+        }
         const options = parseComputerCommand(argv);
         const machines = await bb.sdk.hosts.list();
         let hostId = options.machine;
@@ -527,6 +551,47 @@ export default function plugin(bb: BbPluginApi, deps?: { infisicalClient?: Retur
       } catch (error) {
         return { exitCode: 2, stderr: `${error instanceof Error ? error.message : "Wayfinder computer command failed"}\n` };
       }
+    },
+  });
+
+  const captureHost = async (threadId: string, machine?: string) => {
+    const identity = await identityFor(threadId);
+    const hostId = machine ?? identity.hostId;
+    const enrolled = await bb.sdk.hosts.list();
+    if (!enrolled.some((candidate) => candidate.id === hostId && candidate.status === "connected")) throw new Error("The selected computer is not connected");
+    return { identity, hostId };
+  };
+  const privateMediaUrl = (artifactId: string, threadId: string) => `/api/v1/plugins/wayfinder/http${artifactHttpRoutes.inline}?${new URLSearchParams({ artifactId, threadId })}`;
+  bb.agents.registerTool({
+    name: "wayfinder_record_start",
+    description: "Start Cua's native 30-fps whole-desktop MP4 recording on the thread's computer (or an explicitly selected connected machine). One recording per computer, maximum two minutes. Do not record protected input.",
+    parameters: z.object({ filename: z.string().min(1).max(120).default("desktop-recording.mp4"), machine: entityIdSchema.optional() }).strict(),
+    execute: async ({ filename, machine }, context) => {
+      const { identity, hostId } = await captureHost(context.threadId, machine);
+      const result = await host.call("desktop.record.start", { expectedHostId: hostId, threadId: context.threadId, projectId: identity.projectId, filename }, { hostId, timeoutMs: 20_000, signal: context.signal });
+      await kv.set(`record:${result.recordingId}`, { hostId, threadId: context.threadId });
+      return JSON.stringify({ recordingId: result.recordingId, startedAt: result.startedAt, hostId });
+    },
+  });
+  bb.agents.registerTool({
+    name: "wayfinder_record_stop",
+    description: "Stop and finalize a Cua whole-desktop MP4, verify H.264 playback metadata, and return its authenticated private video URL. Only the originating thread can stop it.",
+    parameters: z.object({ recordingId: entityIdSchema }).strict(),
+    execute: async ({ recordingId }, context) => {
+      const owner = await kv.get<{ hostId: string; threadId: string }>(`record:${recordingId}`);
+      if (!owner || owner.threadId !== context.threadId) throw new Error("Recording not found for this thread");
+      const result = await host.call("desktop.record.stop", { expectedHostId: owner.hostId, threadId: context.threadId, recordingId }, { hostId: owner.hostId, timeoutMs: 30_000, signal: context.signal });
+      return JSON.stringify({ artifactId: result.artifact.artifactId, filename: result.artifact.media.filename, durationMs: result.artifact.media.durationMs, url: privateMediaUrl(result.artifact.artifactId, context.threadId) });
+    },
+  });
+  bb.agents.registerTool({
+    name: "wayfinder_screenshot",
+    description: "Capture one private screenshot of the existing whole desktop through Cua. No crop or fabricated background; do not capture protected input.",
+    parameters: z.object({ filename: z.string().min(1).max(120).default("desktop.png"), machine: entityIdSchema.optional() }).strict(),
+    execute: async ({ filename, machine }, context) => {
+      const { identity, hostId } = await captureHost(context.threadId, machine);
+      const result = await host.call("desktop.snapshot", { expectedHostId: hostId, threadId: context.threadId, projectId: identity.projectId, filename }, { hostId, timeoutMs: 20_000, signal: context.signal });
+      return JSON.stringify({ artifactId: result.artifact.artifactId, filename: result.artifact.media.filename, url: privateMediaUrl(result.artifact.artifactId, context.threadId) });
     },
   });
 

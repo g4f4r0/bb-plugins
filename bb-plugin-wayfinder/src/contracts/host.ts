@@ -118,6 +118,18 @@ export const hostContract = defineRpcContract({
     input: z.object({ expectedHostId: entityIdSchema, clientId: entityIdSchema }).strict(),
     output: z.object({ frame: z.object({ bytesBase64: base64Schema, mimeType: z.enum(["image/png", "image/jpeg"]), width: z.number().int().positive().max(4_096), height: z.number().int().positive().max(4_096), capturedAt: unixMsSchema }).strict() }).strict(),
   },
+  "desktop.record.start": {
+    input: z.object({ expectedHostId: entityIdSchema, threadId: entityIdSchema, projectId: entityIdSchema.nullable(), filename: z.string().min(1).max(120) }).strict(),
+    output: z.object({ recordingId: entityIdSchema, startedAt: unixMsSchema }).strict(),
+  },
+  "desktop.record.stop": {
+    input: z.object({ expectedHostId: entityIdSchema, threadId: entityIdSchema, recordingId: entityIdSchema }).strict(),
+    output: z.object({ artifact: artifactRecordSchema }).strict(),
+  },
+  "desktop.snapshot": {
+    input: z.object({ expectedHostId: entityIdSchema, threadId: entityIdSchema, projectId: entityIdSchema.nullable(), filename: z.string().min(1).max(120) }).strict(),
+    output: z.object({ artifact: artifactRecordSchema }).strict(),
+  },
   "desktop.disconnect": {
     input: z.object({ expectedHostId: entityIdSchema, clientId: entityIdSchema }).strict(),
     output: z.object({ disconnected: z.boolean() }).strict(),
