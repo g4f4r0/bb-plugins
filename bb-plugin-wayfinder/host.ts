@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readlink, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
@@ -9,6 +9,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import net from "node:net";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk";
 import { BrowserAdapter } from "./src/adapters/browser.js";
+import { DesktopAutomationAdapter } from "./src/adapters/desktop.js";
 import { hostContract, hostSignals, type HostCapabilities } from "./src/contracts/host.js";
 import { runRecordSchema, type RunRecord } from "./src/contracts/run.js";
 import type { DecisionProvider, DecisionRequest, DecisionResponse } from "./src/contracts/adapter.js";
@@ -37,6 +38,7 @@ const INFISICAL_SCOPE: InfisicalScope = {
 const PROVIDER_KEY_NAME = { jev: "TYPESAFE_API_KEY", openrouter: "OPENROUTER_API_KEY" } as const;
 const infisical = createInfisicalClient();
 let artifactRootPath: string | null = process.env.WAYFINDER_DATA_DIR ?? null;
+let desktopDataDirPath: string | null = null;
 let runRootPath: string | null = artifactRootPath === null ? null : join(artifactRootPath, "runs");
 const runs = new Map<string, RunRecord>();
 type NativeBrowserBinding = { kind: "native"; tabId: string; wsEndpoint: string };
@@ -45,18 +47,20 @@ type Emit = (signal: "runChanged" | "frameAvailable" | "artifactChanged", payloa
 let queue = hostControllerQueue("wayfinder-host");
 let artifacts: ArtifactStore | null = artifactRootPath === null ? null : new ArtifactStore({ root: artifactRootPath, quotaBytes: 256 * 1024 * 1024, retentionMs: 30 * 24 * 60 * 60 * 1000 });
 function ensureStorage(dataDir: string): void {
+  desktopDataDirPath ??= dataDir;
   if (artifactRootPath !== null) return;
   artifactRootPath = join(dataDir, "artifacts");
   runRootPath = join(artifactRootPath, "runs");
   artifacts = new ArtifactStore({ root: artifactRootPath, quotaBytes: 256 * 1024 * 1024, retentionMs: 30 * 24 * 60 * 60 * 1000 });
 }
 function artifactRoot(): string { if (artifactRootPath === null) throw new Error("Wayfinder host storage is not initialized"); return artifactRootPath; }
+function desktopDataDir(): string { if (desktopDataDirPath === null) throw new Error("Wayfinder desktop storage is not initialized"); return desktopDataDirPath; }
 function runRoot(): string { if (runRootPath === null) throw new Error("Wayfinder host storage is not initialized"); return runRootPath; }
 function artifactStore(): ArtifactStore { if (artifacts === null) throw new Error("Wayfinder host storage is not initialized"); return artifacts; }
 const artifactRecords = new Map<string, ArtifactRecord>();
 let desktop: DesktopRuntime | null = null;
 let humanDesktop: DesktopRuntime | null = null;
-type PresentationRecording = { id: string; threadId: string; projectId: string | null; filename: string; dir: string; startedAt: number; lease: { dispose(): void }; timer: ReturnType<typeof setTimeout>; stopping: Promise<ArtifactRecord> | null };
+type PresentationRecording = { id: string; threadId: string; projectId: string | null; filename: string; dir: string; startedAt: number; lease: { dispose(): void }; timer: ReturnType<typeof setTimeout>; stopping: Promise<ArtifactRecord> | null; restorePanel: (() => Promise<void>) | null };
 let activeRecording: PresentationRecording | null = null;
 const completedRecordings = new Map<string, { threadId: string; artifact: ArtifactRecord }>();
 const desktopControlGate = new ControlGate();
@@ -65,6 +69,42 @@ let desktopWorkerLease: { dispose(): void } | null = null;
 let desktopWorkerTimer: ReturnType<typeof setTimeout> | null = null;
 function desktopRuntime(dataDir: string): DesktopRuntime { desktop ??= new DesktopRuntime(join(dataDir, "desktop")); return desktop; }
 function humanDesktopRuntime(dataDir: string): DesktopRuntime { humanDesktop ??= new DesktopRuntime(join(dataDir, "human-desktop"), null, true); return humanDesktop; }
+
+async function suspendPresentationPanel(runtime: DesktopRuntime, signal: AbortSignal): Promise<() => Promise<void>> {
+  if (process.platform !== "linux" || !process.env.DISPLAY) return async () => {};
+  const visible = () => runtime.windows(AbortSignal.timeout(3_000)).then((windows) => windows.some((window) => window.title === "xfce4-panel"));
+  if (!await visible()) return async () => {};
+  const child = spawn("/usr/bin/xfce4-panel", ["--quit"], { stdio: "ignore", env: process.env });
+  const stopped = await new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => { child.kill("SIGTERM"); resolve(false); }, 3_000);
+    child.once("error", () => { clearTimeout(timer); resolve(false); });
+    child.once("exit", (code) => { clearTimeout(timer); resolve(code === 0); });
+  });
+  let restored = false;
+  const restore = async () => {
+    if (restored) return;
+    if (!await visible()) {
+      const panel = spawn("/usr/bin/xfce4-panel", ["--disable-wm-check"], { detached: true, stdio: "ignore", env: process.env });
+      panel.unref();
+      const deadline = Date.now() + 3_000;
+      while (Date.now() < deadline && !await visible()) await new Promise((resolve) => setTimeout(resolve, 100));
+      if (!await visible()) throw new Error("The XFCE dock did not return after recording");
+    }
+    restored = true;
+  };
+  try {
+    if (!stopped) throw new Error("The XFCE dock could not be hidden safely; recording was not started");
+    const deadline = Date.now() + 3_000;
+    while (Date.now() < deadline && await visible()) await new Promise((resolve) => setTimeout(resolve, 100));
+    if (await visible()) throw new Error("The XFCE dock is still visible; recording was not started");
+    signal.throwIfAborted();
+    return restore;
+  } catch (error) {
+    await restore();
+    throw error;
+  }
+}
+
 async function stopDesktopRuntime(): Promise<void> {
   if (desktopWorkerTimer !== null) clearTimeout(desktopWorkerTimer);
   desktopWorkerTimer = null;
@@ -94,6 +134,8 @@ async function finishRecording(id: string, threadId: string): Promise<ArtifactRe
     clearTimeout(recording.timer);
     try {
       await desktop!.stopRecording(AbortSignal.timeout(20_000));
+      await recording.restorePanel?.();
+      recording.restorePanel = null;
       const source = join(recording.dir, "recording.mp4");
       const video = await probeVideo(source);
       if (video.codec !== "h264" || video.pixelFormat !== "yuv420p" || !video.width || !video.height || !video.durationMs || video.durationMs < 500) throw new Error("Cua did not finalize a playable H.264 desktop recording");
@@ -105,7 +147,8 @@ async function finishRecording(id: string, threadId: string): Promise<ArtifactRe
       activeRecording = null;
       recording.lease.dispose();
       await rm(recording.dir, { recursive: true, force: true }).catch(() => undefined);
-      if (desktopViewers.size === 0) await stopDesktopRuntime();
+      try { await recording.restorePanel?.(); }
+      finally { if (desktopViewers.size === 0) await stopDesktopRuntime(); }
     }
   })();
   return recording.stopping;
@@ -246,6 +289,25 @@ function capture(job: { adapter: BrowserAdapter | null; abort: AbortController; 
   job.capture = pending; return pending;
 }
 
+function nativeDesktopOnly(route: WayfinderRoute): boolean {
+  return route.desktop.applications.length === 1 &&
+    route.allowedActions.every((action) => action === "desktop.click" || action === "desktop.scroll") &&
+    route.checkpoints.length > 0 && route.checkpoints.every((checkpoint) => checkpoint.kind === "visible-text" && checkpoint.surface === "desktop");
+}
+
+async function existingDesktopAdapter(run: RunRecord, job: { controlGate: ControlGate }, signal: AbortSignal): Promise<DesktopAutomationAdapter> {
+  const application = run.route.desktop.applications[0]!;
+  const runtime = desktopRuntime(desktopDataDir());
+  const windows = (await runtime.windows(signal)).filter((entry) => application.titleMatch === "exact"
+    ? entry.title === application.windowTitle : entry.title.startsWith(application.windowTitle));
+  if (windows.length !== 1) throw wayfinderError("ambiguous-target", "observe", "Expected one exact visible desktop application window");
+  const window = windows[0]!;
+  if (process.platform !== "linux") throw wayfinderError("setup-required", "observe", "Native executable attestation for this desktop route is currently Linux-only");
+  const [expected, actual] = await Promise.all([realpath(application.executable), readlink(`/proc/${window.pid}/exe`)]);
+  if (expected !== actual) throw wayfinderError("host-mismatch", "observe", "Visible application executable differs from the approved route");
+  return new DesktopAutomationAdapter({ runtime, route: run.route, window, hostId: run.route.identity.hostId, controlGate: job.controlGate });
+}
+
 async function execute(run: RunRecord): Promise<void> {
   const job = jobs.get(run.runId)!; const signal = job.abort.signal;
   let lease: Awaited<ReturnType<SingleControllerQueue["acquire"]>> | null = null;
@@ -258,11 +320,15 @@ async function execute(run: RunRecord): Promise<void> {
     leaseHeartbeat.unref?.();
     update(runs.get(run.runId)!, { queuePosition: null, activeController: true });
     const provider = await providerFor(run.route);
-    const launched = await launch(run.route, signal, job.controlGate, job.browserBinding); job.server = launched.server; job.profile = launched.profile; job.process = launched.child; job.adapter = launched.adapter;
+    const desktopOnly = nativeDesktopOnly(run.route);
+    if (desktopOnly && run.route.capture.recording.enabled) throw wayfinderError("policy-denied", "queue", "Use bounded native desktop recording separately; browser clip capture is not a desktop video");
+    const desktopAdapter = desktopOnly ? await existingDesktopAdapter(run, job, signal) : null;
+    const launched = desktopOnly ? null : await launch(run.route, signal, job.controlGate, job.browserBinding);
+    if (launched) { job.server = launched.server; job.profile = launched.profile; job.process = launched.child; job.adapter = launched.adapter; }
     runs.set(run.runId, update(runs.get(run.runId)!, { state: "running", activeController: true, startedAt: Date.now() }));
     const journal = new ActionJournal(join(artifactRoot(), "journals", `${run.runId}.ndjson`)); await journal.initialize();
     const effectiveRoute = JSON.parse(JSON.stringify(run.route)) as WayfinderRoute;
-    if (launched.fixtureOrigin !== null) {
+    if (launched?.fixtureOrigin !== null && launched !== null) {
       for (const origin of effectiveRoute.browser.navigationOrigins) if (origin.purpose === "fixture") (origin as { origin: string }).origin = launched.fixtureOrigin;
       for (const origin of effectiveRoute.browser.resourceOrigins) if (origin.purpose === "fixture") (origin as { origin: string }).origin = launched.fixtureOrigin;
       for (const checkpoint of effectiveRoute.checkpoints) if (checkpoint.kind === "url" || checkpoint.kind === "network-outcome") if (checkpoint.origin === "http://127.0.0.1:4173") (checkpoint as { origin: string }).origin = launched.fixtureOrigin;
@@ -275,12 +341,14 @@ async function execute(run: RunRecord): Promise<void> {
       recordingQueue = recordingQueue.then(async () => { const bytes = await frame; await recorder?.append({ capturedAt: Date.now(), bytes, mimeType: "image/png" }); }).catch(() => undefined);
     };
     recordFrame();
-    const engine = new RunEngine({ queue, controllerLease: lease, journal, adapters: new Map([["browser", launched.adapter]]), provider, actionCatalog: new ObservedActionCatalog(), closeAdaptersOnFinish: false });
+    const engine = new RunEngine({ queue, controllerLease: lease, journal,
+      adapters: desktopAdapter ? new Map([["desktop", desktopAdapter]]) : new Map([["browser", launched!.adapter]]),
+      provider, actionCatalog: new ObservedActionCatalog(), closeAdaptersOnFinish: false });
     const result = await engine.run({ runId: run.runId, route: effectiveRoute, signal, onProgress: (progress) => { const current = runs.get(run.runId); if (current) runs.set(run.runId, update(current, { state: progress.phase === "verify" ? "verifying" : "running", activeController: true, checkpoints: [...progress.checkpoints] })); if (progress.phase === "verify") recordFrame(); } });
     recordFrame();
     await recordingQueue;
     let artifact: ArtifactRecord | null = null;
-    try { const png = await capture(job); liveFrames.set(run.runId, { sequence: (liveFrames.get(run.runId)?.sequence ?? 0) + 1, capturedAt: Date.now(), bytes: png }); const input: PutArtifactInput = { runId: run.runId, threadId: run.route.identity.threadId, projectId: run.route.identity.projectId, kind: "image", filename: "wayfinder-fixture.png", mimeType: "image/png", width: 1280, height: 800, durationMs: null, captureStartedAt: Date.now(), captureEndedAt: Date.now(), redacted: false, sanitized: true }; artifact = await artifactStore().put(input, png); artifactRecords.set(artifact.artifactId, artifact); job.artifact = artifact; job.emit("artifactChanged", { runId: run.runId, artifactId: artifact.artifactId }); } catch { /* evidence capture is best effort after verification */ }
+    try { const desktopFrame = desktopOnly ? await desktopRuntime(desktopDataDir()).capture(signal) : null; const png = desktopFrame?.bytes ?? await capture(job); liveFrames.set(run.runId, { sequence: (liveFrames.get(run.runId)?.sequence ?? 0) + 1, capturedAt: Date.now(), bytes: png }); const input: PutArtifactInput = { runId: run.runId, threadId: run.route.identity.threadId, projectId: run.route.identity.projectId, kind: "image", filename: desktopOnly ? "wayfinder-desktop.png" : "wayfinder-fixture.png", mimeType: desktopFrame?.mimeType ?? "image/png", width: desktopFrame?.width ?? 1280, height: desktopFrame?.height ?? 800, durationMs: null, captureStartedAt: Date.now(), captureEndedAt: Date.now(), redacted: false, sanitized: true }; artifact = await artifactStore().put(input, png); artifactRecords.set(artifact.artifactId, artifact); job.artifact = artifact; job.emit("artifactChanged", { runId: run.runId, artifactId: artifact.artifactId }); } catch { /* evidence capture is best effort after verification */ }
     if (recorder !== null && recorder.frameCount > 0) {
       try {
         const timeline = recorder.timeline();
@@ -357,12 +425,24 @@ export default experimental_defineHostEntry({ contract: hostContract, experiment
     const dir = join(context.experimental_paths.dataDir, "desktop", "recordings", id);
     const filename = safeDisplayFilename(input.filename, "video/mp4");
     const lease = context.experimental_retainWorker();
-    const recording: PresentationRecording = { id, threadId: input.threadId, projectId: input.projectId, filename, dir, startedAt: Date.now(), lease, timer: setTimeout(() => undefined, 0), stopping: null };
+    const recording: PresentationRecording = { id, threadId: input.threadId, projectId: input.projectId, filename, dir, startedAt: Date.now(), lease, timer: setTimeout(() => undefined, 0), stopping: null, restorePanel: null };
     clearTimeout(recording.timer);
     activeRecording = recording;
     try {
       await mkdir(dir, { recursive: true, mode: 0o700 });
-      await desktopRuntime(context.experimental_paths.dataDir).startRecording(dir, context.signal);
+      if (desktopViewers.size > 0) throw new Error("Close live Computer viewers before starting a window-bound native recording");
+      // Discovery uses a read-only Cua display manifest. Replace it *before*
+      // recording with an exact, immutable list of visible app windows so the
+      // same native cursor session can address their AT-SPI element tokens.
+      const discovered = await desktopRuntime(context.experimental_paths.dataDir).windows(context.signal);
+      const approved = discovered.filter((window) => window.title && !/^(Desktop|xfce4-panel)$/iu.test(window.title));
+      if (approved.length > 16) throw new Error("Too many visible app windows for a bounded native recording");
+      await desktop?.dispose();
+      desktop = new DesktopRuntime(join(context.experimental_paths.dataDir, "desktop"), null, false,
+        approved.map(({ pid, windowId }) => ({ pid, windowId })));
+      const runtime = desktop;
+      recording.restorePanel = await suspendPresentationPanel(runtime, context.signal);
+      await runtime.startRecording(dir, context.signal);
       recording.timer = setTimeout(() => { void finishRecording(id, input.threadId).catch(() => undefined); }, 120_000);
       recording.timer.unref?.();
       return { recordingId: id, startedAt: recording.startedAt };
@@ -370,6 +450,7 @@ export default experimental_defineHostEntry({ contract: hostContract, experiment
       activeRecording = null;
       lease.dispose();
       await desktop?.stopRecording(AbortSignal.timeout(5_000)).catch(() => undefined);
+      await recording.restorePanel?.().catch(() => undefined);
       await rm(dir, { recursive: true, force: true }).catch(() => undefined);
       throw error;
     }
@@ -439,4 +520,4 @@ export default experimental_defineHostEntry({ contract: hostContract, experiment
   "artifacts.list": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); return artifactStore().list({ threadId: input.threadId, runId: input.runId, cursor: input.cursor, limit: input.limit }); },
   "artifacts.get": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); return artifactStore().get(input.artifactId, { threadId: input.threadId }); },
   "artifacts.readRange": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); const known = artifactRecords.get(input.artifactId) ?? await artifactStore().getUnscoped(input.artifactId); if (!known) throw new Error("Artifact not found"); const range = await artifactStore().readRange(known, input.range.start, input.range.endInclusive); return { artifact: known, bytesBase64: range.bytes.toString("base64"), range: { start: range.start, endInclusive: range.endInclusive }, complete: range.endInclusive === known.media.sizeBytes - 1 }; },
-}, dispose: async () => { if (activeRecording !== null) await finishRecording(activeRecording.id, activeRecording.threadId).catch(() => undefined); for (const job of jobs.values()) job.abort.abort("dispose"); await Promise.all([...jobs.keys()].map((runId) => cleanup(runId))); desktopControlGate.dispose(); desktopViewers.clear(); await stopDesktopRuntime(); disposeHostControllerQueue("wayfinder-host"); runs.clear(); queue = hostControllerQueue("wayfinder-host"); if (process.env.WAYFINDER_DATA_DIR === undefined) { artifactRootPath = null; runRootPath = null; artifacts = null; } }});
+}, dispose: async () => { if (activeRecording !== null) await finishRecording(activeRecording.id, activeRecording.threadId).catch(() => undefined); for (const job of jobs.values()) job.abort.abort("dispose"); await Promise.all([...jobs.keys()].map((runId) => cleanup(runId))); desktopControlGate.dispose(); desktopViewers.clear(); await stopDesktopRuntime(); desktopDataDirPath = null; disposeHostControllerQueue("wayfinder-host"); runs.clear(); queue = hostControllerQueue("wayfinder-host"); if (process.env.WAYFINDER_DATA_DIR === undefined) { artifactRootPath = null; runRootPath = null; artifacts = null; } }});

@@ -10,13 +10,13 @@ import { errorMessage } from "./errors.js";
 
 export const DESKTOP_CAPABILITY_TOOLS = ["get_desktop_state", "get_accessibility_tree", "get_window_state", "list_windows", "health_report", "click", "drag", "scroll", "type_text", "press_key", "start_recording", "stop_recording", "get_recording_state", "set_agent_cursor_enabled"] as const;
 export interface DesktopWindow { pid: number; windowId: number; title: string; x: number; y: number; width: number; height: number }
-function capabilityManifest(recordingRoot: string, window: { pid: number; windowId: number } | null): string {
+function capabilityManifest(recordingRoot: string, window: { pid: number; windowId: number } | null, approvedWindows: readonly { pid: number; windowId: number }[]): string {
   return JSON.stringify({
     version: 3,
     expires_after: "12h",
     idle_timeout: "10m",
     resources: window === null
-      ? { desktop: { display: true }, files: { write: [{ dir: recordingRoot, recursive: true }] } }
+      ? { desktop: { display: true, windows: approvedWindows.map((entry) => ({ pid: entry.pid, window_id: entry.windowId })) }, files: { write: [{ dir: recordingRoot, recursive: true }] } }
       : { desktop: { display: true, windows: [{ pid: window.pid, window_id: window.windowId }] } },
     allow: { tools: window === null ? DESKTOP_CAPABILITY_TOOLS : ["list_windows", "set_window_frame"] },
   });
@@ -151,6 +151,7 @@ export class DesktopRuntime {
   readonly #dataDir: string;
   readonly #window: { pid: number; windowId: number } | null;
   readonly #humanInput: boolean;
+  readonly #approvedWindows: readonly { pid: number; windowId: number }[];
   readonly #instanceId = randomBytes(6).toString("hex");
   #binary: string | null = null;
   #socket = "";
@@ -158,8 +159,11 @@ export class DesktopRuntime {
   #transport: ProcessCuaTransport | null = null;
   #starting: Promise<void> | null = null;
   #capture: Promise<DesktopFrame> | null = null;
+  #presenting = false;
 
-  constructor(dataDir: string, window: { pid: number; windowId: number } | null = null, humanInput = false) { this.#dataDir = dataDir; this.#window = window; this.#humanInput = humanInput; }
+  constructor(dataDir: string, window: { pid: number; windowId: number } | null = null, humanInput = false, approvedWindows: readonly { pid: number; windowId: number }[] = []) {
+    this.#dataDir = dataDir; this.#window = window; this.#humanInput = humanInput; this.#approvedWindows = approvedWindows;
+  }
 
   async available(): Promise<boolean> { return await resolveCuaExecutable() !== null; }
 
@@ -211,7 +215,44 @@ export class DesktopRuntime {
       await transport.call("set_agent_cursor_enabled", { enabled: true }, signal);
       await transport.call(call.tool, call.payload, signal);
     } finally {
-      await transport.call("set_agent_cursor_enabled", { enabled: false }, AbortSignal.timeout(2_000)).catch(() => undefined);
+      if (!this.#presenting) await transport.call("set_agent_cursor_enabled", { enabled: false }, AbortSignal.timeout(2_000)).catch(() => undefined);
+      await restorePointer();
+    }
+  }
+
+  async windowState(pid: number, windowId: number, signal: AbortSignal): Promise<Record<string, unknown>> {
+    await this.#start(signal);
+    const result = await this.#transport!.call("get_window_state", { pid, window_id: windowId, include_screenshot: false, max_elements: 650 }, signal);
+    if (!Array.isArray(result.structuredContent?.elements)) throw new Error("Cua did not return a native accessibility snapshot");
+    return result.structuredContent;
+  }
+
+  async clickElement(pid: number, windowId: number, elementToken: string, signal: AbortSignal): Promise<void> {
+    if (!/^s[0-9a-f]{8}:[0-9]+$/u.test(elementToken)) throw new Error("Invalid Cua element token");
+    await this.#start(signal);
+    const transport = this.#transport!;
+    const restorePointer = process.platform === "linux" && Boolean(process.env.DISPLAY) && !process.env.WAYLAND_DISPLAY
+      ? await hidePhysicalX11Pointer(signal) : async () => {};
+    try {
+      await transport.call("set_agent_cursor_enabled", { enabled: true }, signal);
+      await transport.call("click", { target: { kind: "window", pid, window_id: windowId }, element_token: elementToken, delivery_mode: "foreground", button: "left" }, signal);
+    } finally {
+      if (!this.#presenting) await transport.call("set_agent_cursor_enabled", { enabled: false }, AbortSignal.timeout(2_000)).catch(() => undefined);
+      await restorePointer();
+    }
+  }
+
+  async scrollElement(pid: number, windowId: number, elementToken: string, direction: "up" | "down", signal: AbortSignal): Promise<void> {
+    if (!/^s[0-9a-f]{8}:[0-9]+$/u.test(elementToken)) throw new Error("Invalid Cua element token");
+    await this.#start(signal);
+    const transport = this.#transport!;
+    const restorePointer = process.platform === "linux" && Boolean(process.env.DISPLAY) && !process.env.WAYLAND_DISPLAY
+      ? await hidePhysicalX11Pointer(signal) : async () => {};
+    try {
+      await transport.call("set_agent_cursor_enabled", { enabled: true }, signal);
+      await transport.call("scroll", { target: { kind: "window", pid, window_id: windowId }, element_token: elementToken, delivery_mode: "foreground", direction, amount: 6, by: "line" }, signal);
+    } finally {
+      if (!this.#presenting) await transport.call("set_agent_cursor_enabled", { enabled: false }, AbortSignal.timeout(2_000)).catch(() => undefined);
       await restorePointer();
     }
   }
@@ -241,14 +282,23 @@ export class DesktopRuntime {
     await this.#start(signal);
     const state = await this.#transport!.call("start_recording", { output_dir: outputDir, record_video: true }, signal);
     if (state.structuredContent?.video_active !== true) throw new Error("Cua did not start desktop video capture");
+    this.#presenting = true;
+    // Keep Cua's own cursor visible during the entire agent presentation,
+    // including the decision interval between native actions.
+    await this.#transport!.call("set_agent_cursor_enabled", { enabled: true }, signal);
   }
 
   async stopRecording(signal: AbortSignal): Promise<void> {
     if (this.#transport === null) throw new Error("Cua recording runtime is unavailable");
-    await this.#transport.call("stop_recording", {}, signal);
+    try { await this.#transport.call("stop_recording", {}, signal); }
+    finally {
+      this.#presenting = false;
+      await this.#transport.call("set_agent_cursor_enabled", { enabled: false }, AbortSignal.timeout(2_000)).catch(() => undefined);
+    }
   }
 
   async dispose(): Promise<void> {
+    this.#presenting = false;
     const child = this.#process;
     const transport = this.#transport;
     this.#process = null;
@@ -316,7 +366,7 @@ export class DesktopRuntime {
       await mkdir(recordingRoot, { recursive: true, mode: 0o700 });
       const manifest = join(this.#dataDir, "desktop-capabilities.json");
       this.#socket = process.platform === "win32" ? `\\\\.\\pipe\\wayfinder-cua-${process.pid}-${this.#instanceId}` : join(tmpdir(), `wayfinder-cua-${process.pid}-${this.#instanceId}.sock`);
-      await writeFile(manifest, capabilityManifest(recordingRoot, this.#window), { mode: 0o600 });
+      await writeFile(manifest, capabilityManifest(recordingRoot, this.#window, this.#approvedWindows), { mode: 0o600 });
       await chmod(manifest, 0o600).catch(() => undefined);
       await rm(this.#socket, { force: true }).catch(() => undefined);
       const serveArgs = ["serve", "--socket", this.#socket, "--permission-mode", "bounded", "--capability-manifest", manifest, "--approve-capability-manifest"];
@@ -345,7 +395,7 @@ export class DesktopRuntime {
         try { await access(this.#socket); break; } catch { await new Promise((resolve) => setTimeout(resolve, 50)); }
       }
       if (process.platform !== "darwin" && this.#process === null) throw new Error("Cua Driver stopped before desktop capture became ready");
-      this.#transport = new ProcessCuaTransport({ binaryPath: this.#binary, socketPath: this.#socket, session: `wayfinder-${process.pid}-${this.#instanceId}`, timeoutMs: 5_000, maxOutputBytes: 16_000_000 });
+      this.#transport = new ProcessCuaTransport({ binaryPath: this.#binary, socketPath: this.#socket, session: `wayfinder-${process.pid}-${this.#instanceId}`, timeoutMs: 10_000, maxOutputBytes: 16_000_000 });
       if (!this.#humanInput && this.#window === null) await this.#transport.call("set_agent_cursor_enabled", { enabled: false }, signal);
     })().finally(() => { this.#starting = null; });
     return this.#starting;

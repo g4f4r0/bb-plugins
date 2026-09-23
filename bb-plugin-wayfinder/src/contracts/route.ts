@@ -183,6 +183,8 @@ export const routeSchema = z
       .optional(),
     desktop: z
       .object({
+        /** Exact, case-insensitive native accessibility labels that may be clicked. */
+        allowedTargetNames: z.array(z.string().trim().min(1).max(300)).max(64).optional(),
         applications: z
           .array(
             z
