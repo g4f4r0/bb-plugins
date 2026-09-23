@@ -91,7 +91,7 @@ export default definePluginApp((app) => {
     description: "Pinned, Waiting, Ready, Working, Done, and Snoozed, with no project headings.",
     component: StatusThreadList,
   });
-  app.slots.commandPaletteAction({
+  app.commands.register({
     id: "snooze-thread",
     title: "Dusk: snooze thread…",
     isAvailable: ({ threadId }) => threadId !== null && statusListMounted > 0,

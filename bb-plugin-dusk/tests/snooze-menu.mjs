@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { useStatusList } from './status-list-preference.mjs';
 
 // A snooze changes the row's section. The mutation must start only after the
 // portalled menu has finished closing, or its detached anchor jumps to (0, 0).
 const browser = await chromium.launch({ executablePath: process.env.DUSK_BROWSER, args: ['--no-sandbox'] });
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
+  await useStatusList(context);
   await context.addInitScript(() => localStorage.setItem('dusk:status-collapsed', '[]'));
   const page = await context.newPage();
   let threadId;

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { useStatusList } from './status-list-preference.mjs';
 import { mkdir, writeFile } from 'node:fs/promises';
 const base = process.env.BB_TEST_URL || 'http://127.0.0.1:38886';
 const output = new URL('../validation/artifacts/', import.meta.url);
@@ -9,6 +10,7 @@ const browser = await chromium.launch({ executablePath: process.env.DUSK_BROWSER
 try {
  let detailRequests=0;
  const context = await browser.newContext({ viewport: { width: process.env.DUSK_MOBILE ? 360 : 1440, height: 960 }, isMobile:!!process.env.DUSK_MOBILE, hasTouch:!!process.env.DUSK_MOBILE });
+ await useStatusList(context);
  await context.route('**/api/v1/sidebar-bootstrap', async route => {
   const data = await (await route.fetch()).json();
   const sample = data.personalProject.threads[0] || data.projects.flatMap(p => p.threads)[0];

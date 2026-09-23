@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {chromium} from 'playwright';
+import { useStatusList } from './status-list-preference.mjs';
 const browser=await chromium.launch({executablePath:process.env.DUSK_BROWSER,args:['--no-sandbox']});
 try {
- const p=await browser.newPage();await p.goto(process.env.BB_TEST_URL||'http://127.0.0.1:38886');await p.locator('.dusk-status-link').first().waitFor();
+ const p=await browser.newPage();await useStatusList(p);await p.goto(process.env.BB_TEST_URL||'http://127.0.0.1:38886');await p.locator('.dusk-status-link').first().waitFor();
  const ids=await p.locator('.dusk-status-link').evaluateAll(nodes=>nodes.slice(0,4).map(n=>n.dataset.sidebarThreadId));
  assert(ids.length>=3,'Need three existing visible threads for read-only portal fixture');
  const cdp=await p.context().newCDPSession(p);const events=[];cdp.on('Tracing.dataCollected',e=>events.push(...e.value));await cdp.send('Tracing.start',{categories:'devtools.timeline,v8.execute',transferMode:'ReportEvents'});
