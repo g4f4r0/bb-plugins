@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { useStatusList } from './status-list-preference.mjs';
 const browser = await chromium.launch({ executablePath: process.env.DUSK_BROWSER, args: ['--no-sandbox'] });
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
+  await useStatusList(page);
   let requests = 0;
   let releaseDetails;
   const detailsReady = new Promise(resolve => { releaseDetails = resolve; });

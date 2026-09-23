@@ -45,42 +45,47 @@ kbd {
   margin-inline-end: 0;
 }
 
+:root {
+  --dusk-mask-dashed: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2010%2010%22%3E%3Ccircle%20cx%3D%225%22%20cy%3D%225%22%20r%3D%224.25%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.5%22%20stroke-dasharray%3D%223.15%202.1907075%22%20transform%3D%22rotate%28-90%205%205%29%22%2F%3E%3C%2Fsvg%3E");
+  --dusk-mask-ring: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2010%2010%22%3E%3Ccircle%20cx%3D%225%22%20cy%3D%225%22%20r%3D%224.25%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.5%22%2F%3E%3C%2Fsvg%3E");
+}
+
 /* Sidebar state artwork. BB retains its labels, state priority and hover controls.
    Collapsed section headers copy the same glyphs; keep their native absolute slot. */
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Thread working"],[aria-label="Thread working with unsubmitted draft"],[aria-label="Workflow running"],[aria-label="Background agent running"],[aria-label="Background command running"],[aria-label="Plan mode active"],[aria-label="Goal active"])),
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread needs user input"]),
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Unread thread failed"],[aria-label="Queued message failed to send"])),
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Unread thread succeeded"]),
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has a message waiting to send"]),
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has unsubmitted draft"]) {
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Thread working"],[aria-label="Thread working with unsubmitted draft"],[aria-label="Workflow running"],[aria-label="Background agent running"],[aria-label="Background command running"],[aria-label="Plan mode active"],[aria-label="Goal active"])),
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread needs user input"]),
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Unread thread failed"],[aria-label="Queued message failed to send"])),
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Unread thread succeeded"]),
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has a message waiting to send"]),
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has unsubmitted draft"]) {
   position: relative;
 }
 
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Thread working"],[aria-label="Thread working with unsubmitted draft"],[aria-label="Workflow running"],[aria-label="Background agent running"],[aria-label="Background command running"],[aria-label="Plan mode active"],[aria-label="Goal active"])) > *,
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread needs user input"]) > *,
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Unread thread failed"],[aria-label="Queued message failed to send"])) > *,
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Unread thread succeeded"]) > *,
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has a message waiting to send"]) > *,
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has unsubmitted draft"]) > * {
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Thread working"],[aria-label="Thread working with unsubmitted draft"],[aria-label="Workflow running"],[aria-label="Background agent running"],[aria-label="Background command running"],[aria-label="Plan mode active"],[aria-label="Goal active"])) > *,
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread needs user input"]) > *,
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Unread thread failed"],[aria-label="Queued message failed to send"])) > *,
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Unread thread succeeded"]) > *,
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has a message waiting to send"]) > *,
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has unsubmitted draft"]) > * {
   opacity: 0;
   animation: none !important;
 }
 
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Thread working"],[aria-label="Thread working with unsubmitted draft"],[aria-label="Workflow running"],[aria-label="Background agent running"],[aria-label="Background command running"],[aria-label="Plan mode active"],[aria-label="Goal active"])) *,
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread needs user input"]) *,
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Unread thread failed"],[aria-label="Queued message failed to send"])) *,
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Unread thread succeeded"]) *,
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has a message waiting to send"]) *,
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has unsubmitted draft"]) * {
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Thread working"],[aria-label="Thread working with unsubmitted draft"],[aria-label="Workflow running"],[aria-label="Background agent running"],[aria-label="Background command running"],[aria-label="Plan mode active"],[aria-label="Goal active"])) *,
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread needs user input"]) *,
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Unread thread failed"],[aria-label="Queued message failed to send"])) *,
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Unread thread succeeded"]) *,
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has a message waiting to send"]) *,
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has unsubmitted draft"]) * {
   animation: none !important;
 }
 
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Thread working"],[aria-label="Thread working with unsubmitted draft"],[aria-label="Workflow running"],[aria-label="Background agent running"],[aria-label="Background command running"],[aria-label="Plan mode active"],[aria-label="Goal active"]))::after,
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread needs user input"])::after,
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Unread thread failed"],[aria-label="Queued message failed to send"]))::after,
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Unread thread succeeded"])::after,
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has a message waiting to send"])::after,
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has unsubmitted draft"])::after {
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Thread working"],[aria-label="Thread working with unsubmitted draft"],[aria-label="Workflow running"],[aria-label="Background agent running"],[aria-label="Background command running"],[aria-label="Plan mode active"],[aria-label="Goal active"]))::after,
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread needs user input"])::after,
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Unread thread failed"],[aria-label="Queued message failed to send"]))::after,
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Unread thread succeeded"])::after,
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has a message waiting to send"])::after,
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has unsubmitted draft"])::after {
   content: "";
   position: absolute;
   left: 50%;
@@ -94,35 +99,35 @@ kbd {
   mask: var(--dusk-status-mask) center / contain no-repeat;
 }
 
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Thread working"],[aria-label="Thread working with unsubmitted draft"],[aria-label="Workflow running"],[aria-label="Background agent running"],[aria-label="Background command running"],[aria-label="Plan mode active"],[aria-label="Goal active"])) {
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Thread working"],[aria-label="Thread working with unsubmitted draft"],[aria-label="Workflow running"],[aria-label="Background agent running"],[aria-label="Background command running"],[aria-label="Plan mode active"],[aria-label="Goal active"])) {
   --dusk-status-color: var(--primary);
-  --dusk-status-mask: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2010%2010%22%3E%3Ccircle%20cx%3D%225%22%20cy%3D%225%22%20r%3D%224.25%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.5%22%20stroke-dasharray%3D%223.15%202.1907075%22%20transform%3D%22rotate%28-90%205%205%29%22%2F%3E%3C%2Fsvg%3E");
+  --dusk-status-mask: var(--dusk-mask-dashed);
 }
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread needs user input"]) {
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread needs user input"]) {
   --dusk-status-color: #d9ad42;
-  --dusk-status-mask: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2010%2010%22%3E%3Ccircle%20cx%3D%225%22%20cy%3D%225%22%20r%3D%224.25%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.5%22%20stroke-dasharray%3D%223.15%202.1907075%22%20transform%3D%22rotate%28-90%205%205%29%22%2F%3E%3C%2Fsvg%3E");
+  --dusk-status-mask: var(--dusk-mask-dashed);
 }
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Unread thread failed"],[aria-label="Queued message failed to send"])) {
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has(:is([aria-label="Unread thread failed"],[aria-label="Queued message failed to send"])) {
   --dusk-status-color: #e46666;
-  --dusk-status-mask: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2010%2010%22%3E%3Ccircle%20cx%3D%225%22%20cy%3D%225%22%20r%3D%224.25%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.5%22%2F%3E%3C%2Fsvg%3E");
+  --dusk-status-mask: var(--dusk-mask-ring);
 }
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Unread thread succeeded"]) {
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Unread thread succeeded"]) {
   --dusk-status-color: #34b98b;
-  --dusk-status-mask: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2010%2010%22%3E%3Ccircle%20cx%3D%225%22%20cy%3D%225%22%20r%3D%224.25%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.5%22%2F%3E%3C%2Fsvg%3E");
+  --dusk-status-mask: var(--dusk-mask-ring);
 }
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has a message waiting to send"]) {
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has a message waiting to send"]) {
   --dusk-status-color: #898989;
-  --dusk-status-mask: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2010%2010%22%3E%3Ccircle%20cx%3D%225%22%20cy%3D%225%22%20r%3D%224.25%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.5%22%2F%3E%3C%2Fsvg%3E");
+  --dusk-status-mask: var(--dusk-mask-ring);
 }
-:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-testid="command-palette"] [role="option"] > span.inline-flex, [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has unsubmitted draft"]) {
+:is([data-sidebar="sidebar"] [data-sidebar-thread-trailing-indicator], [data-sidebar="sidebar"] [data-sidebar-collapsed-activity-edge], [data-root-compose-mobile-recents] a > span.size-6):has([aria-label="Thread has unsubmitted draft"]) {
   --dusk-status-color: var(--dusk-draft);
-  --dusk-status-mask: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2010%2010%22%3E%3Ccircle%20cx%3D%225%22%20cy%3D%225%22%20r%3D%224.25%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.5%22%2F%3E%3C%2Fsvg%3E");
+  --dusk-status-mask: var(--dusk-mask-ring);
 }
 
-[data-sidebar="sidebar"] :is(div,section):has(> a[data-sidebar-thread-id][aria-label$="(unsubmitted draft)"]):not(:hover, :active, .bb-sidebar-selected-row):not(:has(> a[aria-current="page"])) {
+[data-sidebar="sidebar"] [data-sidebar-rename-row]:has(> span > a[data-sidebar-thread-id][aria-label$="(unsubmitted draft)"]):not(:hover, :active, .bb-sidebar-selected-row) {
   background-image: linear-gradient(var(--dusk-draft-fill), var(--dusk-draft-fill));
 }
-[data-sidebar="sidebar"] :is(div,section):has(> a[data-sidebar-thread-id][aria-label$="(unsubmitted draft)"]) [data-sidebar-thread-trailing-indicator]:not(:has([aria-label])) > * {
+[data-sidebar="sidebar"] [data-sidebar-rename-row]:has(> span > a[data-sidebar-thread-id][aria-label$="(unsubmitted draft)"]) [data-sidebar-thread-trailing-indicator]:not(:has([aria-label])) > * {
   opacity: 0;
 }
 
@@ -199,10 +204,10 @@ button[aria-label^="Context window "][data-state="open"] {
 [data-sidebar="sidebar"] [data-sidebar-sticky-stack] {
   --bb-sidebar-sticky-parent-stride: calc(var(--dusk-thread-row-height) + var(--bb-sidebar-sticky-child-row-gap));
 }
-[data-sidebar="sidebar"] [data-sidebar-sticky-tier="parent"]:has(> a[data-sidebar-thread-id]) {
+[data-sidebar="sidebar"] [data-sidebar-sticky-tier="parent"]:has(> span > a[data-sidebar-thread-id]) {
   --bb-sidebar-sticky-tier-height: var(--dusk-thread-row-height);
 }
-[data-sidebar="sidebar"] :is(div, section):has(> a[data-sidebar-thread-id]) {
+[data-sidebar="sidebar"] [data-sidebar-rename-row]:has(> span > a[data-sidebar-thread-id]) {
   height: var(--dusk-thread-row-height);
   min-height: var(--dusk-thread-row-height);
   max-height: var(--dusk-thread-row-height);
@@ -213,19 +218,19 @@ button[aria-label^="Context window "][data-state="open"] {
   align-items: center;
   padding-block: 6px;
 }
-[data-sidebar="sidebar"] :is(div, section).h-7:has(> a[data-sidebar-thread-id]) {
-  height: var(--dusk-thread-row-height);
-  min-height: var(--dusk-thread-row-height);
-  max-height: var(--dusk-thread-row-height);
-}
-[data-sidebar="sidebar"] :is(div, section):has(> a[data-sidebar-thread-id]):not([data-sidebar-sticky-tier]) {
+[data-sidebar="sidebar"] [data-sidebar-rename-row]:has(> span > a[data-sidebar-thread-id]):not([data-sidebar-sticky-tier]) {
   position: relative;
 }
-[data-sidebar="sidebar"] :is(div, section):has(> a[data-sidebar-thread-id]) > span:not(.dusk-thread-meta) {
+/* The link fills the title span; release that span's positioning so the link
+   covers both lines of the row, not just the title. */
+[data-sidebar="sidebar"] [data-sidebar-rename-row]:has(> span > a[data-sidebar-thread-id]) > span:has(> a[data-sidebar-thread-id]) {
+  position: static;
   grid-row: 1;
+  grid-column: 1;
 }
-[data-sidebar="sidebar"] :is(div, section):has(> a[data-sidebar-thread-id]) > [data-sidebar-row-controls] {
-  align-self: start;
+[data-sidebar="sidebar"] [data-sidebar-rename-row]:has(> span > a[data-sidebar-thread-id]) > [data-sidebar-thread-trailing] {
+  grid-row: 1;
+  grid-column: 2;
 }
 .dusk-thread-meta {
   position: static;
@@ -277,17 +282,17 @@ button[aria-label^="Context window "][data-state="open"] {
 .dusk-pin-slot { display: contents; }
 /* The extra pin action needs one more native action width on hover/focus. */
 @media (min-width: 768px), (pointer: fine) {
-  [data-sidebar="sidebar"] :is(div, section):has(> a[data-sidebar-thread-id]):has(.dusk-pin-slot):is(:hover, :has(:focus-visible), :has([data-sidebar-hover-actions-open="true"])) {
+  [data-sidebar="sidebar"] [data-sidebar-rename-row]:has(> span > a[data-sidebar-thread-id]):has(.dusk-pin-slot):is(:hover, :has(:focus-visible), :has([data-sidebar-hover-actions-open="true"])) {
     --dusk-title-cover: 60px;
   }
-  [data-sidebar="sidebar"] :is(div, section):has(> a[data-sidebar-thread-id]):has(.dusk-pin-slot):is(:hover, :has(:focus-visible), :has([data-sidebar-hover-actions-open="true"])) .bb-sidebar-hover-actions-inset {
+  [data-sidebar="sidebar"] [data-sidebar-rename-row]:has(> span > a[data-sidebar-thread-id]):has(.dusk-pin-slot):is(:hover, :has(:focus-visible), :has([data-sidebar-hover-actions-open="true"])) .bb-sidebar-hover-actions-inset {
     padding-right: 0;
   }
 }
 
 
 /* Stack the 20px title line and 16px metadata line without an extra gap. */
-[data-sidebar="sidebar"] :is(div, section):has(> a[data-sidebar-thread-id]) .bb-thread-title { line-height: 20px; }
+[data-sidebar="sidebar"] [data-sidebar-rename-row]:has(> span > a[data-sidebar-thread-id]) .bb-thread-title { line-height: 20px; }
 
 
 /* Sidebar icon actions stay visually quiet: hover brightens the glyph only. */
@@ -309,7 +314,7 @@ button[aria-label^="Context window "][data-state="open"] {
 
 /* Keep the title stationary; fade its right edge instead of inserting ellipses.
    On hover the fade ends before the extra pin/archive actions. */
-[data-sidebar="sidebar"] :is(div, section):has(> a[data-sidebar-thread-id]) .bb-thread-title {
+[data-sidebar="sidebar"] [data-sidebar-rename-row]:has(> span > a[data-sidebar-thread-id]) .bb-thread-title {
   flex: 1;
   overflow: hidden;
   white-space: nowrap;
@@ -318,7 +323,7 @@ button[aria-label^="Context window "][data-state="open"] {
   -webkit-mask-image: linear-gradient(to right, #000 max(0px, calc(100% - var(--dusk-title-cover, 0px) - 24px)), transparent max(0px, calc(100% - var(--dusk-title-cover, 0px))));
   mask-image: linear-gradient(to right, #000 max(0px, calc(100% - var(--dusk-title-cover, 0px) - 24px)), transparent max(0px, calc(100% - var(--dusk-title-cover, 0px))));
 }
-[data-sidebar="sidebar"] :is(div, section):has(> a[data-sidebar-thread-id]) .bb-thread-title > .truncate {
+[data-sidebar="sidebar"] [data-sidebar-rename-row]:has(> span > a[data-sidebar-thread-id]) .bb-thread-title > .truncate {
   flex-shrink: 0;
   overflow: visible;
   text-overflow: clip;
@@ -328,8 +333,10 @@ button[aria-label^="Context window "][data-state="open"] {
 button:is([aria-label="Cancel recording"], [aria-label="Cancel transcription"], [aria-label="Stop and transcribe recording"], [aria-label="Transcribing voice input"]) {
   border-radius: var(--radius-md, 6px);
 }
-/* Thread search uses the same quiet surfaces and two-line rhythm as the sidebar. */
-[data-testid="command-palette"] {
+/* Quick palette: the sidebar's surfaces, one highlight across the row and its
+   Open in split action, and the sidebar's two-line thread rhythm. */
+[data-testid="command-palette"],
+[data-testid="command-palette"] :is([data-palette-input-band], [data-palette-results-clip]) {
   background-color: var(--sidebar);
   color: var(--sidebar-foreground);
 }
@@ -337,33 +344,71 @@ button:is([aria-label="Cancel recording"], [aria-label="Cancel transcription"], 
   background-color: var(--sidebar);
   color: var(--subtle-foreground);
 }
-[data-testid="command-palette"] [role="option"][aria-selected="true"] {
+[data-testid="command-palette"] :is([role="option"][aria-selected="true"], div:has(> [role="option"][aria-selected="true"])) {
   background-color: var(--sidebar-accent);
 }
-[data-testid="command-palette"] [aria-label="Thread search results"] button[role="option"] {
-  padding-block: 6px; min-height: 48px; font-size: 13px;
-  align-items: flex-start;
+[data-testid="command-palette"] [role="option"]:has([data-palette-thread-details]) {
+  min-height: 48px;
+  padding-block: 6px;
+  font-size: 13px;
 }
-[data-testid="command-palette"] [aria-label="Thread search results"] button[role="option"] > span:first-child > span:first-child {
+[data-testid="command-palette"] [role="option"]:has([data-palette-thread-details]) > span > span:first-child {
   line-height: 20px;
   text-overflow: clip;
   mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
 }
-[data-testid="command-palette"] [aria-label="Thread search results"] button[role="option"] > span:first-child > span + span {
-  margin-top: 0; font-size: 11px; line-height: 16px;
-  color: var(--subtle-foreground);
-}
-[data-testid="command-palette"] [aria-label="Thread search results"] button[role="option"] > span.inline-flex {
-  margin-top: 2px;
-}
-[data-testid="command-palette"] [aria-label="Thread search results"] button[role="option"] > span:first-child {
-  display: flex; flex-direction: column; gap: 0;
-}
-[data-testid="command-palette"] [aria-label="Thread search results"] button[role="option"] > span:first-child > span {
-  margin-block: 0;
-}
-[data-testid="command-palette"] button[role="option"]:has([aria-label="Thread has unsubmitted draft"], [aria-label="Thread working with unsubmitted draft"]):not(:hover, :active, [aria-selected="true"]) {
+[data-palette-thread-details] { min-height: 16px; }
+[data-palette-thread-details] > :not([data-palette-thread-status]) { font-size: 11px; line-height: 16px; }
+[data-testid="command-palette"] [role="option"]:has([data-palette-thread-status]:is([aria-label="Thread has unsubmitted draft"], [aria-label="Thread working with unsubmitted draft"])):not([aria-selected="true"]) {
   background-image: linear-gradient(var(--dusk-draft-fill), var(--dusk-draft-fill));
+}
+/* The palette labels its status span itself, so it hosts the artwork directly. */
+[data-palette-thread-status]:is([aria-label="Thread working"], [aria-label="Thread working with unsubmitted draft"], [aria-label="Workflow running"], [aria-label="Background agent running"], [aria-label="Background command running"], [aria-label="Plan mode active"], [aria-label="Goal active"], [aria-label="Thread needs user input"], [aria-label="Unread thread failed"], [aria-label="Queued message failed to send"], [aria-label="Unread thread succeeded"], [aria-label="Thread has a message waiting to send"], [aria-label="Thread has unsubmitted draft"]) {
+  position: relative;
+}
+[data-palette-thread-status]:is([aria-label="Thread working"], [aria-label="Thread working with unsubmitted draft"], [aria-label="Workflow running"], [aria-label="Background agent running"], [aria-label="Background command running"], [aria-label="Plan mode active"], [aria-label="Goal active"], [aria-label="Thread needs user input"], [aria-label="Unread thread failed"], [aria-label="Queued message failed to send"], [aria-label="Unread thread succeeded"], [aria-label="Thread has a message waiting to send"], [aria-label="Thread has unsubmitted draft"]) > * {
+  opacity: 0;
+  animation: none !important;
+}
+[data-palette-thread-status]:is([aria-label="Thread working"], [aria-label="Thread working with unsubmitted draft"], [aria-label="Workflow running"], [aria-label="Background agent running"], [aria-label="Background command running"], [aria-label="Plan mode active"], [aria-label="Goal active"], [aria-label="Thread needs user input"], [aria-label="Unread thread failed"], [aria-label="Queued message failed to send"], [aria-label="Unread thread succeeded"], [aria-label="Thread has a message waiting to send"], [aria-label="Thread has unsubmitted draft"]) * {
+  animation: none !important;
+}
+[data-palette-thread-status]:is([aria-label="Thread working"], [aria-label="Thread working with unsubmitted draft"], [aria-label="Workflow running"], [aria-label="Background agent running"], [aria-label="Background command running"], [aria-label="Plan mode active"], [aria-label="Goal active"], [aria-label="Thread needs user input"], [aria-label="Unread thread failed"], [aria-label="Queued message failed to send"], [aria-label="Unread thread succeeded"], [aria-label="Thread has a message waiting to send"], [aria-label="Thread has unsubmitted draft"])::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  background-color: var(--dusk-status-color);
+  -webkit-mask: var(--dusk-status-mask) center / contain no-repeat;
+  mask: var(--dusk-status-mask) center / contain no-repeat;
+}
+[data-palette-thread-status]:is([aria-label="Thread working"], [aria-label="Thread working with unsubmitted draft"], [aria-label="Workflow running"], [aria-label="Background agent running"], [aria-label="Background command running"], [aria-label="Plan mode active"], [aria-label="Goal active"]) {
+  --dusk-status-color: var(--primary);
+  --dusk-status-mask: var(--dusk-mask-dashed);
+}
+[data-palette-thread-status]:is([aria-label="Thread needs user input"]) {
+  --dusk-status-color: #d9ad42;
+  --dusk-status-mask: var(--dusk-mask-dashed);
+}
+[data-palette-thread-status]:is([aria-label="Unread thread failed"], [aria-label="Queued message failed to send"]) {
+  --dusk-status-color: #e46666;
+  --dusk-status-mask: var(--dusk-mask-ring);
+}
+[data-palette-thread-status]:is([aria-label="Unread thread succeeded"]) {
+  --dusk-status-color: #34b98b;
+  --dusk-status-mask: var(--dusk-mask-ring);
+}
+[data-palette-thread-status]:is([aria-label="Thread has a message waiting to send"]) {
+  --dusk-status-color: #898989;
+  --dusk-status-mask: var(--dusk-mask-ring);
+}
+[data-palette-thread-status]:is([aria-label="Thread has unsubmitted draft"]) {
+  --dusk-status-color: var(--dusk-draft);
+  --dusk-status-mask: var(--dusk-mask-ring);
 }
 /* Customize navigation already provides a 16px slot; default icon wrappers
    must fit that slot rather than overflow at their 24px fallback size. */
@@ -496,7 +541,7 @@ button.dusk-panel-toggle[hidden] { display: none; }
 [data-root-compose-mobile-recents] ul > li { margin-block: 0 2px; min-height: 48px; height: auto; }
 [data-root-compose-mobile-recents] li > a { min-height: 48px; height: auto; padding-block: 6px; gap: 8px; }
 [data-root-compose-mobile-recents] li:hover { background: var(--sidebar-accent); }
-[data-root-compose-mobile-recents] a > span.size-7 { width: 16px; height: 16px; border: 0; background: transparent; border-radius: 0; }
+[data-root-compose-mobile-recents] li > span.size-7, [data-root-compose-mobile-recents] li > button > span.size-7 { width: 16px; height: 16px; border: 0; background: transparent; border-radius: 0; }
 [data-root-compose-mobile-recents] a > span.min-w-0 { display: flex; flex-direction: column; gap: 0; }
 [data-root-compose-mobile-recents] a > span.min-w-0 > * { margin: 0; }
 [data-root-compose-mobile-recents] a > span.min-w-0 > span:first-child { font-size: 13px; line-height: 20px; }
@@ -507,20 +552,22 @@ button.dusk-panel-toggle[hidden] { display: none; }
   background-image: linear-gradient(var(--dusk-draft-fill), var(--dusk-draft-fill));
 }
 /* Same 4px step on every PromptBox. Leave the + on BB's -ml-1.5 so it sits
-   with the editor text; only flatten Send's ml-1. */
+   with the editor text; only flatten Send's ml-1, including the split
+   Send/Send options control that wraps it. */
 [data-promptbox] [data-promptbox-action-row] [data-promptbox-standard-actions],
 [data-promptbox-shell] [data-promptbox-action-row] [data-promptbox-standard-actions],
 [data-promptbox] [data-promptbox-submit-group] {
   gap: 4px;
 }
-[data-promptbox] [data-promptbox-submit-action],
-[data-promptbox-shell] [data-promptbox-submit-action] {
+[data-promptbox] :is([data-promptbox-submit-action], [data-promptbox-send-menu]),
+[data-promptbox-shell] :is([data-promptbox-submit-action], [data-promptbox-send-menu]) {
   margin-left: 0;
 }
 
-/* One square action size per composer layout, shared by home/thread and voice. */
+/* One square action size per composer layout, shared by home/thread and voice.
+   A labeled submit, such as handoff's "New thread", keeps BB's text width. */
 [data-promptbox] { --dusk-action-size: 32px; }
-[data-promptbox] :is(button[aria-label="Prompt actions"], [data-promptbox-submit-action], button[aria-label="Start voice input"], button[aria-label="Cancel recording"], button[aria-label="Cancel transcription"], button[aria-label="Stop and transcribe recording"], button[aria-label="Transcribing voice input"]) {
+[data-promptbox] :is(button[aria-label="Prompt actions"], [data-promptbox-submit-action]:not(:has([data-promptbox-submit-label])), button[aria-label="Start voice input"], button[aria-label="Cancel recording"], button[aria-label="Cancel transcription"], button[aria-label="Stop and transcribe recording"], button[aria-label="Transcribing voice input"]) {
   width: var(--dusk-action-size);
   height: var(--dusk-action-size);
   min-width: var(--dusk-action-size);

@@ -453,7 +453,7 @@ function CustomSnooze({ threadId, onClose, onSnooze }: { threadId: string | null
   </Dialog>;
 }
 
-export function StatusThreadList({ activeThreadId, onNavigate, Original }: PluginThreadListProps) {
+export function StatusThreadList({ activeThreadId, onNavigate }: PluginThreadListProps) {
   const rpc = useRpc<typeof rpcContract>();
   const { status, threads: liveThreads, projects } = experimental_useSidebarThreads();
   const threads = useReadHold(liveThreads, activeThreadId);
@@ -523,7 +523,7 @@ export function StatusThreadList({ activeThreadId, onNavigate, Original }: Plugi
     return () => { statusListMounted--; window.removeEventListener(SNOOZE_EVENT, open); };
   }, []);
 
-  if (status === 'error') return <Original />;
+  if (status === 'error') return <div className="dusk-status-list"><p className="dusk-status-empty" role="alert">Could not load threads. Refresh to retry.</p></div>;
   if (status === 'loading' && threads.length === 0) return <div className="dusk-status-list" aria-busy="true" />;
   const items: StatusItem[] = [];
   for (const { id, label } of SECTIONS) {

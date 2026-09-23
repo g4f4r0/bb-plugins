@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { useStatusList } from './status-list-preference.mjs';
 
 // Exercise the real sidebar and navigation with isolated status/snooze fixtures.
 const browser = await chromium.launch({ executablePath: process.env.DUSK_BROWSER, args: ['--no-sandbox'] });
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
+  await useStatusList(context);
   await context.addInitScript(() => {
     if (!localStorage.getItem('dusk:status-collapsed')) localStorage.setItem('dusk:status-collapsed', '[]');
   });

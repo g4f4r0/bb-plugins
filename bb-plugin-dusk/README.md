@@ -28,12 +28,12 @@ bb theme set default
 
 ## Status sidebar
 
-Dusk can replace BB's thread list with status sections: **Pinned**, **Waiting**, **Ready**, **Working**, **Done**, and **Snoozed**. There are no project headings; each row shows its project (Personal for threads outside a project) and last update. BB turns it on when Dusk loads. To switch between it and BB's list, open **Settings → Appearance → Sidebar** and choose **Dusk (status)** or BB's list.
+Dusk can replace BB's thread list with status sections: **Pinned**, **Waiting**, **Ready**, **Working**, **Done**, and **Snoozed**. There are no project headings; each row shows its project (Personal for threads outside a project) and last update. BB's own list is now the built-in Thread list plugin, and BB picks that one automatically. To use Dusk's list, open **Settings → Appearance → Sidebar** and choose **Dusk (status)**. The choice syncs across devices.
 
-- **Waiting**: the agent is waiting on you, with a question or approval, or a run failed and you haven't read it.
+- **Waiting**: the agent is waiting on you, with a question or approval, a run failed and you haven't read it, or a queued message failed to send.
 - **Ready**: the agent finished and you haven't read the result.
 - **Working**: the agent, a workflow, a background job, plan mode, or a goal is active.
-- **Done**: finished threads you've read, newest first.
+- **Done**: finished threads you've read, newest first. A thread with a scheduled message stays here and shows BB's grey waiting-to-send ring.
 - Opening an unread thread keeps it in Ready or Waiting for 5 seconds. Leave sooner and Dusk marks it unread again, so a mis-click doesn't lose it.
 - Child threads stay under their parent. A group takes its most urgent state: Waiting, then Working, then Ready.
 
@@ -94,7 +94,7 @@ Install Dusk from a durable checkout or local plugin directory. Do not make a te
 | `lib/photo.ts` | Runs the photo shader, resizes without reloading the image, and handles motion and WebGL fallback. |
 | `lib/photo-shaders.ts` | Attributed Aura/Paper image shaders and Aura's threshold-wave animation. |
 | `lib/ambient.ts` | Draws the animated fallback when no image is set. |
-| `lib/sidebar.tsx` | Adds branch or location, message age, and Pin or Unpin to native thread rows. |
+| `lib/sidebar.tsx` | Adds branch or location, message age, and Pin or Unpin to BB's Thread list rows. |
 | `lib/observe-roots.ts` | Watches only the DOM areas Dusk needs and cleans up on unload. |
 
 ## Adding a visual rule
@@ -149,10 +149,14 @@ At minimum, test:
 - Empty and typed composers.
 - Voice recording, cancel, and confirm states.
 - Right panel open and closed.
-- Working, draft, success, and failure thread states.
+- Working, draft, success, failure, and scheduled-message thread states.
+- Send, Send options (Save draft, Send later), and a handoff from the model picker.
+- Quick palette in commands and Threads modes.
 - Light, dark, and reduced-motion modes.
 - Navigation between the welcome launcher and New thread, then away and back again.
 
 Inspect positions frame by frame when Dusk moves with native UI. Matching final coordinates is not enough. The two elements must start, progress, and finish together.
 
-After a BB upgrade, recheck every selector that depends on BB's DOM. The main ones are the welcome `role="img"`/`aria-label="bb"` signature, `#root-compose-prompt`, `data-promptbox-shell`, `data-sidebar`, and the sidebar trigger test IDs.
+After a BB upgrade, recheck every selector that depends on BB's DOM. The main ones are the welcome `role="img"`/`aria-label="bb"` signature, `#root-compose-prompt`, `data-promptbox-shell`, `data-promptbox-send-menu`, `data-promptbox-submit-label`, `data-sidebar`, `data-sidebar-rename-row` (a Thread list row, with the link inside its title span), `data-palette-thread-status`, and the sidebar trigger test IDs.
+
+Keep BB's new controls and restyle them; don't hide a feature to preserve an older layout.

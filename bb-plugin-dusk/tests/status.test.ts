@@ -23,6 +23,14 @@ test('sorts threads into status sections', () => {
   assert.deepEqual(ids(s.get('done')!), [done.id]);
 });
 
+test('a failed queued message waits on you; a scheduled one does not', () => {
+  const failed = t({ indicator: 'queued-failed' });
+  const scheduled = t({ indicator: 'queued-waiting' });
+  const s = buildFamilies([failed, scheduled], new Map(), new Map(), 1000);
+  assert.deepEqual(ids(s.get('waiting')!), [failed.id]);
+  assert.deepEqual(ids(s.get('done')!), [scheduled.id]);
+});
+
 test('a child that asks moves its whole family to Waiting', () => {
   const parent = t({ indicator: 'runtime' });
   const child = t({ parentThreadId: parent.id, hasPendingInteraction: true, createdAt: 5 });

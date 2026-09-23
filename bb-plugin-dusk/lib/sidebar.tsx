@@ -41,7 +41,8 @@ export function SidebarDetails() {
     const sync = () => {
       let changed = false; const found = new Set<HTMLElement>();
       document.querySelectorAll<HTMLElement>('[data-sidebar="sidebar"] a[data-sidebar-thread-id]').forEach(link => {
-        const row = link.parentElement, id = link.dataset.sidebarThreadId;
+        // BB nests the link in the row's title span; the row owns the controls.
+        const row = link.closest<HTMLElement>('[data-sidebar-rename-row]'), id = link.dataset.sidebarThreadId;
         if (!row || !id || !row.querySelector('.bb-thread-title')) return;
         found.add(link);
         const controls = row.querySelector<HTMLElement>('[data-sidebar-row-controls]');

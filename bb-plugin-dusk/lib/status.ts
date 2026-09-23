@@ -23,9 +23,9 @@ export function isWorking(thread: Thread): boolean {
     activity.planMode > 0 || activity.goals > 0 || thread.indicator === "runtime" || thread.indicator === "working-draft";
 }
 
-/** The agent is waiting on the user: a question, an approval, or an unread failure. */
+/** The agent is waiting on the user: a question, an approval, an unread failure, or a queued message that failed to send. */
 export function needsYou(thread: Thread): boolean {
-  return thread.hasPendingInteraction || thread.indicator === "waiting-for-input" || thread.indicator === "unread-error";
+  return thread.hasPendingInteraction || thread.indicator === "waiting-for-input" || thread.indicator === "unread-error" || thread.indicator === "queued-failed";
 }
 
 /** Finished with a result the user hasn't read yet. */
