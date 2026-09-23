@@ -121,7 +121,8 @@ export class DesktopAutomationAdapter implements AutomationAdapter {
       if (intent.action.kind === "desktop.click" && token) await this.#runtime.clickElement(this.#window.pid, this.#window.windowId, token, context.signal);
       else if (intent.action.kind === "desktop.scroll" && target.targetId === "page_scroll") {
         await this.#runtime.input({ kind: "wheel", x: this.#window.x + Math.floor(this.#window.width * 0.75),
-          y: this.#window.y + Math.floor(this.#window.height * 0.55), deltaX: 0, deltaY: intent.action.direction === "down" ? 340 : -340 }, context.signal);
+          y: this.#window.y + Math.floor(this.#window.height * 0.55), deltaX: 0,
+          deltaY: (intent.action.direction === "down" ? 1 : -1) * (intent.action.amount === "small" ? 80 : 260) }, context.signal);
       } else if (intent.action.kind === "desktop.scroll" && token) await this.#runtime.scrollElement(this.#window.pid, this.#window.windowId, token, intent.action.direction, context.signal);
       else throw wayfinderError("policy-denied", "act", "Invalid native action target");
       await abortableDelay(350, context.signal);

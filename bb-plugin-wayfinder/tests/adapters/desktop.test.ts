@@ -41,7 +41,8 @@ describe("native desktop Jev targets", () => {
         target: { targetId: target.targetId, resourceGeneration: target.resourceGeneration, snapshotId: before.identity.snapshotId } }, intentRecordedAt: Date.now() };
     const result = await Effect.runPromise(adapter.execute(intent, context));
     expect(result.state).toBe("uncertain");
-    expect((runtime.input as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+    expect((runtime.input as ReturnType<typeof vi.fn>)).toHaveBeenCalledExactlyOnceWith(
+      { kind: "wheel", x: 910, y: 390, deltaX: 0, deltaY: 80 }, context.signal);
   });
 
   it("executes an approved Cua element token once and observes checkout before another decision", async () => {
