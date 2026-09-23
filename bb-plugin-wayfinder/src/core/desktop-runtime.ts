@@ -8,7 +8,7 @@ import type { HumanInput } from "../contracts/run.js";
 import { ProcessCuaTransport, type CuaToolResult } from "../adapters/cua-client.js";
 import { errorMessage } from "./errors.js";
 
-export const DESKTOP_CAPABILITY_TOOLS = ["get_desktop_state", "get_accessibility_tree", "get_window_state", "list_windows", "health_report", "click", "drag", "scroll", "type_text", "press_key", "start_recording", "stop_recording", "get_recording_state"] as const;
+export const DESKTOP_CAPABILITY_TOOLS = ["get_desktop_state", "get_accessibility_tree", "get_window_state", "list_windows", "health_report", "click", "drag", "scroll", "type_text", "press_key", "start_recording", "stop_recording", "get_recording_state", "set_agent_cursor_enabled"] as const;
 export interface DesktopWindow { pid: number; windowId: number; title: string; x: number; y: number; width: number; height: number }
 function capabilityManifest(recordingRoot: string, window: { pid: number; windowId: number } | null): string {
   return JSON.stringify({
@@ -23,6 +23,53 @@ function capabilityManifest(recordingRoot: string, window: { pid: number; window
 }
 const MAX_FRAME_BYTES = 1_100_000;
 const DESKTOP_TARGET = { kind: "desktop", display_id: "primary" } as const;
+const BLUE_THEME = "app.getbb.wayfinder.blue";
+
+const X11_POINTER_VISIBILITY = `import ctypes,signal,sys
+x=ctypes.CDLL('libX11.so.6'); f=ctypes.CDLL('libXfixes.so.3')
+x.XOpenDisplay.argtypes=[ctypes.c_char_p]; x.XOpenDisplay.restype=ctypes.c_void_p
+x.XDefaultRootWindow.argtypes=[ctypes.c_void_p]; x.XDefaultRootWindow.restype=ctypes.c_ulong
+x.XFlush.argtypes=[ctypes.c_void_p]; x.XCloseDisplay.argtypes=[ctypes.c_void_p]
+f.XFixesHideCursor.argtypes=[ctypes.c_void_p,ctypes.c_ulong]
+f.XFixesShowCursor.argtypes=[ctypes.c_void_p,ctypes.c_ulong]
+d=x.XOpenDisplay(None)
+if not d: sys.exit(1)
+r=x.XDefaultRootWindow(d)
+def stop(a,b): raise KeyboardInterrupt
+signal.signal(signal.SIGTERM,stop)
+try:
+ f.XFixesHideCursor(d,r); x.XFlush(d)
+ sys.stdout.write('ready\\n'); sys.stdout.flush()
+ sys.stdin.buffer.read()
+except KeyboardInterrupt: pass
+finally:
+ f.XFixesShowCursor(d,r); x.XFlush(d); x.XCloseDisplay(d)
+`;
+
+async function hidePhysicalX11Pointer(signal: AbortSignal): Promise<() => Promise<void>> {
+  // XFixes owns only the real pointer. Cua's synthetic cursor remains native and visible.
+  // A short-lived X client releases its hide request even if the host worker exits.
+  const child = spawn("python3", ["-c", X11_POINTER_VISIBILITY], { stdio: ["pipe", "pipe", "ignore"], env: process.env });
+  const ready = new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: Error) => { if (settled) return; settled = true; clearTimeout(timer); child.stdout.removeAllListeners("data"); child.removeAllListeners("error"); child.removeAllListeners("exit"); error ? reject(error) : resolve(); };
+    const timer = setTimeout(() => finish(new Error("X11 physical pointer did not hide in time")), 2_000);
+    child.once("error", (error) => finish(error));
+    child.once("exit", () => finish(new Error("X11 physical pointer hiding is unavailable")));
+    child.stdout.on("data", (chunk: Buffer) => { if (chunk.toString("utf8").includes("ready\n")) finish(); });
+  });
+  try { await ready; signal.throwIfAborted(); }
+  catch (error) { child.stdin.end(); child.kill("SIGTERM"); throw error; }
+  return async () => {
+    child.stdin.end();
+    if (child.exitCode === null && child.signalCode === null) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => { child.kill("SIGTERM"); resolve(); }, 1_000);
+        child.once("exit", () => { clearTimeout(timer); resolve(); });
+      });
+    }
+  };
+}
 
 export function cuaLaunchStrategy(platform: NodeJS.Platform): "launchservices" | "embedded" {
   return platform === "darwin" ? "launchservices" : "embedded";
@@ -103,6 +150,7 @@ async function compress(bytes: Buffer, width: number, height: number, signal: Ab
 export class DesktopRuntime {
   readonly #dataDir: string;
   readonly #window: { pid: number; windowId: number } | null;
+  readonly #humanInput: boolean;
   readonly #instanceId = randomBytes(6).toString("hex");
   #binary: string | null = null;
   #socket = "";
@@ -111,7 +159,7 @@ export class DesktopRuntime {
   #starting: Promise<void> | null = null;
   #capture: Promise<DesktopFrame> | null = null;
 
-  constructor(dataDir: string, window: { pid: number; windowId: number } | null = null) { this.#dataDir = dataDir; this.#window = window; }
+  constructor(dataDir: string, window: { pid: number; windowId: number } | null = null, humanInput = false) { this.#dataDir = dataDir; this.#window = window; this.#humanInput = humanInput; }
 
   async available(): Promise<boolean> { return await resolveCuaExecutable() !== null; }
 
@@ -156,7 +204,16 @@ export class DesktopRuntime {
     await this.#start(signal);
     const transport = this.#transport!;
     const call = desktopInputCall(input);
-    await transport.call(call.tool, call.payload, signal);
+    if (this.#humanInput) { await transport.call(call.tool, call.payload, signal); return; }
+    const restorePointer = process.platform === "linux" && Boolean(process.env.DISPLAY) && !process.env.WAYLAND_DISPLAY
+      ? await hidePhysicalX11Pointer(signal) : async () => {};
+    try {
+      await transport.call("set_agent_cursor_enabled", { enabled: true }, signal);
+      await transport.call(call.tool, call.payload, signal);
+    } finally {
+      await transport.call("set_agent_cursor_enabled", { enabled: false }, AbortSignal.timeout(2_000)).catch(() => undefined);
+      await restorePointer();
+    }
   }
 
   async windows(signal: AbortSignal): Promise<DesktopWindow[]> {
@@ -263,6 +320,11 @@ export class DesktopRuntime {
       await chmod(manifest, 0o600).catch(() => undefined);
       await rm(this.#socket, { force: true }).catch(() => undefined);
       const serveArgs = ["serve", "--socket", this.#socket, "--permission-mode", "bounded", "--capability-manifest", manifest, "--approve-capability-manifest"];
+      if (this.#humanInput) serveArgs.push("--no-overlay");
+      else {
+        const installedTheme = join(homedir(), ".local", "share", "cua-driver", "cursor-themes", `${BLUE_THEME}.cua-theme`);
+        try { await access(installedTheme); serveArgs.push("--cursor-theme", BLUE_THEME); } catch { /* Other hosts retain Cua's installed default. */ }
+      }
       const runtimeEnv = { ...process.env };
       if (process.platform === "linux" && !runtimeEnv.AT_SPI_BUS_ADDRESS) {
         const cacheBus = join(homedir(), ".cache", "at-spi", "bus");
@@ -283,7 +345,8 @@ export class DesktopRuntime {
         try { await access(this.#socket); break; } catch { await new Promise((resolve) => setTimeout(resolve, 50)); }
       }
       if (process.platform !== "darwin" && this.#process === null) throw new Error("Cua Driver stopped before desktop capture became ready");
-      this.#transport = new ProcessCuaTransport({ binaryPath: this.#binary, socketPath: this.#socket, session: `wayfinder-${process.pid}`, timeoutMs: 5_000, maxOutputBytes: 16_000_000 });
+      this.#transport = new ProcessCuaTransport({ binaryPath: this.#binary, socketPath: this.#socket, session: `wayfinder-${process.pid}-${this.#instanceId}`, timeoutMs: 5_000, maxOutputBytes: 16_000_000 });
+      if (!this.#humanInput && this.#window === null) await this.#transport.call("set_agent_cursor_enabled", { enabled: false }, signal);
     })().finally(() => { this.#starting = null; });
     return this.#starting;
   }

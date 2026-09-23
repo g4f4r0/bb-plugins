@@ -55,6 +55,7 @@ function runRoot(): string { if (runRootPath === null) throw new Error("Wayfinde
 function artifactStore(): ArtifactStore { if (artifacts === null) throw new Error("Wayfinder host storage is not initialized"); return artifacts; }
 const artifactRecords = new Map<string, ArtifactRecord>();
 let desktop: DesktopRuntime | null = null;
+let humanDesktop: DesktopRuntime | null = null;
 type PresentationRecording = { id: string; threadId: string; projectId: string | null; filename: string; dir: string; startedAt: number; lease: { dispose(): void }; timer: ReturnType<typeof setTimeout>; stopping: Promise<ArtifactRecord> | null };
 let activeRecording: PresentationRecording | null = null;
 const completedRecordings = new Map<string, { threadId: string; artifact: ArtifactRecord }>();
@@ -63,11 +64,14 @@ const desktopViewers = new Set<string>();
 let desktopWorkerLease: { dispose(): void } | null = null;
 let desktopWorkerTimer: ReturnType<typeof setTimeout> | null = null;
 function desktopRuntime(dataDir: string): DesktopRuntime { desktop ??= new DesktopRuntime(join(dataDir, "desktop")); return desktop; }
+function humanDesktopRuntime(dataDir: string): DesktopRuntime { humanDesktop ??= new DesktopRuntime(join(dataDir, "human-desktop"), null, true); return humanDesktop; }
 async function stopDesktopRuntime(): Promise<void> {
   if (desktopWorkerTimer !== null) clearTimeout(desktopWorkerTimer);
   desktopWorkerTimer = null;
   await desktop?.dispose();
   desktop = null;
+  await humanDesktop?.dispose();
+  humanDesktop = null;
   desktopWorkerLease?.dispose();
   desktopWorkerLease = null;
 }
@@ -406,7 +410,10 @@ export default experimental_defineHostEntry({ contract: hostContract, experiment
   },
   "desktop.disconnect": async (input) => {
     desktopViewers.delete(input.clientId);
-    desktopControlGate.release(input.clientId);
+    if (desktopControlGate.release(input.clientId)) {
+      await humanDesktop?.dispose();
+      humanDesktop = null;
+    }
     if (desktopViewers.size === 0 && activeRecording === null) await stopDesktopRuntime();
     return { disconnected: true as const };
   },
@@ -417,13 +424,15 @@ export default experimental_defineHostEntry({ contract: hostContract, experiment
   },
   "computer.control.release": async (input, context) => {
     ensureStorage(context.experimental_paths.dataDir);
-    return { released: desktopControlGate.release(input.clientId) };
+    const released = desktopControlGate.release(input.clientId);
+    if (released) { await humanDesktop?.dispose(); humanDesktop = null; }
+    return { released };
   },
   "computer.control.input": async (input, context) => {
     ensureStorage(context.experimental_paths.dataDir);
     if (!desktopControlGate.owns(input.clientId)) throw new Error("The computer is not ready for input");
     desktopControlGate.touch(input.clientId);
-    await desktopRuntime(context.experimental_paths.dataDir).input(input.input, context.signal);
+    await humanDesktopRuntime(context.experimental_paths.dataDir).input(input.input, context.signal);
     return { accepted: true as const };
   },
   "media.latest": async (input, context) => { ensureStorage(context.experimental_paths.dataDir); const run = runs.get(input.runId); const job = jobs.get(input.runId); const previous = liveFrames.get(input.runId); if (!run) return { frame: null }; if (job?.adapter && ["queued", "running", "verifying"].includes(run.state)) { const png = await capture(job); const frame = { sequence: (previous?.sequence ?? 0) + 1, capturedAt: Date.now(), bytes: png }; liveFrames.set(input.runId, frame); job.emit("frameAvailable", { runId: input.runId, sequence: frame.sequence }); if (input.afterSequence !== null && frame.sequence <= input.afterSequence) return { frame: null }; return { frame: { sequence: frame.sequence, capturedAt: frame.capturedAt, mimeType: "image/png" as const, width: 1280, height: 800, bytesBase64: png.toString("base64"), state: "live" as const } }; } if (!previous) { const artifactId = run.checkpoints.flatMap((checkpoint) => checkpoint.evidenceArtifactIds).at(-1); const artifact = artifactId ? await artifactStore().getUnscoped(artifactId) : null; if (artifact && artifact.media.sizeBytes <= 1_048_576) { const bytes = (await artifactStore().readRange(artifact, 0, artifact.media.sizeBytes - 1)).bytes; return { frame: { sequence: 1, capturedAt: artifact.media.createdAt, mimeType: "image/png" as const, width: artifact.media.width ?? 1280, height: artifact.media.height ?? 800, bytesBase64: bytes.toString("base64"), state: "disconnected" as const } }; } } if (!previous) return { frame: null }; /* ended runs always report "disconnected" so a relay never serves a stale live frame */ return { frame: { sequence: previous.sequence, capturedAt: previous.capturedAt, mimeType: "image/png" as const, width: 1280, height: 800, bytesBase64: previous.bytes.toString("base64"), state: "disconnected" as const } }; },

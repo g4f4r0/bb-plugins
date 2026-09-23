@@ -1,0 +1,5 @@
+# Wayfinder native Cua blue cursor
+
+`cua.default.lottie` is Cua Driver's MIT-licensed native cursor source from [trycua/cua at 681bc448](https://github.com/trycua/cua/blob/681bc44807d1be81a4357f8e158f1c74a81d5a5b/libs/cua-driver/rust/crates/cursor-overlay/assets/cua.default.lottie). `build-blue-theme.py` replaces its blue fill with BB's solid `#2383e2` and assigns a distinct theme ID, preserving native vector semantics and action animation. `bb.wayfinder.blue.lottie` and its compiled `.cua-theme` are reproducible artifacts. Validate, build, preview, and install them only using Cua Driver's **trusted local** `cursor-theme` workflow. Wayfinder selects the theme when installed under the current user's Cua theme directory and otherwise retains the built-in default.
+
+The native badge is rendered outside the theme and cannot be removed by this package. Cua 0.28.2's Linux x11grab recording can also composite the physical pointer independently of XFixesHideCursor. Neither recording limitation is solved by a color theme. Do not crop, blur, or fabricate recordings to conceal them.
