@@ -476,6 +476,17 @@ button:is([aria-label="Cancel recording"], [aria-label="Cancel transcription"], 
   }
 }
 
+/* Footer icons share the + and editor text line (17px), and trailing chips
+   end at the composer's 9px action inset. New thread starts with 8px-padded
+   chips; a thread starts with its 4px-padded environment summary. */
+[data-promptbox-shell] > form[data-promptbox] + div {
+  padding-inline: 9px;
+}
+[data-follow-up-composer-footer] {
+  padding-left: 13px;
+  padding-right: 9px;
+}
+
 /* Keep desktop New thread at the bottom, including before plugin hydration. */
 div[class~="@container/page"]:has(#root-compose-prompt) > div:has(> [data-promptbox-shell]) {
   min-height: 100%;
@@ -558,6 +569,11 @@ button.dusk-panel-toggle[hidden] { display: none; }
 [data-promptbox-shell] [data-promptbox-action-row] [data-promptbox-standard-actions],
 [data-promptbox] [data-promptbox-submit-group] {
   gap: 4px;
+}
+/* BB pads the action row 13px on the right; Dusk insets the trailing action
+   8px inside the border on every side, matching the + and the bottom edge. */
+[data-promptbox] [data-promptbox-action-row] {
+  padding-right: 8px;
 }
 [data-promptbox] :is([data-promptbox-submit-action], [data-promptbox-send-menu]),
 [data-promptbox-shell] :is([data-promptbox-submit-action], [data-promptbox-send-menu]) {

@@ -128,6 +128,15 @@ button:is([aria-label="Stop and transcribe recording"], [aria-label="Transcribin
 button[aria-label="Stop and transcribe recording"]:hover {
   background-color: color-mix(in srgb, var(--primary) 90%, var(--foreground));
 }
+/* With input, BB wraps Send and Send options in one foreground-filled split
+   control and clears both buttons with layered !important rules. Fill it with
+   primary. Its hover tints each half with --background at 15%; point that
+   token at the foreground so the tint matches the single Send button's hover. */
+[data-promptbox-send-menu].bg-foreground {
+  --background: var(--foreground);
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+}
 /* Empty-composer mic uses BB's filled default variant; match the + ghost. */
 [data-promptbox] button[aria-label="Start voice input"] {
   background-color: transparent;
