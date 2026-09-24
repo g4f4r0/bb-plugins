@@ -5,7 +5,6 @@
   "plugins": [
     { "name": "browse", "source": "./bb-plugin-browse" },
     { "name": "beacon", "source": "./bb-plugin-beacon" },
-    { "name": "sidetree", "source": "./bb-plugin-sidetree" },
     { "name": "mcps", "source": "./bb-plugin-mcps" },
     { "name": "wayfinder", "source": "./bb-plugin-wayfinder" }
   ]

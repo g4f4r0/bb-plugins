@@ -1,5 +1,0 @@
-File glyphs: Material Icon Theme
-https://github.com/material-extensions/vscode-material-icon-theme
-LICENSE.material-icon-theme
-
-Folders: outline strokes in file-icon.tsx (currentColor).
