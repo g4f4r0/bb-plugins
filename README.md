@@ -9,7 +9,6 @@ Do not install these from a thread workspace, `/tmp`, or a throwaway worktree. I
 
 | Plugin   | ID         | Directory            |
 | -------- | ---------- | -------------------- |
-| Browse   | `browse`   | `bb-plugin-browse`   |
 | Beacon   | `beacon`   | `bb-plugin-beacon`   |
 | MCPs     | `mcps`     | `bb-plugin-mcps`     |
 | Wayfinder | `wayfinder` | `bb-plugin-wayfinder` |
