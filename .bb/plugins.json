@@ -6,9 +6,7 @@
     { "name": "browse", "source": "./bb-plugin-browse" },
     { "name": "beacon", "source": "./bb-plugin-beacon" },
     { "name": "sidetree", "source": "./bb-plugin-sidetree" },
-    { "name": "reserve", "source": "./bb-plugin-reserve" },
     { "name": "mcps", "source": "./bb-plugin-mcps" },
-    { "name": "wayfinder", "source": "./bb-plugin-wayfinder" },
-    { "name": "sidekick", "source": "./bb-plugin-sidekick" }
+    { "name": "wayfinder", "source": "./bb-plugin-wayfinder" }
   ]
 }
