@@ -12,7 +12,7 @@ function loadTheme(file: string): PluginCodeThemeData {
     readFileSync(
       join(
         dirname(fileURLToPath(import.meta.url)),
-        "../bb-plugin-dusk/themes",
+        "test-fixtures",
         file,
       ),
       "utf8",
