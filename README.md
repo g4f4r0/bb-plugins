@@ -1,6 +1,6 @@
 # Custom BB plugins
 
-Source for Browse, Beacon, MCPs, and Wayfinder. BB loads the installed plugins in place from this checkout. Browse is retained as source but is no longer installed; Cua Driver and BB Browser Automation have also been removed from BB. Do not reinstall them as part of Wayfinder work.
+Source for Browse, Beacon, and Wayfinder. BB loads the installed plugins in place from this checkout. MCPs moved into the BB fork as the built-in `plugins/mcps` (`bb plugin install builtin:mcps`); `bb-plugin-mcps` here is retained as history only and must not be installed. Browse is retained as source but is no longer installed; Cua Driver and BB Browser Automation have also been removed from BB. Do not reinstall them as part of Wayfinder work.
 
 Wayfinder is implemented and under active release hardening: see [the implementation plan](bb-plugin-wayfinder/PLAN.md). The GitHub remote is [https://github.com/g4f4r0/bb-plugins](https://github.com/g4f4r0/bb-plugins)
 
@@ -10,7 +10,6 @@ Do not install these from a thread workspace, `/tmp`, or a throwaway worktree. I
 | Plugin   | ID         | Directory            |
 | -------- | ---------- | -------------------- |
 | Beacon   | `beacon`   | `bb-plugin-beacon`   |
-| MCPs     | `mcps`     | `bb-plugin-mcps`     |
 | Wayfinder | `wayfinder` | `bb-plugin-wayfinder` |
 
 
