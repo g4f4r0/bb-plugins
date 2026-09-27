@@ -4,7 +4,6 @@
   "name": "g4f4r0-plugins",
   "plugins": [
     { "name": "beacon", "source": "./bb-plugin-beacon" },
-    { "name": "mcps", "source": "./bb-plugin-mcps" },
-    { "name": "wayfinder", "source": "./bb-plugin-wayfinder" }
+    { "name": "mcps", "source": "./bb-plugin-mcps" }
   ]
 }
