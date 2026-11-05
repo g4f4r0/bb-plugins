@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
-import plugin, { calculateCpuUsage, calculateNetworkRates, parseProcesses } from "../server.ts";
+import plugin, { calculateNetworkRates, parseProcesses } from "../server.ts";
+import { calculateCpuUsage, parseProcStat } from "../lib/cpu.ts";
 
 test("CPU deltas handle warmup, idle, full utilization, and counter resets", () => {
   assert.equal(calculateCpuUsage(null, { idle: 0, total: 100 }), null);
@@ -109,4 +110,24 @@ test("invalid CLI input does not sample, and settings retain enforced bounds", a
   await harness.behavior.setSettings({ refreshIntervalSeconds: 2 });
   const response = await harness.behavior.callRpc("metrics_snapshot", null);
   assert.equal(response.refreshIntervalMs, 2000); assert.equal(response.history.length, 1);
+});
+
+test("/proc/stat parsing counts iowait as idle and steal as busy, per core and overall", () => {
+  const reading = parseProcStat([
+    "cpu  100 0 50 800 40 0 10 0 0 0",
+    "cpu0 60 0 30 400 20 0 10 0 0 0",
+    "cpu1 40 0 20 400 20 0 0 30 0 0",
+    "intr 12345",
+  ].join("\n"));
+  assert.deepEqual(reading.overall, { idle: 840, total: 1000 });
+  assert.deepEqual(reading.cores, [{ idle: 420, total: 520 }, { idle: 420, total: 510 }]);
+  const later = parseProcStat("cpu  150 0 50 840 40 0 10 60 0 0\n");
+  // 40 idle of 150 elapsed: steal (60) is busy time the guest could not use.
+  assert.equal(Math.round(calculateCpuUsage(reading.overall, later.overall)), 73);
+});
+
+test("/proc/stat parsing rejects missing or malformed counters", () => {
+  assert.throws(() => parseProcStat("intr 1\n"), /CPU counters unavailable/);
+  assert.throws(() => parseProcStat("cpu  1 2 3\n"), /CPU counters unavailable/);
+  assert.throws(() => parseProcStat("cpu  1 2 3 x 5 6 7 8\n"), /CPU counters unavailable/);
 });
