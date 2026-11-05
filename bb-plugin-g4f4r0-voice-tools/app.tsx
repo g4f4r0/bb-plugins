@@ -2,7 +2,7 @@
 // dictation. Recognized text is written into the draft while you talk, piece
 // by piece, so stopping only adds the last few words.
 //
-// The mic is bb's `experimental_VoiceInputButton`; while recording, a compact
+// The mic is a plain bb-styled button (no preferences menu); while recording, a compact
 // bar (cancel, waveform, timer, confirm) takes the composer's action row the
 // way bb's own recording bar does.
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
@@ -10,7 +10,6 @@ import { createPortal } from "react-dom";
 import {
   definePluginApp,
   experimental_Icon as Icon,
-  experimental_VoiceInputButton as VoiceInputButton,
   useComposer,
   useRpc,
   type PluginComposerApi,
@@ -187,9 +186,8 @@ function Mic() {
 
   return (
     <span ref={anchor} style={{ display: "contents" }}>
-      <VoiceInputButton
+      <Button
         data-voice-tools=""
-        warning={null}
         type="button"
         size="icon"
         variant="ghost"
@@ -200,9 +198,10 @@ function Mic() {
           if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
           void start(composer);
         }}
+        onContextMenu={(event) => event.preventDefault()}
       >
         <Icon name="Mic" className="size-4" />
-      </VoiceInputButton>
+      </Button>
       {row && active && dictation
         ? createPortal(
             <div data-voice-tools-controls="" className={OVERLAY_CLASS}>
