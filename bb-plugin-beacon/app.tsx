@@ -131,7 +131,7 @@ function StatusPopover({ snapshot, onReload, reloading }: { snapshot: ServerSnap
         <div className="grid grid-cols-[repeat(auto-fill,minmax(3.5rem,1fr))] gap-x-3 gap-y-2 pt-0.5">
           {cpu.perCoreUsagePercent.map((value, index) => (
             <div key={index} className="min-w-0 space-y-1" title={`Core ${index + 1}`}>
-              <div className="flex justify-between text-2xs tabular-nums text-muted-foreground"><span>Core {index + 1}</span><span>{value === null ? "–" : `${Math.round(value)}%`}</span></div>
+              <div className="flex justify-between gap-1 text-2xs tabular-nums text-muted-foreground"><span>{index + 1}</span><span>{value === null ? "–" : `${Math.round(value)}%`}</span></div>
               <div className="h-1 overflow-hidden rounded-full bg-sidebar-border"><div className="h-full origin-left rounded-full transition-transform duration-300 motion-reduce:transition-none" style={{ transform: `scaleX(${Math.max(0, Math.min(100, value ?? 0)) / 100})`, backgroundColor: colorForPercent(value) }} /></div>
             </div>
           ))}
