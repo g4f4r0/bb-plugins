@@ -9,6 +9,7 @@ import { createDemandSampler } from "./lib/demand-sampler.ts";
 import { createPressureMonitor } from "./lib/pressure-monitor.ts";
 import { PRESSURE_CHANNEL } from "./lib/pressure.ts";
 import { applyPlacement, DEFAULT_PLACEMENT, isPlacement, PLACEMENTS } from "./lib/placement.ts";
+import { calculateCpuUsage, readCpu, type CpuTimes } from "./lib/cpu.ts";
 
 const percentageSchema = z.number().min(0).max(100);
 const metricPointSchema = z.object({
@@ -122,7 +123,6 @@ const ROOT_MOUNT = "/";
 const HISTORY_LIMIT = 72;
 const execFileAsync = promisify(execFile);
 
-interface CpuTimes { idle: number; total: number }
 interface NetworkTotals { interface: string; rxBytes: number; txBytes: number }
 interface MemoryDetails {
   availableBytes: number;
@@ -141,28 +141,6 @@ export function calculateNetworkRates(previous: NetworkTotals | null, current: N
     return { rxBytesPerSecond: null, txBytesPerSecond: null };
   }
   return { rxBytesPerSecond: (current.rxBytes - previous.rxBytes) / elapsedSeconds, txBytesPerSecond: (current.txBytes - previous.txBytes) / elapsedSeconds };
-}
-
-export function calculateCpuUsage(previous: CpuTimes | null, current: CpuTimes): number | null {
-  if (previous === null) return null;
-  const idleDelta = current.idle - previous.idle;
-  const totalDelta = current.total - previous.total;
-  if (totalDelta <= 0 || idleDelta < 0 || idleDelta > totalDelta) return null;
-  return clampPercentage(((totalDelta - idleDelta) / totalDelta) * 100);
-}
-
-function cpuTimesFor(cpu: ReturnType<typeof cpus>[number]): CpuTimes {
-  return {
-    idle: cpu.times.idle,
-    total: Object.values(cpu.times).reduce((sum, value) => sum + value, 0),
-  };
-}
-
-function readCpuTimes(cpuList: ReturnType<typeof cpus>): CpuTimes {
-  return cpuList.map(cpuTimesFor).reduce(
-    (result, current) => ({ idle: result.idle + current.idle, total: result.total + current.total }),
-    { idle: 0, total: 0 },
-  );
 }
 
 async function readMemoryDetails(signal: AbortSignal): Promise<MemoryDetails> {
@@ -319,26 +297,17 @@ export default async function plugin(bb: BbPluginApi) {
   let refreshIntervalMs = initialSettings.refreshIntervalSeconds * 1000;
   let monitorCpu: CpuTimes | null = null;
   const monitor = createPressureMonitor(bb, async (signal) => {
-    let current: CpuTimes;
-    let availableBytes: number;
-    if (platform() === "linux") {
-      const [stat, meminfo] = await Promise.all([
-        readFile("/proc/stat", { encoding: "utf8", signal }),
-        readFile("/proc/meminfo", { encoding: "utf8", signal }),
-      ]);
-      const times = stat.split("\n", 1)[0].trim().split(/\s+/).slice(1, 9).map(Number);
-      if (times.length < 8 || !times.every(Number.isFinite)) throw new Error("CPU counters unavailable");
-      current = { idle: times[3] + times[4], total: times.reduce((sum, value) => sum + value, 0) };
-      const available = /^MemAvailable:\s+(\d+)\s+kB$/m.exec(meminfo);
-      if (!available) throw new Error("Available memory counter unavailable");
-      availableBytes = Number(available[1]) * 1024;
-    } else {
-      current = readCpuTimes(cpus());
-      availableBytes = freemem();
-    }
+    const [reading, availableBytes] = await Promise.all([
+      readCpu(signal),
+      platform() === "linux" ? readFile("/proc/meminfo", { encoding: "utf8", signal }).then((meminfo) => {
+        const available = /^MemAvailable:\s+(\d+)\s+kB$/m.exec(meminfo);
+        if (!available) throw new Error("Available memory counter unavailable");
+        return Number(available[1]) * 1024;
+      }) : freemem(),
+    ]);
     signal.throwIfAborted();
-    const cpu = calculateCpuUsage(monitorCpu, current);
-    monitorCpu = current;
+    const cpu = calculateCpuUsage(monitorCpu, reading.overall);
+    monitorCpu = reading.overall;
     const totalBytes = totalmem();
     const runtime = process.memoryUsage();
     return { cpu, memory: totalBytes > 0 ? clampPercentage((1 - availableBytes / totalBytes) * 100) : null, load1: loadavg()[0] ?? 0, rssBytes: runtime.rss, heapUsedBytes: runtime.heapUsed, availableBytes, totalBytes };
@@ -369,20 +338,20 @@ export default async function plugin(bb: BbPluginApi) {
 
   async function collect(signal: AbortSignal): Promise<ServerSnapshot> {
     const cpuList = cpus();
-    const cpuTimes = readCpuTimes(cpuList);
-    const perCoreTimes = cpuList.map(cpuTimesFor);
-    const sameCoreCount = previousPerCoreTimes?.length === perCoreTimes.length;
-    const usagePercent = calculateCpuUsage(sameCoreCount ? previousCpuTimes : null, cpuTimes);
-    const perCoreUsagePercent = perCoreTimes.map((current, index) =>
-      calculateCpuUsage(sameCoreCount ? previousPerCoreTimes?.[index] ?? null : null, current),
-    );
-    previousCpuTimes = cpuTimes;
-    previousPerCoreTimes = perCoreTimes;
-
-    const [memoryDetails, disk, networkReading, processes] = await Promise.all([
+    const [cpuReading, memoryDetails, disk, networkReading, processes] = await Promise.all([
+      // An unreadable sample shows CPU as unavailable instead of failing the snapshot.
+      readCpu(signal).catch(() => null),
       readMemoryDetails(signal), readDisk(), readNetworkTotals(signal).then((totals) => ({ totals, time: performance.now() })), readProcesses(signal),
     ]);
     signal.throwIfAborted();
+    const perCoreTimes = cpuReading?.cores ?? [];
+    const sameCoreCount = previousPerCoreTimes?.length === perCoreTimes.length;
+    const usagePercent = cpuReading ? calculateCpuUsage(sameCoreCount ? previousCpuTimes : null, cpuReading.overall) : null;
+    const perCoreUsagePercent = perCoreTimes.map((current, index) =>
+      calculateCpuUsage(sameCoreCount ? previousPerCoreTimes?.[index] ?? null : null, current),
+    );
+    previousCpuTimes = cpuReading?.overall ?? null;
+    previousPerCoreTimes = cpuReading?.cores ?? null;
     const totalBytes = totalmem();
     const freeBytes = freemem();
     const availableBytes = Math.min(totalBytes, Math.max(0, memoryDetails.availableBytes));
