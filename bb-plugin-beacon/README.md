@@ -4,7 +4,7 @@ See CPU, memory, disk, and processes on the BB server from the footer.
 
 ![Status in the BB footer](assets/screenshot.jpg)
 
-Status sits in the sidebar footer. Open it while you work. An optional background monitor can toast when CPU or memory stays high. The two collectors do not share a timer.
+Status sits in the sidebar footer by default, or in the navigation rail with the `placement` setting. Open it while you work. An optional background monitor can toast when CPU or memory stays high. The two collectors do not share a timer.
 
 Beacon reads system counters. It does not change server settings, enable swap, kill processes, or call a monitoring service. It watches the BB server host only, not other enrolled machines or a container's cgroup limit.
 
@@ -40,15 +40,17 @@ The [BB Community listing](https://getbb.app/marketplace) tracks `beacon/vX.Y.Z`
 | `refreshIntervalSeconds` | `5` | Dashboard interval, integer 2 to 60. |
 | `backgroundMonitoring` | `false` | Unattended CPU and memory checks plus diagnostic logs. |
 | `pressureNotifications` | `true` | In-app toasts when monitoring is on. |
+| `placement` | `footer` | `footer` shows Status in the sidebar footer; `rail` shows it in the navigation rail as a page. The other spot keeps it under More. |
 
 ```sh
 bb plugin config beacon
 bb plugin config beacon set refreshIntervalSeconds 10
 bb plugin config beacon set backgroundMonitoring true
 bb plugin config beacon set pressureNotifications false
+bb plugin config beacon set placement rail
 ```
 
-Settings apply without a reload. The dashboard interval does not change the monitor's 30-second cadence. Turning monitoring off cancels its timer and leaves existing logs.
+Settings apply without a reload. Changing `placement` updates bb's sidebar preferences once; rearranging the sidebar by hand afterwards sticks until the setting changes again. The dashboard interval does not change the monitor's 30-second cadence. Turning monitoring off cancels its timer and leaves existing logs.
 
 ## Commands
 

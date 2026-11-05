@@ -1,15 +1,17 @@
 import { useEffect, useRef } from "react";
-import { useRealtime, useRealtimeConnectionState, useRpc, useSettings } from "@get-bb/plugin-sdk/app";
+import { useBbNavigate, useRealtime, useRealtimeConnectionState, useRpc, useSettings } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { rpcContract } from "../server";
 import { PRESSURE_CHANNEL } from "../lib/pressure";
 import { createAlertReceiver } from "../lib/alert-receiver";
 import { pressureAlertCopy, TEST_ALERT_COPY } from "../lib/alert-copy";
+import { STATUS_PANEL_PATH } from "../lib/placement";
 
 const CURSOR_KEY = "beacon-pressure-cursor-v2";
-let openStatus = () => {};
+let openFooterStatus = () => {};
+let openStatus = () => openFooterStatus();
 export function bindStatusOpener(open: () => void) {
-  openStatus = open;
+  openFooterStatus = open;
 }
 
 function ActiveNotifications() {
@@ -94,5 +96,11 @@ function ActiveNotifications() {
 
 export function PressureNotifications() {
   const { values } = useSettings();
+  const navigate = useBbNavigate();
+  const rail = values?.placement === "rail";
+  // "Open Status" follows the placement setting: the rail page or the footer disclosure.
+  useEffect(() => {
+    openStatus = rail ? () => navigate.toPluginPanel(STATUS_PANEL_PATH) : () => openFooterStatus();
+  }, [rail, navigate]);
   return values?.backgroundMonitoring === true && values?.pressureNotifications === true ? <ActiveNotifications /> : null;
 }
