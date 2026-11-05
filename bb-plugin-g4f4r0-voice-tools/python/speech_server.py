@@ -26,7 +26,6 @@ import argparse
 import io
 import logging
 import os
-import queue
 import sys
 import threading
 import time
@@ -163,15 +162,6 @@ def split_at_pauses(audio, max_s: float, min_s: float) -> list:
         start = cut
     pieces.append(audio[start:])
     return pieces
-
-
-def quiet_runs(quiet):
-    """(start, end) frame ranges where `quiet` is True."""
-    import numpy as np
-
-    padded = np.concatenate([[False], quiet, [False]])
-    edges = np.flatnonzero(np.diff(padded.astype(np.int8)))
-    return list(zip(edges[0::2], edges[1::2]))
 
 
 # ── engines ────────────────────────────────────────────────────────────────
@@ -395,35 +385,19 @@ class Model:
 
 
 class StreamSession:
-    """One dictation: buffers PCM while the user talks, transcribes on finish.
-
-    Long dictations are cut only at real pauses (>= 0.5 s) once a piece is at
-    least MIN_PIECE_S long, or at the quietest point at MAX_PIECE_S, and those
-    pieces are transcribed in the background. Short pieces split sentences
-    and hurt accuracy, so most dictations are one piece transcribed at finish.
-    Pieces without speech are dropped.
-    """
-
-    MIN_PIECE_S = 20.0
-    MAX_PIECE_S = 40.0
-    HOP = SAMPLE_RATE // 100  # 10 ms energy frames
+    """One composer dictation: buffers PCM while the user talks and
+    transcribes it in one pass on finish, so punctuation and wording stay
+    consistent (pieces transcribed separately did not). The engine itself
+    still splits audio longer than its piece limit."""
 
     def __init__(self, model: "Model", language):
         import numpy as np
 
         self.model = model
         self.language = language
-        self.pending = np.zeros(0, dtype=np.float32)
+        self.parts: list = []
         self.total_samples = 0
-        # Loudest speech so far (80th-percentile frame energy); silence is
-        # judged relative to it so it adapts to the microphone's gain.
-        self.speech_level = 1e-5
-        self.texts: list = []
-        self.error = None
         self.touched = time.monotonic()
-        self.jobs: "queue.Queue" = queue.Queue()
-        self.worker = threading.Thread(target=self._work, name="stream-worker", daemon=True)
-        self.worker.start()
 
     def append(self, pcm: bytes) -> None:
         import numpy as np
@@ -431,87 +405,33 @@ class StreamSession:
         self.touched = time.monotonic()
         usable = len(pcm) - len(pcm) % 2
         samples = np.frombuffer(pcm[:usable], dtype="<i2").astype(np.float32) / 32768.0
+        self.parts.append(samples)
         self.total_samples += samples.size
-        chunk_energy = frame_energy(samples)
-        if chunk_energy.size:
-            self.speech_level = max(self.speech_level, float(np.percentile(chunk_energy, 80)))
-        self.pending = np.concatenate([self.pending, samples])
-        while True:
-            cut = self._find_cut()
-            if cut is None:
-                break
-            self._submit(self.pending[:cut])
-            self.pending = self.pending[cut:]
-
-    def _quiet(self, energy):
-        return energy < 0.05 * self.speech_level
-
-    def _find_cut(self):
-        import numpy as np
-
-        energy = frame_energy(self.pending)
-        if energy.size < 50:
-            return None
-        quiet = self._quiet(energy)
-        runs = quiet_runs(quiet)
-        # 1. A real pause (>= 0.5 s) once the piece is long enough.
-        min_frame = int(self.MIN_PIECE_S * 100)
-        pauses = [(a, b) for a, b in runs if b - a >= 50 and (a + b) // 2 >= min_frame]
-        if pauses:
-            a, b = max(pauses, key=lambda run: run[1] - run[0])
-            return ((a + b) // 2) * self.HOP
-        # 2. Too long without a pause: quietest point in the back half.
-        if self.pending.size >= self.MAX_PIECE_S * SAMPLE_RATE:
-            lo = int(self.MAX_PIECE_S * 50)
-            return (lo + int(np.argmin(energy[lo:]))) * self.HOP
-        return None
-
-    def _submit(self, piece) -> None:
-        energy = frame_energy(piece)
-        if energy.size == 0 or not (~self._quiet(energy)).any():
-            return  # no speech: skip the model call
-        self.jobs.put(piece)
 
     def finish(self) -> str:
-        if self.pending.size:
-            self._submit(self.pending)
-            self.pending = self.pending[:0]
-        self.jobs.put(None)
-        self.worker.join()
-        if self.error is not None:
-            raise self.error
-        return self.text()
+        import numpy as np
+
+        if not self.parts:
+            return ""
+        audio = np.concatenate(self.parts)
+        self.parts = []
+        if audio.size < SAMPLE_RATE // 10:
+            return ""
+        started = time.monotonic()
+        with self.model.lock:
+            text = self.model.get().transcribe(audio, self.language, None).strip()
+        log.info("dictation %.1fs transcribed in %.2fs (%d chars)", self.seconds, time.monotonic() - started, len(text))
+        return text
 
     def cancel(self) -> None:
-        self.jobs.put(None)
+        self.parts = []
 
     def text(self) -> str:
-        return " ".join(self.texts)
+        return ""
 
     @property
     def seconds(self) -> float:
         return self.total_samples / SAMPLE_RATE
-
-    def _work(self) -> None:
-        while True:
-            piece = self.jobs.get()
-            if piece is None:
-                return
-            if self.error is not None or piece.size < SAMPLE_RATE // 10:
-                continue
-            try:
-                started = time.monotonic()
-                with self.model.lock:
-                    text = self.model.get().transcribe(piece, self.language, None).strip()
-                log.info(
-                    "stream piece %.1fs in %.2fs (%d chars)",
-                    piece.size / SAMPLE_RATE, time.monotonic() - started, len(text),
-                )
-                if text:
-                    self.texts.append(text)
-            except Exception as error:  # surfaced on finish
-                log.exception("stream piece failed")
-                self.error = error
 
 
 # ── app ────────────────────────────────────────────────────────────────────

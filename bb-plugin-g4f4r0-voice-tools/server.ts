@@ -294,8 +294,8 @@ export default async function plugin(bb: BbPluginApi) {
       const cloud = cloudDictations.get(id);
       if (cloud !== undefined) {
         if (cloud.seconds > maxDictationSeconds) throw new Error(`Dictation is limited to ${MAX_DICTATION_MINUTES} minutes.`);
-        await cloud.append(Buffer.from(pcmBase64, "base64"));
-        return { text: cloud.text, seconds: cloud.seconds };
+        cloud.append(Buffer.from(pcmBase64, "base64"));
+        return { text: "", seconds: cloud.seconds };
       }
       return host.call("voiceTools.stream.audio", { id, pcmBase64 }, { hostId: await hostId(), timeoutMs: STREAM_CALL_TIMEOUT_MS });
     },
@@ -303,7 +303,9 @@ export default async function plugin(bb: BbPluginApi) {
       const cloud = cloudDictations.get(id);
       if (cloud !== undefined) {
         cloudDictations.delete(id);
-        return { text: await cloud.finish(), seconds: cloud.seconds };
+        // Voxtral times out past ~50 s; longer dictations go to Parakeet in one pass.
+        const model = cloud.seconds > VOXTRAL_MAX_SECONDS && cloud.model === VOXTRAL ? CLOUD_FALLBACK : undefined;
+        return { text: await cloud.finish(model), seconds: cloud.seconds };
       }
       return host.call("voiceTools.stream.finish", { id }, { hostId: await hostId(), timeoutMs: STREAM_FINISH_TIMEOUT_MS });
     },

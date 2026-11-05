@@ -2,8 +2,8 @@
 
 Fast, accurate dictation for bb. Voice tools replaces bb's microphone and transcribes
 on this machine (NVIDIA Parakeet or Whisper) or with OpenRouter. Audio uploads while
-you talk, so the text is in your draft about half a second after you stop, even after
-a long dictation.
+you talk and is transcribed in one pass when you stop: under a second for a short note
+with OpenRouter, a few seconds for minutes of speech.
 
 ## Install
 
@@ -92,11 +92,15 @@ Whisper model is selected, and switching models deletes the old model's files.
 - `python/speech_server.py`: decodes uploads with PyAV (no system ffmpeg), runs the
   model, and serves `/v1/audio/transcriptions` and `/v1/stream`.
 
-Most dictations are transcribed in one go when you stop, which keeps whole sentences
-together. A dictation longer than 20 s is cut at its longest pause (at least 0.5 s),
-or at the quietest point by 40 s, and finished pieces are transcribed in the
-background. Each piece gets a little silence before and after, so the model doesn't
-drop a first or last word. Pieces without speech are skipped.
+Every dictation is transcribed in one pass when you stop; audio uploads while you
+talk, so only the transcription is left. One pass keeps punctuation and wording
+consistent. In OpenRouter mode, dictations up to 40 s use the chosen model and longer
+ones use Parakeet, which handles minutes at once (Voxtral times out past about 50 s).
+Locally, the model itself splits audio over 20 s, because a CPU can't take more at once.
+The audio gets a little silence before and after, so the first and last words survive.
+
+Measured wait after stop: OpenRouter 0.8 s (16 s), 1.9 s (46 s), 2.9 s (91 s); local on
+a busy 16-vCPU machine 2.6 s (15 s), 6.2 s (45 s).
 
 ## Platforms
 
