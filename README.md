@@ -10,6 +10,7 @@ Do not install these from a thread workspace, `/tmp`, or a throwaway worktree. I
 | Plugin   | ID         | Directory            |
 | -------- | ---------- | -------------------- |
 | Beacon   | `beacon`   | `bb-plugin-beacon`   |
+| Voice tools | `voice-tools` | `bb-plugin-g4f4r0-voice-tools` |
 
 
 Keep these IDs. Change the id and BB treats it as a new plugin and drops its settings. Agent Plugins is a separate local package at `/home/g4f4r0/.bb/local-plugins/bb-plugin-agent-plugins`.

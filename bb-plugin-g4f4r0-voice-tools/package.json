@@ -1,0 +1,48 @@
+{
+  "name": "bb-plugin-voice-tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fast dictation that transcribes while you talk, on this machine (NVIDIA Parakeet or Whisper) or with a cloud API such as OpenRouter.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "bb": ">=0.48",
+    "bbPluginSdk": ">=0.6.104"
+  },
+  "bb": {
+    "name": "Voice tools",
+    "description": "Fast dictation that transcribes while you talk, on this machine (NVIDIA Parakeet or Whisper) or with a cloud API such as OpenRouter.",
+    "branding": {
+      "icon": "./assets/icon.svg"
+    },
+    "server": "./server.ts",
+    "host": "./host.ts",
+    "app": "./app.tsx"
+  },
+  "scripts": {
+    "embed": "node scripts/embed-python.mjs",
+    "typecheck": "npm run embed && tsc -p .",
+    "test": "npm run embed && vitest run",
+    "build": "npm run embed && bb plugin build"
+  },
+  "dependencies": {
+    "@radix-ui/react-select": "^2.4.1",
+    "@radix-ui/react-slot": "^1.5.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.7.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.104",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.0.0",
+    "cron-parser": "^5.10.3",
+    "hono": "^4.13.16",
+    "sonner": "^1.7.4",
+    "typescript": "^5.7.0",
+    "vitest": "^5.0.4"
+  }
+}
