@@ -1,108 +1,110 @@
 # Beacon
 
-See CPU, memory, disk, and processes on the BB server from the sidebar footer or navigation rail.
+Beacon shows CPU, memory, disk, network, and processes for the machine that runs bb, right in the sidebar.
 
-![Status in the BB footer](assets/screenshot.jpg)
+![Server status open in the bb sidebar footer](assets/screenshot.jpg)
 
-Status sits in the sidebar footer by default, or in the navigation rail with the `placement` setting. Open it while you work. An optional background monitor can toast when CPU or memory stays high. The two collectors do not share a timer.
+Server status opens from the sidebar footer. An optional background monitor alerts you when CPU or memory stays high. It runs on its own 30-second timer, separate from the dashboard.
 
-Beacon reads system counters. It does not change server settings, enable swap, kill processes, or call a monitoring service. It watches the BB server host only, not other enrolled machines or a container's cgroup limit.
+Beacon only reads system counters. It never changes server settings, enables swap, kills processes, or calls an outside service. It watches the bb server itself, not other enrolled machines, and it doesn't see a container's cgroup limits.
 
-Needs BB 0.43 and Plugin SDK 0.4.87. Network rates are Linux-only.
+Needs bb 0.43 or newer and Plugin SDK 0.4.87. Network rates need Linux.
 
 ## Install
-
-From this repository:
 
 ```sh
 bb plugin install git:https://github.com/g4f4r0/bb-plugins.git --plugin beacon
 ```
 
-Same thing with an explicit subdirectory:
+Or name the subdirectory yourself:
 
 ```sh
 bb plugin install git:https://github.com/g4f4r0/bb-plugins.git --subdirectory bb-plugin-beacon
 ```
 
-On this server Beacon is installed from the git tags (`git:https://github.com/g4f4r0/bb-plugins.git@semver:beacon/:^0.1.0`), not the checkout. Ship a change by merging it, tagging the next `beacon/vX.Y.Z`, and running `bb plugin update beacon`.
+On this server, Beacon installs from release tags (`git:https://github.com/g4f4r0/bb-plugins.git@semver:beacon/:^0.1.0`), not from the checkout. To ship a change, merge it, tag the next `beacon/vX.Y.Z`, and run `bb plugin update beacon`.
 
-The [BB Community listing](https://getbb.app/marketplace) tracks `beacon/vX.Y.Z` tags with `subdir` `bb-plugin-beacon` and `tagPrefix` `beacon/`. It was added in [get-bb/marketplace PR 279](https://github.com/get-bb/marketplace/pull/279). Publish a new tag within its `^0.1.0` range to make a compatible release available without changing the listing.
+The [bb Community listing](https://getbb.app/marketplace) follows the same `beacon/vX.Y.Z` tags, with `subdir` `bb-plugin-beacon` and `tagPrefix` `beacon/`. It was added in [get-bb/marketplace PR 279](https://github.com/get-bb/marketplace/pull/279). Any new tag within `^0.1.0` reaches it without changing the listing.
 
 ## Settings
 
-| Setting | Default | Effect |
-| --- | --- | --- |
-| `refreshIntervalSeconds` | `5` | Dashboard interval, integer 2 to 60. |
-| `backgroundMonitoring` | `false` | Unattended CPU and memory checks plus diagnostic logs. |
-| `pressureNotifications` | `true` | In-app toasts when monitoring is on. |
-| `placement` | `footer` | `footer` shows Status in the sidebar footer; `rail` shows it in the navigation rail as a page. The other spot keeps it under More. |
+| Setting | Key | Default | What it does |
+| --- | --- | --- | --- |
+| Refresh interval (seconds) | `refreshIntervalSeconds` | `5` | How often Server status updates while it's open. Whole seconds, 2 to 60. |
+| Background monitoring | `backgroundMonitoring` | Off | Checks CPU and memory every 30 seconds, even when Server status is closed, and keeps diagnostic logs. |
+| Overload alerts | `pressureNotifications` | On | Alerts in bb when CPU or memory stays high, and again when it recovers. Needs background monitoring. |
+
+From a terminal:
 
 ```sh
 bb plugin config beacon
 bb plugin config beacon set refreshIntervalSeconds 10
 bb plugin config beacon set backgroundMonitoring true
 bb plugin config beacon set pressureNotifications false
-bb plugin config beacon set placement rail
 ```
 
-Settings apply without a reload. Changing `placement` updates bb's sidebar preferences once; rearranging the sidebar by hand afterwards sticks until the setting changes again. The dashboard interval does not change the monitor's 30-second cadence. Turning monitoring off cancels its timer and leaves existing logs.
+Changes apply without a reload.
+
+The refresh interval doesn't affect the monitor, which always checks every 30 seconds. Turning monitoring off stops its timer and keeps the logs it already wrote.
 
 ## Commands
 
 | Command | Result |
 | --- | --- |
-| `bb beacon snapshot` | CPU, load, memory, disk, and process summary. |
-| `bb beacon snapshot --json` | Full snapshot, including recent chart history. |
-| `bb beacon health` | Pressure assessment. Exit 2 if critical. |
-| `bb beacon health --json` | Structured assessment. Exit 0 always; read `status`. |
-| `bb beacon logs` | Last 100 diagnostic records. |
-| `bb beacon logs --limit 500 --json` | Up to 500 records as JSONL, oldest first in that window. |
-| `bb beacon test-alert` | Labeled toast preview on visible BB clients. |
+| `bb beacon snapshot` | Summary of CPU, load, memory, disk, and processes. |
+| `bb beacon snapshot --json` | The full snapshot, including recent chart history. |
+| `bb beacon health` | Pressure check. Exits 2 when critical. |
+| `bb beacon health --json` | The same check as JSON. Always exits 0, so read `status`. |
+| `bb beacon logs` | The last 100 diagnostic records. |
+| `bb beacon logs --limit 500 --json` | Up to 500 records as JSONL, oldest first. |
+| `bb beacon test-alert` | A labeled test alert in every open, visible bb window. |
 
-`test-alert` needs monitoring and notifications both on. It does not create load, incidents, or log rows. It broadcasts to every connected client.
+`test-alert` needs background monitoring and overload alerts both on. It doesn't create load, incidents, or log rows, and it reaches every connected client.
 
-CLI snapshots share the dashboard collector. Repeated calls keep history alive. Reading logs does not.
+CLI snapshots use the same collector as the dashboard, so calling them repeatedly keeps chart history alive. Reading logs doesn't.
 
 ## What the numbers mean
 
-CPU percent is the change between samples. The first sample has no percent. Per-core values follow the same rule. The dashboard, CLI, and background alerts share one definition: on Linux, `/proc/stat` with I/O wait counted as idle and hypervisor steal counted as busy, as `top` does.
+**CPU.** The change between two samples, so the first sample has no value. Per-core values work the same way. The dashboard, CLI, and alerts share one definition. On Linux that's `/proc/stat`, counting I/O wait as idle and hypervisor steal as busy, the way `top` does.
 
-Load averages are 1, 5, and 15 minutes. They are not CPU percents.
+**Load average.** 1, 5, and 15 minutes. Not a percentage.
 
-Memory used is total minus available. On Linux, available is `MemAvailable`. Cache includes `Cached` and `SReclaimable`. Cache and buffers are supporting counters, not extra used memory.
+**Memory.** Used is total minus available. On Linux, available is `MemAvailable`. Cache is `Cached` plus `SReclaimable`. Cache and buffers are context and don't count as used.
 
-Swap appears only when a swap total greater than zero is readable. Beacon never creates it.
+**Swap.** Shows only when the server reports a swap total above zero. Beacon never creates swap.
 
-Disk is `/`. Used space is allocated blocks. Available excludes reserved blocks, so used plus available may not equal total.
+**Disk.** The `/` filesystem. Used is allocated blocks. Free leaves out reserved blocks, so used plus free can come up short of total.
 
-Network is received and sent bytes per second on the non-loopback interface with the most cumulative traffic. Not a sum of interfaces. Rates go unavailable when the interface changes or counters reset. Linux only.
+**Network.** Bytes received and sent per second on the non-loopback interface with the most traffic since boot. It isn't a sum across interfaces. Rates go blank when that interface changes or its counters reset. Linux only.
 
-Snapshots list six PIDs by lifetime-average CPU, PID as tie-break. The popover shows the first three. Process CPU is relative to one core and can exceed 100%. That is not the sampled host CPU.
+**Processes.** Snapshots list the top six by lifetime-average CPU, with PID breaking ties, and Server status shows the first three. Process CPU is relative to one core, so it can pass 100%, and it isn't host CPU. Beacon lists processes with `ps`, with a 1.5-second timeout and a 512 KiB output cap, and on Linux takes names from `/proc/<pid>/exe`. It never reads command-line arguments. When the scan fails, the snapshot reports `processes.available: false`, and its zero counts don't mean the machine is idle.
 
-Runtime is the BB server process, including loaded plugins, not Beacon alone.
+**Runtime.** The whole bb server process, including every loaded plugin, not Beacon alone.
 
-Byte labels use powers of 1024. Network is bytes per second, not bits.
+Byte sizes use powers of 1024. Network is in bytes per second, not bits.
 
-A failed process scan returns `processes.available: false`. Zero counts in that result do not prove the machine is idle. The scan runs `ps` with a 1.5-second timeout and a 512 KiB cap. On Linux it resolves names through `/proc/<pid>/exe`. It does not read argv.
+## How Server status updates
 
-## How Status works
+Server status polls only while it's on screen. Closing it keeps the last snapshot, so reopening shows numbers right away instead of placeholders. The bottom row shows when that snapshot was taken and has a button for a fresh one. If the view remounts, it reuses any request already in flight, along with the same cadence and offline backoff.
 
-The popover polls only while it is visible. Closing it keeps one last snapshot per app bundle, with no timer or thread keys, so reopening does not replay placeholders. The footer shows when the snapshot was updated and can request a fresh sample immediately. Remounts share an in-flight request, sampling cadence, and offline backoff. The server keeps a shared cache for the greater of 15 seconds and twice the dashboard interval, then forgets history. Reopening after that starts cold, so CPU and network need a second sample.
+The server caches each snapshot for 15 seconds or twice the refresh interval, whichever is longer, then drops the history. After that, CPU and network need a second sample again. Raising the refresh interval extends the current cache too. History holds at most 72 points. When requests fail, Beacon backs off from 5 seconds up to 60.
 
-Increasing the dashboard interval also extends the existing server cache expiry. History holds at most 72 points. Visible failures back off from 5 seconds to 60. Meters are green below 75%, amber from 75%, red from 95%. Those colors do not fire alerts.
+Meters are green below 75%, amber from 75%, and red from 95%. Colors never trigger alerts.
 
 ## Background alerts
 
-While monitoring is on, the server samples CPU and memory every 30 seconds. No `ps`, no disk, no network, no chart history.
+While monitoring is on, the server checks CPU and memory every 30 seconds. It doesn't run `ps` or touch disk, network, or chart history.
 
-CPU incident: at least 95% for 60 seconds of samples. Recovers at or below 85% for 60 seconds.
-Memory incident: at least 90% for 60 seconds. Recovers at or below 85% for 60 seconds.
+| Metric | Alert when | Recovered when |
+| --- | --- | --- |
+| CPU | 95% or more for 60 seconds | 85% or less for 60 seconds |
+| Memory | 90% or more for 60 seconds | 85% or less for 60 seconds |
 
-One toast at start, one at recovery, then a five-minute cooldown per metric. BB must be open and visible. No OS push, no notification inbox.
+You get one alert when an overload starts and one when it recovers, then a five-minute cooldown for that metric. bb has to be open and visible to show them. There's no OS push and no notification inbox.
 
-CLI health warns at 85% and is critical at 95% for CPU, memory, or disk, and it also compares five-minute load with core count. That check has no confirmation window. Dashboard color, CLI health, and toasts are three different scales.
+`bb beacon health` uses its own scale. It warns at 85% and is critical at 95% for CPU, memory, or disk, and it also compares five-minute load with core count. It doesn't wait a minute first. Meter colors, CLI health, and alerts are three separate scales on purpose.
 
-`bb beacon logs` reads Beacon's rotating diagnostics. `bb plugin logs beacon` is the plugin runtime log. Do not edit the live SQLite file.
+`bb beacon logs` reads Beacon's rotating diagnostics. `bb plugin logs beacon` is the plugin's runtime log. Don't edit the live SQLite file.
 
 ```sh
 bb beacon logs --limit 500 --json > beacon-diagnostics.jsonl
@@ -117,24 +119,24 @@ npm run typecheck
 bb plugin build
 ```
 
-The installed Beacon follows release tags, so `bb plugin reload beacon` does not load local edits. To try a change live, install a copy of the folder with a different package name (for example `bb-plugin-beacon-dev`) from its path, then remove it with `bb plugin remove beacon-dev`. Removing a plugin deletes its settings, so never remove `beacon` itself.
+`bb plugin types --check` reports an SDK mismatch without changing anything. Tests in `tests/` cover parsing, hide and show races, pressure state, alert copy, and CPU counters.
 
-`bb plugin types --check` reports an SDK mismatch without writing. Tests live in `tests/`. They cover parsing, hide/show races, pressure state, and alert copy.
+The installed Beacon follows release tags, so `bb plugin reload beacon` won't pick up local edits. To try a change live, copy the folder, give the copy another package name such as `bb-plugin-beacon-dev`, and install it from its path. Remove it afterwards with `bb plugin remove beacon-dev`. Never remove `beacon` itself, because removing a plugin deletes its settings.
 
-For a UI change, open Status, wait for two samples, try a 390px width, then hide the tab and confirm polling stops. Use `bb beacon test-alert` instead of overloading the server.
+For a UI change, open Server status, wait for two samples, try a 390px-wide window, then hide the tab and check that polling stops. Use `bb beacon test-alert` instead of loading the server.
 
 ## Troubleshooting
 
-Charts reset after the server history expires. CPU and network then show a dash until a second sample. Initial placeholders are static; subsequent opens retain the last snapshot. Meters animate transforms and respect reduced motion. Logs are separate from charts.
+**Charts reset.** The server history expired. CPU and network show a dash until the second sample. Logs are separate and unaffected.
 
-Memory is amber with no toast. Amber starts at 75%. Memory alerts need 90% for a full minute of samples.
+**Memory is amber but no alert came.** Amber starts at 75%. Memory alerts need 90% for a full minute.
 
-No toast appeared. Check both settings, keep BB visible, try `test-alert`. Real alerts also wait on confirmation and cooldown.
+**No alert appeared.** Check that background monitoring and overload alerts are both on, keep bb visible, and try `bb beacon test-alert`. Real alerts also wait for the one-minute confirmation and the cooldown.
 
-Logs are empty. Monitoring is off by default.
+**Logs are empty.** Background monitoring is off by default.
 
-Network says unavailable. Needs Linux and a readable non-loopback interface, then two samples.
+**Network says unavailable.** It needs Linux, a readable non-loopback interface, and two samples.
 
-A process shows more than 100% CPU. Lifetime average on more than one core.
+**A process shows more than 100% CPU.** That's its lifetime average across more than one core.
 
-A change is not visible. The installed copy follows release tags; tag a release and run `bb plugin update beacon`. If an update fails, BB keeps the previous version.
+**A change doesn't show up.** The installed copy follows release tags. Tag a release and run `bb plugin update beacon`. If the update fails, bb keeps the previous version.
