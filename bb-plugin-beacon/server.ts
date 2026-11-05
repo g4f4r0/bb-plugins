@@ -8,7 +8,6 @@ import { z } from "zod";
 import { createDemandSampler } from "./lib/demand-sampler.ts";
 import { createPressureMonitor } from "./lib/pressure-monitor.ts";
 import { PRESSURE_CHANNEL } from "./lib/pressure.ts";
-import { applyPlacement, DEFAULT_PLACEMENT, isPlacement, PLACEMENTS } from "./lib/placement.ts";
 import { calculateCpuUsage, readCpu, type CpuTimes } from "./lib/cpu.ts";
 
 const percentageSchema = z.number().min(0).max(100);
@@ -280,19 +279,24 @@ export default async function plugin(bb: BbPluginApi) {
     refreshIntervalSeconds: {
       type: "number",
       label: "Refresh interval (seconds)",
+      description: "How often Server status updates while it's open. 2 to 60.",
       experimental_schema: z.number().int().min(2).max(60),
       default: 5,
     },
-    backgroundMonitoring: { type: "boolean", label: "Background CPU and memory monitoring", default: false },
-    pressureNotifications: { type: "boolean", label: "In-app overload and recovery alerts", default: true },
-    placement: {
-      type: "select",
-      label: "Placement",
-      description: "footer: the sidebar footer. rail: the navigation rail. The other spot keeps Server status under More.",
-      options: [...PLACEMENTS],
-      default: DEFAULT_PLACEMENT,
+    backgroundMonitoring: {
+      type: "boolean",
+      label: "Background monitoring",
+      description: "Check CPU and memory every 30 seconds, even when Server status is closed, and keep diagnostic logs.",
+      default: false,
+    },
+    pressureNotifications: {
+      type: "boolean",
+      label: "Overload alerts",
+      description: "Alert in bb when CPU or memory stays high for a minute, and again when it recovers. Needs background monitoring.",
+      default: true,
     },
   });
+
   const initialSettings = await settings.get();
   let refreshIntervalMs = initialSettings.refreshIntervalSeconds * 1000;
   let monitorCpu: CpuTimes | null = null;
@@ -313,20 +317,10 @@ export default async function plugin(bb: BbPluginApi) {
     return { cpu, memory: totalBytes > 0 ? clampPercentage((1 - availableBytes / totalBytes) * 100) : null, load1: loadavg()[0] ?? 0, rssBytes: runtime.rss, heapUsedBytes: runtime.heapUsed, availableBytes, totalBytes };
   }, () => { monitorCpu = null; });
   monitor.configure(initialSettings.backgroundMonitoring, initialSettings.pressureNotifications);
-  let placementQueue: Promise<unknown> = Promise.resolve();
-  const syncPlacement = (value: string) => {
-    const placement = isPlacement(value) ? value : DEFAULT_PLACEMENT;
-    placementQueue = placementQueue
-      .then(() => applyPlacement(bb.sdk.system.uiPreferences, bb.storage.kv, placement, bb.pluginId))
-      .then((changed) => { if (changed) bb.log.info(`Placed Server status in the ${placement === "rail" ? "navigation rail" : "sidebar footer"}`); })
-      .catch((cause) => bb.log.warn(`Could not place Server status: ${cause instanceof Error ? cause.message : String(cause)}`));
-  };
-  syncPlacement(initialSettings.placement);
-  settings.onChange((next, prev) => {
+  settings.onChange((next) => {
     refreshIntervalMs = next.refreshIntervalSeconds * 1000;
     sampler.intervalChanged();
     monitor.configure(next.backgroundMonitoring, next.pressureNotifications);
-    if (next.placement !== prev.placement) syncPlacement(next.placement);
   });
   bb.background.service("pressure-monitor", { start: (signal) => monitor.start(signal) });
 

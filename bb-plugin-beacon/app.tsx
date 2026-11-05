@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { definePluginApp, experimental_Icon as Icon, type ExperimentalSidebarFooterDisclosureProps, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
+import { definePluginApp, experimental_Icon as Icon, type ExperimentalSidebarFooterDisclosureProps } from "@get-bb/plugin-sdk/app";
 import type { ServerSnapshot } from "./server";
 import { useServerSnapshot } from "./hooks/use-server-snapshot";
 import { PressureNotifications, bindStatusOpener } from "./components/pressure-notifications";
@@ -7,7 +7,6 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { ServerIcon } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { STATUS_ITEM_ID, STATUS_PANEL_PATH } from "./lib/placement";
 
 const GREEN = "#22c55e";
 const AMBER = "#eab308";
@@ -186,10 +185,10 @@ function ServerMark({ className }: { className?: string }) {
   return <HugeiconsIcon icon={ServerIcon} className={className} strokeWidth={2} style={{ opacity: 0.8 }} aria-hidden="true" />;
 }
 
-function StatusContent({ className }: { className: string }) {
+function StatusDisclosure(_props: ExperimentalSidebarFooterDisclosureProps) {
   const { container, active, snapshot, error, reload, reloading } = useServerSnapshot();
   return (
-    <div ref={container} data-beacon-shell aria-busy={(active && !snapshot && !error) || reloading} className={className}>
+    <div ref={container} data-beacon-shell aria-busy={(active && !snapshot && !error) || reloading} className="w-full min-w-0 divide-y divide-sidebar-border">
       {error ? <div role="alert" className="px-3 py-2 text-xs text-destructive">Could not refresh: {error}</div> : null}
       {/* The skeleton gives the shell height so the visibility observer can activate polling. */}
       {snapshot ? <StatusPopover snapshot={snapshot} onReload={reload} reloading={reloading} /> : (
@@ -199,28 +198,12 @@ function StatusContent({ className }: { className: string }) {
   );
 }
 
-function StatusDisclosure(_props: ExperimentalSidebarFooterDisclosureProps) {
-  return <StatusContent className="w-full min-w-0 divide-y divide-sidebar-border" />;
-}
-
-// The rail placement opens Status as a page; same sections, in a readable column.
-function StatusPage(_props: PluginNavPanelProps) {
-  return (
-    <div className="h-full overflow-y-auto">
-      <StatusContent className="mx-auto w-full min-w-0 max-w-md divide-y divide-sidebar-border py-4" />
-    </div>
-  );
-}
-
 export default definePluginApp((app) => {
   app.experimental_icons.register({ name: "Server", component: ServerMark });
   app.slots.experimental_appOverlay({ id: "pressure-notifications", component: PressureNotifications });
-  // Both surfaces are registered; the server's placement sync moves the unused
-  // one into its area's More menu.
-  app.slots.navPanel({ id: STATUS_ITEM_ID, title: "Server status", icon: "Server", path: STATUS_PANEL_PATH, component: StatusPage });
   bindStatusOpener(app.experimental_sidebarFooter.register({
     kind: "disclosure",
-    id: STATUS_ITEM_ID,
+    id: "status",
     label: "Server status",
     icon: "Server",
     component: StatusDisclosure,
