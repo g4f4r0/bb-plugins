@@ -1,6 +1,6 @@
 ## What you get
 
-Status lives in the sidebar footer. Open it for CPU, per-core load, memory, swap, root disk use, network rates, top processes, and uptime on the machine that runs BB. The popover samples only while it is on screen.
+Status lives in the sidebar footer, or in the navigation rail if you set `placement` to `rail`. Open it for CPU, per-core load, memory, swap, root disk use, network rates, top processes, and uptime on the machine that runs BB. The popover samples only while it is on screen.
 
 `bb beacon snapshot` prints the same numbers in a terminal. Add `--json` for the full structured reading. `bb beacon health` reports pressure and exits 2 when a reading is critical.
 
