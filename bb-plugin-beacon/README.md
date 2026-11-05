@@ -1,6 +1,6 @@
 # Beacon
 
-See CPU, memory, disk, and processes on the BB server from the footer.
+See CPU, memory, disk, and processes on the BB server from the sidebar footer or navigation rail.
 
 ![Status in the BB footer](assets/screenshot.jpg)
 
@@ -24,12 +24,7 @@ Same thing with an explicit subdirectory:
 bb plugin install git:https://github.com/g4f4r0/bb-plugins.git --subdirectory bb-plugin-beacon
 ```
 
-On this server the live path is already `bb-plugin-beacon` in the checkout. Reload after a source change:
-
-```sh
-bb plugin build bb-plugin-beacon
-bb plugin reload beacon
-```
+On this server Beacon is installed from the git tags (`git:https://github.com/g4f4r0/bb-plugins.git@semver:beacon/:^0.1.0`), not the checkout. Ship a change by merging it, tagging the next `beacon/vX.Y.Z`, and running `bb plugin update beacon`.
 
 The [BB Community listing](https://getbb.app/marketplace) tracks `beacon/vX.Y.Z` tags with `subdir` `bb-plugin-beacon` and `tagPrefix` `beacon/`. It was added in [get-bb/marketplace PR 279](https://github.com/get-bb/marketplace/pull/279). Publish a new tag within its `^0.1.0` range to make a compatible release available without changing the listing.
 
@@ -141,4 +136,4 @@ Network says unavailable. Needs Linux and a readable non-loopback interface, the
 
 A process shows more than 100% CPU. Lifetime average on more than one core.
 
-A change is not visible. Build and `bb plugin reload beacon`. If reload fails, BB keeps the previous generation.
+A change is not visible. The installed copy follows release tags; tag a release and run `bb plugin update beacon`. If an update fails, BB keeps the previous version.
