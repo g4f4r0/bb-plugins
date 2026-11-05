@@ -65,7 +65,7 @@ CLI snapshots share the dashboard collector. Repeated calls keep history alive. 
 
 ## What the numbers mean
 
-CPU percent is the change between samples. The first sample has no percent. Per-core values follow the same rule.
+CPU percent is the change between samples. The first sample has no percent. Per-core values follow the same rule. The dashboard, CLI, and background alerts share one definition: on Linux, `/proc/stat` with I/O wait counted as idle and hypervisor steal counted as busy, as `top` does.
 
 Load averages are 1, 5, and 15 minutes. They are not CPU percents.
 
@@ -115,8 +115,9 @@ bb plugin types --check
 npm test
 npm run typecheck
 bb plugin build
-bb plugin reload beacon
 ```
+
+The installed Beacon follows release tags, so `bb plugin reload beacon` does not load local edits. To try a change live, install a copy of the folder with a different package name (for example `bb-plugin-beacon-dev`) from its path, then remove it with `bb plugin remove beacon-dev`. Removing a plugin deletes its settings, so never remove `beacon` itself.
 
 `bb plugin types --check` reports an SDK mismatch without writing. Tests live in `tests/`. They cover parsing, hide/show races, pressure state, and alert copy.
 
