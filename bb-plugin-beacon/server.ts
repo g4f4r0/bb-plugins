@@ -30,6 +30,16 @@ const processSchema = z.object({
   memoryPercent: z.number().nonnegative(),
   rssBytes: z.number().nonnegative(),
 });
+const noticeSchema = z.object({
+  sequence: z.number(),
+  type: z.enum(["incident", "recovery"]),
+  metric: z.enum(["cpu", "memory"]),
+  timestamp: z.number(),
+  value: z.number(),
+  peak: z.number(),
+  durationSeconds: z.number(),
+  threshold: z.number(),
+});
 const snapshotSchema = z.object({
   timestamp: z.string(),
   refreshIntervalMs: z.number().int().min(2000).max(60_000),
@@ -102,7 +112,10 @@ type Processes = z.infer<typeof snapshotSchema>["processes"];
 export const rpcContract = defineRpcContract({
   metrics_snapshot: { input: z.null(), output: snapshotSchema },
   metrics_refresh: { input: z.null(), output: snapshotSchema },
-  monitor_status: { input: z.null(), output: z.object({ enabled: z.boolean(), notifications: z.boolean(), cursor: z.number(), active: z.array(z.object({ sequence: z.number(), type: z.enum(["incident", "recovery"]), metric: z.enum(["cpu", "memory"]), timestamp: z.number(), value: z.number(), peak: z.number(), durationSeconds: z.number(), threshold: z.number() })).max(2), recent: z.array(z.object({ sequence: z.number(), type: z.enum(["incident", "recovery"]), metric: z.enum(["cpu", "memory"]), timestamp: z.number(), value: z.number(), peak: z.number(), durationSeconds: z.number(), threshold: z.number() })).max(32) }) },
+  monitor_status: {
+    input: z.null(),
+    output: z.object({ enabled: z.boolean(), notifications: z.boolean(), cursor: z.number(), active: z.array(noticeSchema).max(2), recent: z.array(noticeSchema).max(32) }),
+  },
 });
 
 const ROOT_MOUNT = "/";
@@ -211,7 +224,7 @@ async function readNetworkTotals(signal: AbortSignal): Promise<NetworkTotals | n
       const name = rawName.trim();
       const stats = rawStats.trim().split(/\s+/).map(Number);
       if (name === "lo" || stats.length < 9 || !Number.isFinite(stats[0]) || !Number.isFinite(stats[8]) || stats[0] < 0 || stats[8] < 0) return null;
-      return { interface: name, rxBytes: stats[0] ?? 0, txBytes: stats[8] ?? 0 };
+      return { interface: name, rxBytes: stats[0], txBytes: stats[8] };
     }).filter((value): value is NetworkTotals => value !== null);
     return candidates.sort(
       (left, right) => right.rxBytes + right.txBytes - left.rxBytes - left.txBytes,
@@ -269,17 +282,14 @@ function assessHealth(
 ): ServerSnapshot["health"] {
   const issues: ServerSnapshot["health"]["issues"] = [];
   const addThresholdIssue = (label: string, value: number) => {
-    if (value >= 95) issues.push({ severity: "critical", label, message: `${label} is at ${value.toFixed(1)}%.` });
-    else if (value >= 85) issues.push({ severity: "warning", label, message: `${label} is at ${value.toFixed(1)}%.` });
+    if (value >= 85) issues.push({ severity: value >= 95 ? "critical" : "warning", label, message: `${label} is at ${value.toFixed(1)}%.` });
   };
   if (cpuPercent !== null) addThresholdIssue("CPU", cpuPercent);
   addThresholdIssue("Memory", memoryPercent);
   if (diskPercent !== null) addThresholdIssue("Disk", diskPercent);
   const normalizedLoad = fiveMinuteLoad / coreCount;
-  if (normalizedLoad >= 1.5) {
-    issues.push({ severity: "critical", label: "System load", message: `Five-minute load is ${fiveMinuteLoad.toFixed(2)} across ${coreCount} cores.` });
-  } else if (normalizedLoad >= 1) {
-    issues.push({ severity: "warning", label: "System load", message: `Five-minute load is ${fiveMinuteLoad.toFixed(2)} across ${coreCount} cores.` });
+  if (normalizedLoad >= 1) {
+    issues.push({ severity: normalizedLoad >= 1.5 ? "critical" : "warning", label: "System load", message: `Five-minute load is ${fiveMinuteLoad.toFixed(2)} across ${coreCount} cores.` });
   }
   return {
     status: issues.some((issue) => issue.severity === "critical") ? "critical" : issues.length > 0 ? "warning" : "healthy",
@@ -518,14 +528,11 @@ export default async function plugin(bb: BbPluginApi) {
           ].join("\n"),
         };
       }
-      if (command === "health") {
-        if (json) return { exitCode: 0, stdout: JSON.stringify(snapshot.health) };
-        return {
-          exitCode: snapshot.health.status === "critical" ? 2 : 0,
-          stdout: snapshot.health.issues.length === 0 ? "healthy — no resource pressure detected" : `${snapshot.health.status}\n${snapshot.health.issues.map((issue) => `- ${issue.message}`).join("\n")}`,
-        };
-      }
-      return { exitCode: 1, stderr: usage };
+      if (json) return { exitCode: 0, stdout: JSON.stringify(snapshot.health) };
+      return {
+        exitCode: snapshot.health.status === "critical" ? 2 : 0,
+        stdout: snapshot.health.issues.length === 0 ? "healthy — no resource pressure detected" : `${snapshot.health.status}\n${snapshot.health.issues.map((issue) => `- ${issue.message}`).join("\n")}`,
+      };
     },
   });
 
