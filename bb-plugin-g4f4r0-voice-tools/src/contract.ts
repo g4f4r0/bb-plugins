@@ -103,22 +103,19 @@ export const hostContract = defineRpcContract({
 /** Pull a readable message out of a failed speech-server response. */
 async function failure(response: Response, fallback: string): Promise<Error> {
   if (response.status === 401 || response.status === 403) {
-    return new Error("The cloud API rejected the API key. Check it in Settings → Plugins → Voice tools.");
+    return new Error("OpenRouter rejected your API key. Replace it in Voice tools settings.");
   }
+  if (response.status === 402) return new Error("Your OpenRouter account is out of credits.");
+  if (response.status === 429) return new Error("OpenRouter is busy. Try again in a moment.");
   const raw = (await response.text()).slice(0, 2_000);
   try {
     const body: unknown = JSON.parse(raw);
     if (typeof body === "object" && body !== null && "detail" in body && typeof body.detail === "string") {
       return new Error(body.detail.trim().slice(0, 500));
     }
-    // OpenAI and OpenRouter: { "error": { "message": "…" } }
-    const message = (body as { error?: { message?: unknown } } | null)?.error?.message;
-    if (typeof message === "string" && message.trim()) {
-      return new Error(`${fallback}: ${message.trim().slice(0, 300)}`);
-    }
   } catch {}
-  if (response.status === 413) return new Error("The recording is too long or too large.");
-  return new Error(`${fallback} (HTTP ${response.status})`);
+  if (response.status === 413) return new Error("The recording is too long.");
+  return new Error(fallback);
 }
 
 /**
@@ -144,10 +141,10 @@ export async function requestTranscription(
     headers: options.apiKey ? { authorization: `Bearer ${options.apiKey}` } : undefined,
     signal: options.signal,
   });
-  if (!response.ok) throw await failure(response, "Transcription failed. Try again");
+  if (!response.ok) throw await failure(response, "Transcription failed. Try again.");
   const body: unknown = await response.json();
   const text = (body as { text?: unknown } | null)?.text;
-  if (typeof text !== "string") throw new Error("The speech server returned no text");
+  if (typeof text !== "string") throw new Error("Transcription failed. Try again.");
   return text;
 }
 
@@ -163,7 +160,7 @@ export async function streamRequest(
     headers: init.body ? { "content-type": "application/octet-stream" } : undefined,
     signal: init.signal,
   });
-  if (!response.ok) throw await failure(response, "Live dictation failed");
+  if (!response.ok) throw await failure(response, "Transcription failed. Try again.");
   return response.json();
 }
 

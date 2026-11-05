@@ -424,7 +424,7 @@ function MicrophoneRow() {
   }
 
   return (
-    <Row label="Microphone" hint={error ?? "For this browser. The mobile apps use the phone's microphone."}>
+    <Row label="Microphone" hint={error ?? undefined}>
       {labelled || error ? (
         <Choice
           label="Microphone"
@@ -442,7 +442,7 @@ function MicrophoneRow() {
           size="sm"
           className="h-7 px-2.5 text-xs"
           onClick={() =>
-            void allowMicrophoneAccess().then(refresh, () => setError("Microphone access was denied in this browser."))
+            void allowMicrophoneAccess().then(refresh, () => setError("Microphone access is blocked. Allow it in your browser's site settings."))
           }
         >
           Show microphones
@@ -506,7 +506,7 @@ function SettingsPage() {
       setView(await rpc.call("settings.saveApiKey", { key: draftKey }));
       setDraftKey("");
       setEditingKey(false);
-      toast.success("OpenRouter key saved");
+      toast.success("API key saved");
     } catch (error) {
       setKeyError(errorText(error));
     } finally {
@@ -523,11 +523,11 @@ function SettingsPage() {
   return (
     <div className={CARD}>
       <div className="@container/settings w-full min-w-0 space-y-4">
-        <Row label="Source" hint={cloud ? "Fastest. Recordings are sent to OpenRouter." : "Private and free. Runs on the bb server."}>
+        <Row label="Source">
           <Choice label="Source" value={config.source} options={SOURCES} onChange={(source) => void update({ source: source as "local" | "cloud" })} />
         </Row>
 
-        <Row label="Model" hint={model?.detail}>
+        <Row label="Model">
           <Choice
             label="Model"
             value={model?.id ?? ""}
@@ -542,7 +542,7 @@ function SettingsPage() {
             hint={
               keyError ?? (
                 <>
-                  Stays on the bb server. Get one at{" "}
+                  Get one at{" "}
                   <a className="underline underline-offset-2" href="https://openrouter.ai/keys" target="_blank" rel="noreferrer">
                     openrouter.ai/keys
                   </a>
@@ -597,7 +597,7 @@ function SettingsPage() {
 
         <MicrophoneRow />
 
-        <Row label="Language" hint={!cloud && config.localModel === "parakeet-v3" ? "Parakeet detects the language itself." : undefined}>
+        <Row label="Language">
           <Choice label="Language" value={config.language} options={view.languages} onChange={(language) => void update({ language })} />
         </Row>
 

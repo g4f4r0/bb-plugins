@@ -2,7 +2,7 @@
   "name": "bb-plugin-voice-tools",
   "version": "0.1.0",
   "private": true,
-  "description": "Fast dictation that transcribes while you talk, on this machine (NVIDIA Parakeet or Whisper) or with a cloud API such as OpenRouter.",
+  "description": "Fast, accurate dictation on this machine (NVIDIA Parakeet or Whisper) or with OpenRouter.",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -11,7 +11,7 @@
   },
   "bb": {
     "name": "Voice tools",
-    "description": "Fast dictation that transcribes while you talk, on this machine (NVIDIA Parakeet or Whisper) or with a cloud API such as OpenRouter.",
+    "description": "Fast, accurate dictation on this machine (NVIDIA Parakeet or Whisper) or with OpenRouter.",
     "branding": {
       "icon": "./assets/icon.svg"
     },

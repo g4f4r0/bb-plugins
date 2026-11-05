@@ -24,7 +24,7 @@ export interface DictationSnapshot {
 }
 
 const TARGET_RATE = 16_000;
-const SEND_EVERY_SAMPLES = TARGET_RATE; // ~1 s
+const SEND_EVERY_SAMPLES = TARGET_RATE / 2; // ~0.5 s: less audio left to send at stop
 export const MAX_DICTATION_SECONDS = 20 * 60;
 
 /**
@@ -300,10 +300,10 @@ async function openMicrophone(): Promise<MediaStream> {
 
 function asError(error: unknown): Error {
   if (error instanceof DOMException && error.name === "NotAllowedError") {
-    return new Error("Microphone access was denied. Allow it in your browser's site settings.");
+    return new Error("Microphone access is blocked. Allow it in your browser's site settings.");
   }
   if (error instanceof DOMException && error.name === "NotFoundError") {
-    return new Error("No microphone was found.");
+    return new Error("No microphone found.");
   }
   return error instanceof Error ? error : new Error(String(error));
 }

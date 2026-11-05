@@ -7,26 +7,28 @@ import type { Model as LocalModelId } from "./contract.js";
 export interface ModelOption {
   id: string;
   label: string;
-  /** One short line shown under the dropdown. */
-  detail: string;
 }
 
 export const LOCAL_MODELS: readonly ModelOption[] = [
-  { id: "parakeet-v3", label: "Parakeet v3", detail: "Fastest here. 25 European languages." },
-  { id: "whisper-small", label: "Whisper small", detail: "Every language. Slower than Parakeet." },
-  {
-    id: "whisper-large-v3-turbo",
-    label: "Whisper large v3 turbo",
-    detail: "Every language, most accurate. Slow without a GPU.",
-  },
+  { id: "parakeet-v3", label: "Parakeet v3" },
+  { id: "whisper-small", label: "Whisper small" },
+  { id: "whisper-large-v3-turbo", label: "Whisper large v3 turbo" },
 ];
 
-/** OpenRouter speech models; all multilingual. Timed on a 9 s clip, Nov 2026. */
+/**
+ * OpenRouter models worth offering, from a Nov 2026 benchmark on Multilingual
+ * LibriSpeech (Spanish) and LibriSpeech test-clean (English), 10 clips each:
+ * word error rate es / en, median seconds per clip.
+ *   Voxtral Mini Transcribe 3   1.2% / 0.4%   0.8 s
+ *   Parakeet v3                 1.7% / 0.8%   1.0 s (also handles long audio)
+ *   ElevenLabs Scribe v2        1.2% / 0.8%   1.3 s
+ * Left out: Whisper large v3 turbo (11.9% Spanish), Deepgram Nova-3 (no
+ * Spanish without a fixed language), slower or costlier models.
+ */
 export const CLOUD_MODELS: readonly ModelOption[] = [
-  { id: "mistralai/voxtral-mini-transcribe-3-0", label: "Voxtral Mini Transcribe 3", detail: "Fastest, about 0.6 s per clip." },
-  { id: "nvidia/parakeet-tdt-0.6b-v3", label: "Parakeet v3", detail: "Same model as local, on a GPU. 25 European languages." },
-  { id: "openai/whisper-large-v3-turbo", label: "Whisper large v3 turbo", detail: "Every language." },
-  { id: "elevenlabs/scribe-v2", label: "ElevenLabs Scribe v2", detail: "Best punctuation. Costs more." },
+  { id: "mistralai/voxtral-mini-transcribe-3-0", label: "Voxtral Mini Transcribe 3" },
+  { id: "nvidia/parakeet-tdt-0.6b-v3", label: "Parakeet v3" },
+  { id: "elevenlabs/scribe-v2", label: "ElevenLabs Scribe v2" },
 ];
 
 export const LANGUAGES: readonly { id: string; label: string }[] = [
@@ -72,5 +74,5 @@ export const DEFAULT_CONFIG: Config = {
 export function activeModel(config: Config): ModelOption {
   const list = config.source === "cloud" ? CLOUD_MODELS : LOCAL_MODELS;
   const id = config.source === "cloud" ? config.cloudModel : config.localModel;
-  return list.find((m) => m.id === id) ?? { id, label: id, detail: "" };
+  return list.find((m) => m.id === id) ?? { id, label: id };
 }

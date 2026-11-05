@@ -231,8 +231,10 @@ class ParakeetEngine:
     # Long recordings are cut at pauses into ~6-12 s pieces and decoded as
     # one batch: ~33% faster than one long piece (34 s: 2.6 s vs 3.9 s), and
     # time and memory stay linear for long uploads.
-    MAX_PIECE_S = 12.0
-    MIN_PIECE_S = 6.0
+    # Up to 20 s: whole sentences without the CPU cost of very long pieces
+    # (60 s in 12 s pieces: 9.4 s; 20 s: 11.1 s; 30 s: 11.7 s, under load).
+    MAX_PIECE_S = 20.0
+    MIN_PIECE_S = 10.0
     MAX_BATCH = 8
     REPO = "istupakov/parakeet-tdt-0.6b-v3-onnx"
 
@@ -393,20 +395,17 @@ class Model:
 
 
 class StreamSession:
-    """One live dictation: buffers PCM, cuts it at pauses, transcribes in the background.
+    """One dictation: buffers PCM while the user talks, transcribes on finish.
 
-    Cut rules, checked after every chunk:
-    - the speaker went quiet (>= 0.6 s of silence at the end after >= 0.8 s of
-      speech): transcribe now. People pause before pressing stop, so the
-      tail left for `finish` is usually silence and finishing is instant;
-    - the piece passed MIN_PIECE_S and has a pause (>= 0.2 s): cut there;
-      longer pieces keep punctuation and cost fewer model calls;
-    - the piece reached MAX_PIECE_S without a pause: cut at its quietest point.
+    Long dictations are cut only at real pauses (>= 0.5 s) once a piece is at
+    least MIN_PIECE_S long, or at the quietest point at MAX_PIECE_S, and those
+    pieces are transcribed in the background. Short pieces split sentences
+    and hurt accuracy, so most dictations are one piece transcribed at finish.
     Pieces without speech are dropped.
     """
 
-    MIN_PIECE_S = 6.0
-    MAX_PIECE_S = 20.0
+    MIN_PIECE_S = 20.0
+    MAX_PIECE_S = 40.0
     HOP = SAMPLE_RATE // 100  # 10 ms energy frames
 
     def __init__(self, model: "Model", language):
@@ -455,18 +454,13 @@ class StreamSession:
             return None
         quiet = self._quiet(energy)
         runs = quiet_runs(quiet)
-        speech_frames = int((~quiet).sum())
-        # 1. Trailing silence after real speech: the speaker paused.
-        # Keep 250 ms after the speech so soft word endings ("-s") survive.
-        if runs and runs[-1][1] == energy.size and runs[-1][1] - runs[-1][0] >= 60 and speech_frames >= 80:
-            return (runs[-1][0] + 25) * self.HOP
-        # 2. A pause after the minimum length.
+        # 1. A real pause (>= 0.5 s) once the piece is long enough.
         min_frame = int(self.MIN_PIECE_S * 100)
-        pauses = [(a, b) for a, b in runs if b - a >= 20 and (a + b) // 2 >= min_frame and b < energy.size]
+        pauses = [(a, b) for a, b in runs if b - a >= 50 and (a + b) // 2 >= min_frame]
         if pauses:
-            a, b = pauses[-1]
+            a, b = max(pauses, key=lambda run: run[1] - run[0])
             return ((a + b) // 2) * self.HOP
-        # 3. Too long without a pause: quietest point in the back half.
+        # 2. Too long without a pause: quietest point in the back half.
         if self.pending.size >= self.MAX_PIECE_S * SAMPLE_RATE:
             lo = int(self.MAX_PIECE_S * 50)
             return (lo + int(np.argmin(energy[lo:]))) * self.HOP
@@ -545,7 +539,7 @@ def build_app(args: argparse.Namespace):
         with sessions_lock:
             found = sessions.get(stream_id)
         if found is None:
-            raise HTTPException(404, "This dictation has expired. Start a new one.")
+            raise HTTPException(404, "This dictation expired. Start a new one.")
         return found
 
     def expire_idle() -> None:
@@ -578,16 +572,16 @@ def build_app(args: argparse.Namespace):
     ):
         data = file.file.read(MAX_UPLOAD_BYTES + 1)
         if len(data) > MAX_UPLOAD_BYTES:
-            raise HTTPException(413, "Audio exceeds 25 MB")
+            raise HTTPException(413, "The recording is too large.")
         if not data:
-            raise HTTPException(400, "The recording is empty. Record it again.")
+            raise HTTPException(400, "The recording is empty.")
         started = time.monotonic()
         try:
             audio = decode_audio(data)
             keep_last_upload(args.models_dir, data, file.content_type or "")
         except Exception as error:
             log.warning("audio decode failed: bytes=%d error=%s", len(data), type(error).__name__)
-            raise HTTPException(400, "Could not decode the recording. Record it again.") from None
+            raise HTTPException(400, "Couldn't read the recording. Try again.") from None
         text = ""
         if audio.size >= SAMPLE_RATE // 10:
             with model.lock:
@@ -617,7 +611,7 @@ def build_app(args: argparse.Namespace):
         found = session(stream_id)
         pcm = await request.body()
         if found.seconds + len(pcm) / 2 / SAMPLE_RATE > MAX_STREAM_S:
-            raise HTTPException(413, f"Dictation is limited to {MAX_STREAM_S // 60} minutes")
+            raise HTTPException(413, f"Dictation is limited to {MAX_STREAM_S // 60} minutes.")
         found.append(pcm)
         return {"text": found.text(), "seconds": round(found.seconds, 2)}
 
@@ -630,7 +624,7 @@ def build_app(args: argparse.Namespace):
         try:
             text = found.finish()
         except Exception:
-            raise HTTPException(500, "Transcription failed; see the plugin logs.") from None
+            raise HTTPException(500, "Transcription failed. Try again.") from None
         log.info(
             "stream %s finished: %.1fs of audio, final wait %.2fs (%d chars)",
             stream_id, found.seconds, time.monotonic() - started, len(text),

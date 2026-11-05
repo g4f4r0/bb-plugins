@@ -187,7 +187,7 @@ export class Supervisor {
       await sleep(250, signal);
     }
     if (this.phase !== "ready" || this.port === null) {
-      throw new Error(`Voice tools is not ready: ${this.message}`);
+      throw new Error("The speech model is still loading. Try again in a moment.");
     }
     return `http://127.0.0.1:${this.port}`;
   }

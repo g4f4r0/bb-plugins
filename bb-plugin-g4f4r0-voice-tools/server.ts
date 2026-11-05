@@ -51,10 +51,15 @@ const STREAM_CALL_TIMEOUT_MS = 30_000;
 const STREAM_FINISH_TIMEOUT_MS = 5 * 60_000;
 const CLOUD_IDLE_MS = 2 * 60_000;
 const CONFIG_KEY = "config";
+const VOXTRAL = "mistralai/voxtral-mini-transcribe-3-0";
+const CLOUD_FALLBACK = "nvidia/parakeet-tdt-0.6b-v3";
+/** Voxtral answers short notes in ~0.6 s; anything slower is a long recording it will time out on. */
+const VOXTRAL_LEASH_MS = 12_000;
+const VOXTRAL_MAX_SECONDS = 40;
 
 const dictationId = z.string().regex(/^[a-f0-9]{32}$/);
 const dictationResult = z.object({ text: z.string(), seconds: z.number() }).strict();
-const option = z.object({ id: z.string(), label: z.string(), detail: z.string() }).strict();
+const option = z.object({ id: z.string(), label: z.string() }).strict();
 
 const settingsView = z
   .object({
@@ -140,7 +145,7 @@ export default async function plugin(bb: BbPluginApi) {
       return {
         engine: "cloud",
         cloud: { url: OPENROUTER_URL, apiKey, model: config.cloudModel, language: config.language },
-        problem: apiKey ? null : "Add your OpenRouter API key",
+        problem: apiKey ? null : "Add your OpenRouter API key in Voice tools settings.",
       };
     }
     return {
@@ -151,7 +156,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   async function hostId(): Promise<string> {
     const id = (await bb.sdk.system.config()).primaryHostId;
-    if (id === null) throw new Error("No primary machine is connected to bb");
+    if (id === null) throw new Error("No machine is connected to bb.");
     return id;
   }
 
@@ -175,7 +180,7 @@ export default async function plugin(bb: BbPluginApi) {
       const ready = state.phase === "ready" || state.reloading;
       return { ready, message: ready ? "Ready" : describe(state) };
     } catch (error) {
-      return { ready: false, message: `The speech server is unavailable: ${errorMessage(error)}` };
+      return { ready: false, message: "The speech engine isn't responding. Try again in a moment." };
     }
   }
 
@@ -199,10 +204,10 @@ export default async function plugin(bb: BbPluginApi) {
         signal: AbortSignal.timeout(10_000),
       });
     } catch {
-      throw new Error("Couldn't reach OpenRouter to check the key. Try again.");
+      throw new Error("Couldn't reach OpenRouter. Try again.");
     }
     if (response.status === 401 || response.status === 403) throw new Error("OpenRouter doesn't recognize this key.");
-    if (!response.ok) throw new Error(`OpenRouter couldn't check the key (HTTP ${response.status}). Try again.`);
+    if (!response.ok) throw new Error("OpenRouter couldn't check the key. Try again.");
   }
 
   // ── whole recordings: bb's mobile apps and `bb voice transcribe` ─────────
@@ -211,12 +216,28 @@ export default async function plugin(bb: BbPluginApi) {
     id: SERVICE_ID,
     displayName: "Voice tools",
     async transcribe(audio, { signal, hint }) {
-      if (audio.size > MAX_AUDIO_BYTES) throw new Error("Recordings over 20 MB are too large");
+      if (audio.size > MAX_AUDIO_BYTES) throw new Error("The recording is too large.");
       const filename = audio.name || "voice-input.webm";
       const current = await mode();
       if (current.engine === "cloud") {
         if (current.problem) throw new Error(current.problem);
-        return cloudTranscribe(current.cloud, audio, filename, { signal, hint });
+        if (current.cloud.model !== VOXTRAL) return cloudTranscribe(current.cloud, audio, filename, { signal, hint });
+        // Voxtral times out on recordings over ~50 s, and bb sends phone
+        // recordings whole. Recordings that are clearly long go straight to
+        // Parakeet (3 minutes in 4 s); the rest get a short leash.
+        if (estimatedSeconds(audio) > VOXTRAL_MAX_SECONDS) {
+          return cloudTranscribe({ ...current.cloud, model: CLOUD_FALLBACK }, audio, filename, { signal, hint });
+        }
+        try {
+          return await cloudTranscribe(current.cloud, audio, filename, {
+            signal: AbortSignal.any([signal, AbortSignal.timeout(VOXTRAL_LEASH_MS)]),
+            hint,
+          });
+        } catch (error) {
+          if (signal.aborted) throw error;
+          bb.log.info(`Voxtral failed (${errorMessage(error)}); retrying with Parakeet`);
+          return cloudTranscribe({ ...current.cloud, model: CLOUD_FALLBACK }, audio, filename, { signal, hint });
+        }
       }
       const { text } = await host.call(
         "voiceTools.transcribe",
@@ -258,6 +279,11 @@ export default async function plugin(bb: BbPluginApi) {
       if (current.engine === "cloud") {
         if (current.problem) throw new Error(current.problem);
         dropIdleCloudDictations();
+        // Open the TLS connection now, while the user talks, not at stop.
+        void fetch(`${OPENROUTER_URL}/key`, {
+          headers: { authorization: `Bearer ${current.cloud.apiKey}` },
+          signal: AbortSignal.timeout(5_000),
+        }).catch(() => {});
         const id = randomUUID().replaceAll("-", "");
         cloudDictations.set(id, new CloudDictation(current.cloud));
         return { id };
@@ -267,7 +293,7 @@ export default async function plugin(bb: BbPluginApi) {
     async "dictation.audio"({ id, pcmBase64 }) {
       const cloud = cloudDictations.get(id);
       if (cloud !== undefined) {
-        if (cloud.seconds > maxDictationSeconds) throw new Error(`Dictation is limited to ${MAX_DICTATION_MINUTES} minutes`);
+        if (cloud.seconds > maxDictationSeconds) throw new Error(`Dictation is limited to ${MAX_DICTATION_MINUTES} minutes.`);
         await cloud.append(Buffer.from(pcmBase64, "base64"));
         return { text: cloud.text, seconds: cloud.seconds };
       }
@@ -331,7 +357,8 @@ export default async function plugin(bb: BbPluginApi) {
             lastProblem = null;
           } else {
             const state = await ensure(current.desired, "ensure", signal);
-            const problem = state.phase === "failed" || state.phase === "unsupported" ? describe(state) : null;
+            const problem =
+              state.phase === "failed" || state.phase === "unsupported" ? `${describe(state)} (${state.message})` : null;
             if (problem !== null && problem !== lastProblem) bb.log.warn(problem);
             lastProblem = problem;
           }
@@ -446,21 +473,32 @@ export default async function plugin(bb: BbPluginApi) {
   }
 }
 
+/** Status in one short sentence, for the settings page and bb's voice picker. */
 function describe(state: HostState): string {
   switch (state.phase) {
     case "ready":
       return "Ready";
     case "installing":
-      return `Installing: ${state.message}`;
+      return "Installing the speech engine. The first install takes a few minutes.";
     case "starting":
-      return `Starting: ${state.message}`;
+      return "Loading the speech model.";
     case "failed":
-      return `Setup failed: ${state.message}`;
+      return "The speech engine failed to start. Run bb voice-tools reinstall.";
     case "unsupported":
-      return `Can't run on this machine: ${state.message}. Use OpenRouter instead`;
+      return "This machine can't run local models. Use OpenRouter instead.";
     case "idle":
-      return state.message || "Not started yet";
+      return "The speech engine is off.";
   }
+}
+
+/**
+ * Rough length of a compressed recording from its size, erring long: Opus in
+ * WebM/Ogg runs ~4 KB/s, AAC in MP4 ~8 KB/s, 16 kHz WAV 32 KB/s.
+ */
+function estimatedSeconds(audio: Blob): number {
+  const type = audio.type.toLowerCase();
+  const bytesPerSecond = type.includes("wav") ? 32_000 : type.includes("mp4") || type.includes("m4a") || type.includes("aac") ? 8_000 : 4_000;
+  return audio.size / bytesPerSecond;
 }
 
 function errorMessage(error: unknown): string {

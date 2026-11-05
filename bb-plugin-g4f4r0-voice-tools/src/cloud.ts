@@ -15,10 +15,10 @@ export interface CloudConfig {
 
 const RATE = 16_000;
 const HOP = RATE / 100; // 10 ms energy frames
-// A cloud call takes ~0.5 s whatever the length, so short pieces cost little
-// and put text in the draft sooner (measured on OpenRouter, Nov 2026).
-const MIN_PIECE_S = 3;
-const MAX_PIECE_S = 12;
+// Pieces this long keep whole sentences: 3-second pieces split them and hurt
+// accuracy. Most dictations are one piece, sent when the user stops.
+const MIN_PIECE_S = 20;
+const MAX_PIECE_S = 40;
 const MAX_IN_FLIGHT = 4;
 const PIECE_TIMEOUT_MS = 60_000;
 
@@ -84,25 +84,18 @@ function quietRuns(quiet: boolean[]): [number, number][] {
 }
 
 /**
- * Where to cut `pending`, in samples, or null to keep listening. Same rules as
- * the local server, tuned shorter: the speaker paused (>= 0.45 s of silence
- * after >= 0.6 s of speech), a pause after MIN_PIECE_S, or the quietest point
- * once MAX_PIECE_S is reached.
+ * Where to cut `pending`, in samples, or null to keep listening: the longest
+ * real pause (>= 0.5 s) once the piece is MIN_PIECE_S long, or the quietest
+ * point once it reaches MAX_PIECE_S.
  */
 export function findCut(pending: Int16Array, speechLevel: number): number | null {
   const energy = frameEnergy(pending);
-  if (energy.length < 50) return null;
+  if (energy.length < MIN_PIECE_S * 100) return null;
   const quiet = Array.from(energy, (e) => e < 0.05 * speechLevel);
-  const runs = quietRuns(quiet);
-  const speechFrames = quiet.filter((q) => !q).length;
-  const last = runs.at(-1);
-  if (last && last[1] === energy.length && last[1] - last[0] >= 45 && speechFrames >= 60) {
-    return (last[0] + 25) * HOP;
-  }
   const minFrame = MIN_PIECE_S * 100;
-  const pauses = runs.filter(([a, b]) => b - a >= 20 && (a + b) / 2 >= minFrame && b < energy.length);
+  const pauses = quietRuns(quiet).filter(([a, b]) => b - a >= 50 && (a + b) / 2 >= minFrame);
   if (pauses.length > 0) {
-    const [a, b] = pauses.at(-1)!;
+    const [a, b] = pauses.reduce((best, run) => (run[1] - run[0] > best[1] - best[0] ? run : best));
     return Math.floor((a + b) / 2) * HOP;
   }
   if (pending.length >= MAX_PIECE_S * RATE) {

@@ -1,9 +1,9 @@
 # Voice tools
 
-Fast dictation for bb. Voice tools replaces bb's microphone with one that transcribes
-while you talk, so the text is in your draft moments after you stop, even after a long
-dictation. Speech is recognized on this machine (NVIDIA Parakeet or Whisper) or by
-OpenRouter.
+Fast, accurate dictation for bb. Voice tools replaces bb's microphone and transcribes
+on this machine (NVIDIA Parakeet or Whisper) or with OpenRouter. Audio uploads while
+you talk, so the text is in your draft about half a second after you stop, even after
+a long dictation.
 
 ## Install
 
@@ -19,28 +19,40 @@ too. The first local install downloads about 200 MB of speech engines and the mo
 ## Dictate
 
 - **Desktop and web:** click the mic in any composer, or press `Mod+Shift+D`. It looks
-  and works like bb's own mic. Text appears in the draft as you speak; Stop adds the
-  last words, Cancel removes what the dictation wrote, Send submits. Up to 20 minutes.
-- **Mobile apps:** bb's mobile mic records first and sends the recording when you
-  stop, so the wait grows with its length (about 1 s per 10 s of speech on a 16-core
-  CPU without a GPU).
+  and works like bb's own mic: ✕ cancels, ✓ adds the text. Up to 20 minutes.
+- **Mobile apps:** bb's mobile mic sends the whole recording when you stop. With
+  OpenRouter that takes about 1-2 s for a minute of speech and 3 s for three minutes.
 
 ## Settings
 
-Settings → Plugins → Voice tools has four rows:
+Settings → Plugins → Voice tools:
 
 | Setting | Options | Default |
 |---|---|---|
 | Source | This machine (private, free) or OpenRouter (fastest, sends audio to OpenRouter) | This machine |
-| Model | This machine: Parakeet v3, Whisper small, Whisper large v3 turbo. OpenRouter: Voxtral Mini Transcribe 3, Parakeet v3, Whisper large v3 turbo, ElevenLabs Scribe v2 | Parakeet v3 / Voxtral Mini Transcribe 3 |
+| Model | This machine: Parakeet v3, Whisper small, Whisper large v3 turbo. OpenRouter: Voxtral Mini Transcribe 3, Parakeet v3, ElevenLabs Scribe v2 | Parakeet v3 / Voxtral Mini Transcribe 3 |
 | OpenRouter API key | Shown for OpenRouter only. Save checks the key with OpenRouter first. Stored in a 0600 file on the bb server, never sent to the browser. | none |
+| Microphone | System default or a microphone this browser can see; per browser | System default |
 | Language | Detect automatically, or one of 16 languages | Detect automatically |
 
 Each source remembers its own model. In OpenRouter mode the local speech server is
 stopped, so it uses no memory or CPU. The local model always stays loaded.
 
-Timed on a 9 s clip through OpenRouter (Nov 2026): Voxtral Mini Transcribe 3 0.5-0.7 s,
-Whisper large v3 turbo 0.8-1.1 s, Parakeet v3 0.9-1.3 s, ElevenLabs Scribe v2 1.2-1.4 s.
+### Choosing a cloud model
+
+Benchmarked on OpenRouter in Nov 2026: 10 Spanish clips (Multilingual LibriSpeech) and
+10 English clips (LibriSpeech test-clean), word error rate and median time per clip.
+
+| Model | Spanish | English | Time |
+|---|---|---|---|
+| Voxtral Mini Transcribe 3 | 1.2% | 0.4% | 0.7-0.8 s |
+| Parakeet v3 | 1.7% | 0.8% | 0.8-1.2 s |
+| ElevenLabs Scribe v2 | 1.2% | 0.8% | 1.2-1.4 s |
+| Whisper large v3 turbo (not offered) | 11.9% | 0.4% | 1.4-2.1 s |
+
+Voxtral is the most accurate and among the fastest, but times out on recordings over
+about 50 s. Composer dictation never sends it more than 40 s at once, and long phone
+recordings go to Parakeet, which transcribed three minutes in about 4 s.
 
 ## Command line
 
@@ -69,7 +81,7 @@ Whisper model is selected, and switching models deletes the old model's files.
 - `app.tsx`, `src/dictation.ts`: the composer mic, built from bb's own
   `experimental_VoiceInputButton` and `experimental_VoiceRecordingBar`. It captures the
   microphone, downsamples to 16 kHz mono in the browser, sends about one second at a
-  time, and writes each recognized piece into the draft. Also the settings status.
+  time, and inserts the transcript when you stop. Also the settings page.
 - `server.ts`: the `config.*` and `dictation.*` RPC, the API key store, the `voice-tools` voice service for
   whole recordings, the CLI, and a loop that keeps the local server running in local
   mode and stopped in cloud mode.
@@ -80,10 +92,11 @@ Whisper model is selected, and switching models deletes the old model's files.
 - `python/speech_server.py`: decodes uploads with PyAV (no system ffmpeg), runs the
   model, and serves `/v1/audio/transcriptions` and `/v1/stream`.
 
-Dictation is cut where the speaker pauses (at least 0.6 s of silence), at a pause after
-6 s (8 s in the cloud), or at the quietest point once a piece gets long. Each piece gets
-a little silence before and after, so the model doesn't drop a first or last word.
-Pieces without speech are skipped.
+Most dictations are transcribed in one go when you stop, which keeps whole sentences
+together. A dictation longer than 20 s is cut at its longest pause (at least 0.5 s),
+or at the quietest point by 40 s, and finished pieces are transcribed in the
+background. Each piece gets a little silence before and after, so the model doesn't
+drop a first or last word. Pieces without speech are skipped.
 
 ## Platforms
 
